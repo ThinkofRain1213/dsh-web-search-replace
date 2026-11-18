@@ -17,6 +17,7 @@ const PROJECT_ROOT = path.resolve(FIXTURE_PATH, '../../..')
 
 export type FixtureMode = 'native' | 'ptc'
 export type FixtureDriver = 'normal' | 'missing' | 'throw' | 'delay'
+  | 'contract' | 'unauthorized' | 'rate-limit' | 'bad-response'
 
 export interface FixtureModelSelection {
   readonly provider: string
@@ -59,6 +60,8 @@ export interface DshFixtureObservation {
   readonly transportResult: ToolResultObservation | undefined
   readonly expectedMockValue: unknown
   readonly expectedMockContent: unknown
+  readonly expectedMeta: unknown
+  readonly presentationResult: unknown
   readonly officialSearchCalls: number
   readonly officialFetchCalls: number
   readonly driverCalls: readonly { query: string; maxResults: number }[]
@@ -224,6 +227,8 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
   let lifecycleTracks = 0
   let expectedMockValue: unknown
   let expectedMockContent: unknown
+  let expectedMeta: unknown
+  let presentationResult: unknown
   let observedResult: ToolResultObservation | undefined
 
   const ctx = new cordis.Context()
@@ -336,6 +341,36 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
           events.push('driver:start')
           driverCalls.push({ query, maxResults })
           if (driverKind === 'throw') throw new Error('mock driver exploded')
+          if (driverKind === 'unauthorized') {
+            throw Object.assign(new Error('fixture credentials expired'), { status: 401 })
+          }
+          if (driverKind === 'rate-limit') {
+            throw Object.assign(new Error('fixture rate limited'), { statusCode: 429 })
+          }
+          if (driverKind === 'bad-response') {
+            return { sources: [{ title: 'missing URL' }], truncated: false }
+          }
+          if (driverKind === 'contract') {
+            return {
+              content: query === 'alpha' ? 'Alpha answer' : 'Beta answer',
+              sources: query === 'alpha'
+                ? [
+                    {
+                      url: 'https://contract.test/shared',
+                      title: 'Shared result',
+                      snippet: 'shared snippet',
+                      summary: `  ${'x'.repeat(801)}  `,
+                      publishedAt: '2026-11-18',
+                    },
+                    { url: 'https://contract.test/alpha-2', snippet: 'alpha second' },
+                  ]
+                : [
+                    { url: 'https://contract.test/beta-1', title: 'Beta first' },
+                    { url: 'https://contract.test/shared', title: 'duplicate' },
+                  ],
+              truncated: false,
+            }
+          }
           if (driverKind === 'delay') {
             await settleAfterAbort(signal, timeoutMs)
             events.push(`driver:abort:${String(signal.aborted)}`)
@@ -426,10 +461,32 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
       })
       transportResult = batch.results[0]?.result
       if (mode === 'native') observedResult = observeResult(transportResult)
-      if (request.installOverride === true && driverKind !== 'missing' && driverKind !== 'throw') {
-        const { MockSearchDriver } = await importProjectModule('src/host/drivers/mock-driver.ts')
-        expectedMockValue = await new MockSearchDriver().searchOnce('fixture query', 10, new AbortController().signal)
+      if (request.installOverride === true && (driverKind === 'normal' || driverKind === 'contract')) {
+        if (driverKind === 'contract') {
+          expectedMockValue = {
+            content: '### alpha\n\nAlpha answer\n\n### beta\n\nBeta answer',
+            sources: [
+              {
+                url: 'https://contract.test/shared',
+                title: 'Shared result',
+                snippet: 'shared snippet',
+                summary: `${'x'.repeat(799)}…`,
+                publishedAt: '2026-11-18',
+              },
+              { url: 'https://contract.test/beta-1', title: 'Beta first' },
+              { url: 'https://contract.test/alpha-2', snippet: 'alpha second' },
+            ],
+            truncated: false,
+          }
+        } else {
+          const { MockSearchDriver } = await importProjectModule('src/host/drivers/mock-driver.ts')
+          expectedMockValue = await new MockSearchDriver().searchOnce('fixture query', 10, new AbortController().signal)
+        }
         expectedMockContent = [{ type: 'text', text: toolWeb.formatSearchOutput(expectedMockValue) }]
+        expectedMeta = toolWeb.searchMetaFromValue(expectedMockValue)
+      }
+      if (tool === 'web_search' && observedResult !== undefined) {
+        presentationResult = toolWeb.presentSearchResult(args, observedResult)
       }
       return {
         source: Object.fromEntries(Object.entries(installed).map(([name, item]) => [name, item.version])),
@@ -446,6 +503,8 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
         transportResult: observeResult(transportResult),
         expectedMockValue,
         expectedMockContent,
+        expectedMeta,
+        presentationResult,
         officialSearchCalls,
         officialFetchCalls,
         driverCalls,
