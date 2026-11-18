@@ -172,7 +172,7 @@ function toFailure(error: unknown): RpcErrorPayload {
   }
   return {
     code: 'settings/internal',
-    message: error instanceof Error ? error.message : String(error),
+    message: 'settings operation failed',
     details: {},
   }
 }

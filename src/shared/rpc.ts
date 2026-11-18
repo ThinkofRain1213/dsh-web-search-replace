@@ -113,6 +113,9 @@ export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
       if (!Object.hasOwn(payload, 'patch')) {
         throw new TypeError('settings.update 缺少 patch')
       }
+      if (Object.keys(payload).length !== 1) {
+        throw new TypeError('settings.update 只接受 patch 字段')
+      }
       assertSearchSettingsPatch(payload.patch)
       return
     }

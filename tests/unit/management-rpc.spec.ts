@@ -167,6 +167,23 @@ describe('settings.update', () => {
     expect(harness.double.edits).toHaveLength(0)
   })
 
+  it('Host 拒绝 settings.update 的未知顶层键且不写配置', async () => {
+    const harness = createRpcHarness()
+    const response = await rawCall(harness, {
+      type: 'client-request',
+      rpcId: 'raw-update-extra-key',
+      method: MANAGEMENT_RPC_ENDPOINT,
+      payload: {
+        method: 'settings.update',
+        payload: { patch: { enabled: true }, buddy: { currentAccountId: 'other' } },
+      },
+    })
+    const body = await response.json() as { result: { ok: boolean } }
+
+    expect(body.result.ok).toBe(false)
+    expect(harness.double.edits).toHaveLength(0)
+  })
+
   it('Host 拒绝非法端点偏好并保持旧值', async () => {
     const harness = createRpcHarness()
     const response = await rawCall(harness, {
@@ -211,10 +228,26 @@ describe('settings.update', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.error.code).toBe('settings/internal')
-      expect(result.error.message).toBe('disk full')
+      expect(result.error.message).toBe('settings operation failed')
       expect(typeof result.error.details).toBe('object')
     }
     expect(settings.getSnapshot()).toEqual(DEFAULT_SEARCH_SETTINGS)
+  })
+
+  it('settings/internal 使用固定通用消息且不回显依赖异常', async () => {
+    const { connection, double } = createRpcHarness()
+    const nonRealSentinel = 'NON_REAL_SENSITIVE_TEST_SENTINEL'
+    double.failNextWrite(nonRealSentinel)
+
+    const result = await callManagementRpc(connection, 'settings.update', {
+      patch: { enabled: true },
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('settings/internal')
+    expect(JSON.stringify(result).includes(nonRealSentinel)).toBe(false)
+    expect(result.error.message).toBe('settings operation failed')
   })
 })
 
@@ -341,6 +374,22 @@ describe('Host 防御与信封校验', () => {
 })
 
 describe('callManagementRpc 客户端校验', () => {
+  it('Client 拒绝 settings.update 的未知顶层键且不发请求', () => {
+    const { connection } = createRpcHarness()
+    let requestCount = 0
+    const call = connection.rpc.call
+    connection.rpc.call = async (...args) => {
+      requestCount += 1
+      return call(...args)
+    }
+
+    expect(() => callManagementRpc(connection, 'settings.update', {
+      patch: { enabled: true },
+      buddy: { currentAccountId: 'other' },
+    } as never)).toThrow(/settings\.update|payload/i)
+    expect(requestCount).toBe(0)
+  })
+
   it('拒绝未知 method 与非法 payload，不发出请求', () => {
     const { connection } = createRpcHarness()
 
