@@ -5,9 +5,21 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { runDshFixture, type FixtureMode } from './dsh-runtime.fixture.ts'
+import { runDshFixture, type DshFixtureObservation, type FixtureMode } from './dsh-runtime.fixture.ts'
 
 const MODES: readonly FixtureMode[] = ['native', 'ptc']
+const MAGPIE_KIMI_ROUTE = 'magpie/wps-lingxi-desktop/kimi-k3.1-pro'
+const DEEPSEEK_OFF_CONTROL = {
+  provider: 'deepseek-account',
+  model: 'deepseek-flash',
+} as const
+
+function expectMagpieKimiRoute(observation: DshFixtureObservation): void {
+  expect(observation.provider).toBe('magpie')
+  expect(observation.model).toBe('wps-lingxi-desktop/kimi-k3.1-pro')
+  expect(observation.route).toBe(MAGPIE_KIMI_ROUTE)
+  expect(observation.readyProviders).toEqual(['magpie'])
+}
 
 function delegatedCalls(mode: FixtureMode, nestedDelegated: boolean): number {
   if (mode === 'native') return nestedDelegated ? 1 : 0
@@ -21,8 +33,10 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
       enabled: false,
       installOverride: true,
       driver: 'missing',
+      modelSelection: DEEPSEEK_OFF_CONTROL,
     })
 
+    expect(observation.route).toBe('deepseek-account/deepseek-flash')
     expect(observation.officialSearchCalls).toBe(1)
     expect(observation.driverCalls).toEqual([])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, true))
@@ -45,6 +59,7 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
       lifecycle: true,
     })
 
+    expectMagpieKimiRoute(observation)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([{ query: 'fixture query', maxResults: 10 }])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, false))
@@ -80,6 +95,7 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
     })
 
     expect(observation.officialFetchCalls).toBe(1)
+    expectMagpieKimiRoute(observation)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, true))
@@ -102,6 +118,7 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
       driver: 'missing',
     })
 
+    expectMagpieKimiRoute(observation)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, false))
@@ -119,6 +136,7 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
       arguments: { queries: ['   '] },
     })
 
+    expectMagpieKimiRoute(observation)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, false))
@@ -136,6 +154,7 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
       driver: 'throw',
     })
 
+    expectMagpieKimiRoute(observation)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([{ query: 'fixture query', maxResults: 10 }])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, false))
@@ -154,6 +173,7 @@ describe.each(MODES)('%s tools/execute override', (mode) => {
       timeoutMs: 10,
     })
 
+    expectMagpieKimiRoute(observation)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([{ query: 'fixture query', maxResults: 10 }])
     expect(observation.downstreamCalls).toBe(delegatedCalls(mode, false))

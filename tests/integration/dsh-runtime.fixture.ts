@@ -18,9 +18,14 @@ const PROJECT_ROOT = path.resolve(FIXTURE_PATH, '../../..')
 export type FixtureMode = 'native' | 'ptc'
 export type FixtureDriver = 'normal' | 'missing' | 'throw' | 'delay'
 
+export interface FixtureModelSelection {
+  readonly provider: string
+  readonly model: string
+}
+
 export interface DshFixtureRequest {
   readonly mode: FixtureMode
-  readonly model?: 'deepseek-flash' | 'deepseek-v4-pro'
+  readonly modelSelection?: FixtureModelSelection
   readonly enabled?: boolean
   readonly channel?: 'buddy' | 'workbuddy' | 'qoder' | 'qodercn'
   readonly tool?: 'web_search' | 'web_fetch'
@@ -45,6 +50,7 @@ export interface DshFixtureObservation {
   readonly mode: FixtureMode
   readonly model: string
   readonly provider: string
+  readonly route: string
   readonly admitted: readonly string[]
   readonly nativeSchemas: readonly string[]
   readonly ptcSchemas: readonly string[]
@@ -196,8 +202,11 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
   const timeoutPolicy = installed['@deepseek-ai/dsh-tool-call-timeout-policy']!.module
 
   const mode = request.mode
-  const model = request.model ?? 'deepseek-flash'
-  const provider = 'deepseek-account'
+  const modelSelection = request.modelSelection ?? {
+    provider: 'magpie',
+    model: 'wps-lingxi-desktop/kimi-k3.1-pro',
+  }
+  const { provider, model } = modelSelection
   const enabled = request.enabled ?? true
   const channel = request.channel ?? 'buddy'
   const tool = request.tool ?? 'web_search'
@@ -428,6 +437,7 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
         mode,
         model,
         provider,
+        route: `${provider}/${model}`,
         admitted,
         nativeSchemas,
         ptcSchemas,

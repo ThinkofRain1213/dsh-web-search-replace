@@ -7,7 +7,7 @@
 
 在当前安装 **DSH Desktop Runtime 0.2.2-rc.3** 的真实 Cordis、WebRuntime、tool-web、ToolsService、Native/PTC executor、共享 ToolExecutionPipeline 与 timeout policy 上，Spike 成立：
 
-- `deepseek-flash`（目录显示名 DeepSeek-V4.1-Flash）和 `deepseek-v4-pro` 两个代表模型均可通过 `ToolsService.resolve()` 准入 `web_search`。
+- 指定 Magpie/WPS 灵犀代表模型 `magpie/wps-lingxi-desktop/kimi-k3.1-pro` 与 `magpie/wps-lingxi-desktop/deepseek-v4.1-flash` 均可通过 `ToolsService.resolve()` 准入 `web_search`。
 - Native 直接把 `web_search` 放入模型 schema；PTC 直接 schema 只有 `run_code`，但官方生成的 TypeScript SDK 含 `web_search`，真实 SDK binding 可以嵌套执行它。
 - 安装监听器前，ON 仍调用官方 search spy 一次；安装后 OFF 调官方一次，ON 调所选 mock 一次且官方 spy 为零。
 - 监听器返回的 `{ value }` 由宿主共享管道重新经过 tool-web 原有 output schema、`formatSearchOutput` render 和 presentation meta，不复制官方渲染器。
@@ -33,7 +33,9 @@
 | `@deepseek-ai/dsh-tool-executor-ptc` | 0.2.2-rc.3 | `src/index.ts`、`src/ptc.ts` |
 | `@deepseek-ai/dsh-tool-call-timeout-policy` | 0.2.2-rc.3 | `src/index.ts` |
 
-代表模型 ID 取自同一安装的 `dsh-llm-deepseek/src/models.ts`。执行子进程实测 Node `v24.21.0`、Electron `44.7.0`。
+代表模型使用主会话绑定的当前目录 ID：`magpie/wps-lingxi-desktop/kimi-k3.1-pro` 与 `magpie/wps-lingxi-desktop/deepseek-v4.1-flash`。当前安装 `dsh-agent/src/model-selection.ts` 的完整 route 编码为 `` `${provider}/${model}` ``，因此二者分别构造为 `provider = "magpie"`、`model = "wps-lingxi-desktop/kimi-k3.1-pro"` 和 `provider = "magpie"`、`model = "wps-lingxi-desktop/deepseek-v4.1-flash"`。当前安装静态包内没有 Magpie 字面量；这里没有据此替换目标模型，也没有读取 profile 或凭据。`deepseek-account/deepseek-flash` 仅保留为明确命名的 OFF 对照，所有安装前 ON、ON 成功、ON 错误与 ON timeout 都使用 Kimi Magpie route。
+
+执行子进程实测 Node `v24.21.0`、Electron `44.7.0`。
 
 关键宿主事实：
 
@@ -65,7 +67,7 @@
 | 最终结果观察 | 直接 search result | nested search result；另有 outer `run_code` result |
 | override 外层调用次数差异 | 只有 search 本身 | outer `run_code` 总是非 `web_search`，必须先 `next()`；只有 nested search 可短路 |
 
-两个模型在两种模式下都完成准入；安装前 ON 的官方 search spy 都为 1。PTC 的“直接 schema 只有 `run_code`”是宿主设计，不是准入缺失。
+两个 Magpie/WPS 目标模型在两种模式下都完成准入，真实 `searchReady` 收到的 provider 均为 `magpie`；安装前 ON 使用 Kimi Magpie route，官方 search spy 都为 1。PTC 的“直接 schema 只有 `run_code`”是宿主设计，不是准入缺失。
 
 ## OFF / ON 与官方 output 证据
 
@@ -80,7 +82,7 @@ pnpm vitest run tests/integration/tool-admission.spec.ts tests/integration/tool-
 | 场景 | 官方 search spy | 官方 fetch spy | mock 调用 | 结果 |
 |---|---:|---:|---:|---|
 | 安装前 ON search | 1 | 0 | 0 | 官方值与 render |
-| 安装后 OFF search，驱动表为空 | 1 | 0 | 0 | `next()`，官方值 |
+| 安装后 OFF search，驱动表为空；显式 `deepseek-account/deepseek-flash` 对照 | 1 | 0 | 0 | `next()`，官方值 |
 | 安装后 ON search | 0 | 0 | 1 | mock `{value}` 经官方 output |
 | 安装后 ON fetch | 0 | 1 | 0 | 始终 `next()`，官方 fetch 值 |
 | ON 缺所选渠道驱动 | 0 | 0 | 0 | 错误结果，无回退 |
