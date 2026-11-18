@@ -17,6 +17,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
+import { createSettingsDouble } from './support/settings-double.ts'
+
 const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PACKAGE_NAME = 'dsh-web-search-channels'
 
@@ -140,20 +142,37 @@ describe('tsconfig.json', () => {
 })
 
 describe('Host 入口', () => {
-  it('导出空 apply(ctx, config)，不注册任何业务能力', async () => {
+  it('导出 apply(ctx, config) 与 volatile Config，并注册设置服务与管理 RPC', async () => {
     const host = await import('../../src/host/index.ts')
     expect(typeof host.apply).toBe('function')
     expect(host.apply.length).toBe(2)
+    expect(host.Config).toBeDefined()
+    expect([...host.inject].sort()).toEqual(['configEditor', 'connection'])
 
-    const touched: string[] = []
-    const ctx = new Proxy({}, {
-      get: (_target, property) => {
-        touched.push(String(property))
-        return () => {}
+    const double = createSettingsDouble()
+    const routes = new Map<string, { path: string }>()
+    let effects = 0
+    const ctx = {
+      connection: {
+        fetch: {
+          register(route: { path: string }) {
+            routes.set(route.path, route)
+            return async () => { routes.delete(route.path) }
+          },
+        },
+        rpc: { async call() { return { ok: true, value: undefined } } },
       },
-    })
-    expect(() => { host.apply(ctx, {}) }).not.toThrow()
-    expect(touched).toEqual([])
+      configEditor: double.editor,
+      fiber: { entry: { id: 'dsh-web-search-channels' } },
+      effect(execute: () => (() => Promise<void>) | void) {
+        effects += 1
+        return execute()
+      },
+    }
+
+    expect(() => { host.apply(ctx as never, double.config) }).not.toThrow()
+    expect(effects).toBe(1)
+    expect(routes.has('/api/web-search-channels')).toBe(true)
   })
 })
 
