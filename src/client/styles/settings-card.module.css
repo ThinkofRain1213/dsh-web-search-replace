@@ -1,0 +1,26 @@
+/* 「网页搜索渠道」设置卡的 0.1.0 骨架排版。
+   只使用宿主主题 token（--dsw-alias-*），并提供 currentColor 兜底，
+   使深浅主题与未知 token 下都可读。类名由构建脚本按「包名/文件#类名」哈希。 */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary, currentColor);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary, currentColor));
+}

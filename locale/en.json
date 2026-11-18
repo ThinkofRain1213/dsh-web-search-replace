@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Web search channels",
+    "description": "Replace DSH web search with the credentials of a channel you choose. The 0.1.0 skeleton only registers this settings card and does not take over search yet; while off, the official web_search is returned unchanged."
+  }
+}

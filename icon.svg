@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Web search channels">
+  <title>Web search channels</title>
+  <defs>
+    <linearGradient id="dshWebSearchChannelsBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f6fed" />
+      <stop offset="1" stop-color="#16337f" />
+    </linearGradient>
+    <clipPath id="dshWebSearchChannelsClip">
+      <rect x="4" y="4" width="56" height="56" rx="14" />
+    </clipPath>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#dshWebSearchChannelsBg)" />
+  <g clip-path="url(#dshWebSearchChannelsClip)" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round">
+    <path d="M17 23.5h18" />
+    <path d="M17 31.5h26" />
+    <path d="M17 39.5h12" />
+    <circle cx="40.5" cy="40.5" r="7" />
+    <path d="M45.8 45.8 50.5 50.5" />
+  </g>
+</svg>

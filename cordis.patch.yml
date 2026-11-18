@@ -1,0 +1,7 @@
+# Bundle patch layer: one row loads this package's main entry as the Host half
+# (a plain Cordis plugin); the `dsh.client` declaration in package.json makes
+# the web app load ./lib/client.js as the browser half. The row id, the row
+# name, and the settings-slot key are the same package name on purpose.
+- insert:
+    - id: dsh-web-search-channels
+      name: dsh-web-search-channels
