@@ -243,7 +243,59 @@ describe('postTencentSearch HTTP 与传输错误分类', () => {
     })
     expect(calls).toHaveLength(0)
   })
+
+  it('外层 in-flight abort 为宿主 TimeoutReason(code=TOOL_TIMEOUT) → TIMEOUT', async () => {
+    const outer = new AbortController()
+    const { fetcher } = hangingFetcher()
+    const promise = postTencentSearch(request({ signal: outer.signal, fetcher }))
+    const assertion = expect(promise).rejects.toMatchObject({
+      name: 'TencentSearchProtocolError',
+      code: 'TIMEOUT',
+    })
+
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    outer.abort(new HostTimeoutReason('host deadline elapsed'))
+    await assertion
+  })
+
+  it('调用前已以宿主 TimeoutReason(code=TOOL_TIMEOUT) abort → TIMEOUT 且 fetch 0 次', async () => {
+    const outer = new AbortController()
+    outer.abort(new HostTimeoutReason('host deadline elapsed'))
+    const { fetcher, calls } = jsonFetcher({ results: [] })
+
+    await expect(postTencentSearch(request({ signal: outer.signal, fetcher }))).rejects.toMatchObject({
+      name: 'TencentSearchProtocolError',
+      code: 'TIMEOUT',
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('非 TimeoutReason/TimeoutError name 但 code=TOOL_TIMEOUT 的宿主 reason → TIMEOUT', async () => {
+    const outer = new AbortController()
+    const { fetcher } = hangingFetcher()
+    const promise = postTencentSearch(request({ signal: outer.signal, fetcher }))
+    const assertion = expect(promise).rejects.toMatchObject({
+      name: 'TencentSearchProtocolError',
+      code: 'TIMEOUT',
+    })
+
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    outer.abort(new ToolTimeoutReason('host deadline elapsed'))
+    await assertion
+  })
 })
+
+/** 当前 DSH `deadline()` 的宿主真实形状。 */
+class HostTimeoutReason extends Error {
+  override name = 'TimeoutReason'
+  readonly code = 'TOOL_TIMEOUT'
+}
+
+/** 仅靠 code 兼容的宿主 timeout 形状；name 不是已知超时名。 */
+class ToolTimeoutReason extends Error {
+  override name = 'ToolTimeoutError'
+  readonly code = 'TOOL_TIMEOUT'
+}
 
 function hangingFetcher(): { readonly fetcher: typeof fetch } {
   const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {

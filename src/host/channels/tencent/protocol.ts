@@ -151,9 +151,12 @@ function transportFailure(
   )
 }
 
+/** 宿主 deadline 的通用判据：已知超时 name，或既有 errors.ts 认可的 TOOL_TIMEOUT code。 */
 function isTimeoutReason(reason: unknown): boolean {
-  const name = (reason as { name?: unknown } | undefined)?.name
-  return name === 'TimeoutReason' || name === 'TimeoutError'
+  const record = reason as { name?: unknown; code?: unknown } | undefined
+  return record?.name === 'TimeoutReason'
+    || record?.name === 'TimeoutError'
+    || record?.code === 'TOOL_TIMEOUT'
 }
 
 /** HTTP 非 2xx 的可路由分类；响应体只截取一段可读说明，不包含请求头。 */
