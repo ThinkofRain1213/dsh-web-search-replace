@@ -217,6 +217,75 @@ describe('SearchExecutor 官方合并与输出值', () => {
     expect(value.truncated).toBe(true)
   })
 
+  it('单查询结果同样按 URL 去重，保留首个来源且不伪造截断', async () => {
+    const { driver } = recordingDriver(() => ({
+      content: 'Single answer',
+      sources: [
+        { url: 'https://example.test/shared', title: 'First wins' },
+        { url: 'https://example.test/only' },
+        { url: 'https://example.test/shared', title: 'duplicate must not replace first' },
+      ],
+      truncated: false,
+    }))
+
+    await expect(executeWith({ queries: ['alpha'] }, driver)).resolves.toEqual({
+      content: 'Single answer',
+      sources: [
+        { url: 'https://example.test/shared', title: 'First wins' },
+        { url: 'https://example.test/only' },
+      ],
+      truncated: false,
+    })
+  })
+
+  it('单查询返回超过 10 个唯一 URL 时截断到 10 条并标记 truncated', async () => {
+    const { driver } = recordingDriver(() => ({
+      sources: Array.from({ length: 11 }, (_, rank) => ({
+        url: `https://example.test/single/${rank}`,
+      })),
+      truncated: false,
+    }))
+
+    const value = await executeWith({ queries: ['alpha'] }, driver) as SearchDriverResult
+    expect(value.sources.map(source => source.url)).toEqual(
+      Array.from({ length: 10 }, (_, rank) => `https://example.test/single/${rank}`),
+    )
+    expect(value.truncated).toBe(true)
+  })
+
+  it('精确去重后仅剩一个 query 时同样按 URL 去重且不加多查询标题', async () => {
+    const { driver, calls } = recordingDriver(() => ({
+      content: 'Deduplicated answer',
+      sources: [
+        { url: 'https://example.test/alpha' },
+        { url: 'https://example.test/alpha' },
+      ],
+      truncated: false,
+    }))
+
+    await expect(executeWith({ queries: ['alpha', 'alpha'] }, driver)).resolves.toEqual({
+      content: 'Deduplicated answer',
+      sources: [{ url: 'https://example.test/alpha' }],
+      truncated: false,
+    })
+    expect(calls.map(call => call.query)).toEqual(['alpha'])
+  })
+
+  it('精确去重后仅剩一个 query 时同样受 10 条 cap 并标记 truncated', async () => {
+    const { driver } = recordingDriver(() => ({
+      sources: Array.from({ length: 12 }, (_, rank) => ({
+        url: `https://example.test/deduped/${rank}`,
+      })),
+      truncated: false,
+    }))
+
+    const value = await executeWith({ queries: ['alpha', 'alpha'] }, driver) as SearchDriverResult
+    expect(value.sources.map(source => source.url)).toEqual(
+      Array.from({ length: 10 }, (_, rank) => `https://example.test/deduped/${rank}`),
+    )
+    expect(value.truncated).toBe(true)
+  })
+
   it('折叠摘要空白、按 800 字符截断并保留 publishedAt，不伪造 content', async () => {
     const { driver } = recordingDriver(() => ({
       sources: [{

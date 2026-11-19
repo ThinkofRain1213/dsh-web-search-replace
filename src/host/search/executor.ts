@@ -46,7 +46,7 @@ export async function executeSearchQueries(
         await driver.searchOnce(queries[0]!, options.profile.maxResults, signal),
         options.channel,
       )
-      return projectResult(result, options.profile.summaryMaxChars)
+      return projectSingleResult(result, options.profile.maxResults, options.profile.summaryMaxChars)
     } catch (error) {
       throw normalizeChannelSearchError(error, options.channel)
     }
@@ -124,12 +124,14 @@ function isDriverSource(value: unknown): value is MockSearchSource {
     && (source.publishedAt === undefined || typeof source.publishedAt === 'string')
 }
 
-/** 与官方 mergeSearchResults 一致：仅确认丢源或上游截断时设置 truncated。 */
-function mergeResults(
-  queries: readonly string[],
+/**
+ * 官方输出不变量：按 rank 轮转、URL 首次出现者获胜，最多 maxResults 条；
+ * 仅在实际丢弃新 URL 时报告 droppedSource。单查询与多查询共用同一归一化。
+ */
+function collectSources(
   results: readonly SearchDriverResult[],
   maxResults: number,
-): SearchDriverResult {
+): { sources: MockSearchSource[]; droppedSource: boolean } {
   const seen = new Set<string>()
   const sources: MockSearchSource[] = []
   let sourceRanks = 0
@@ -148,6 +150,29 @@ function mergeResults(
       }
     }
   }
+  return { sources, droppedSource }
+}
+
+/** 单查询保留驱动 content，不添加多查询标题；来源仍走共享去重与 cap。 */
+function projectSingleResult(
+  result: SearchDriverResult,
+  maxResults: number,
+  summaryMaxChars: number,
+): WebSearchValue {
+  const { sources, droppedSource } = collectSources([result], maxResults)
+  return projectResult(
+    { ...result, sources, truncated: result.truncated || droppedSource },
+    summaryMaxChars,
+  )
+}
+
+/** 与官方 mergeSearchResults 一致：仅确认丢源或上游截断时设置 truncated。 */
+function mergeResults(
+  queries: readonly string[],
+  results: readonly SearchDriverResult[],
+  maxResults: number,
+): SearchDriverResult {
+  const { sources, droppedSource } = collectSources(results, maxResults)
   const contents = results.flatMap((result, index) => {
     if (result.content === undefined || result.content.length === 0) return []
     return [`### ${queries[index]}\n\n${result.content}`]
