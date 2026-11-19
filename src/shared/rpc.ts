@@ -4,8 +4,20 @@
  * Host 通过 `connection.fetch.register` 注册精确路由；Client 通过
  * `connection.rpc.call('/api', 'web-search-channels', { method, payload }, signal)`
  * 调用。两端共用同一份 method/payload 校验，避免只信任其中一侧。
+ *
+ * 方法空间由两部分组成：普通设置（settings.*）与账号管理（accounts.*）。
+ * 账号 payload 校验复用 `shared/accounts.ts` 的单一实现，不在这里复制第二套。
  */
 import type { ChannelId } from './channels.ts'
+import {
+  ACCOUNT_RPC_METHODS,
+  assertAccountRpcPayload,
+  isAccountRpcMethod,
+  type AccountCollection,
+  type AccountRpcPayloads,
+  type AccountSummary,
+  type ClearAccountsResult,
+} from './accounts.ts'
 import {
   assertSearchSettingsPatch,
   assertSetCurrentAccountRequest,
@@ -20,24 +32,48 @@ export const MANAGEMENT_RPC_ENDPOINT = 'web-search-channels'
 /** 精确路由路径。 */
 export const MANAGEMENT_RPC_PATH = `${MANAGEMENT_RPC_CHANNEL}/${MANAGEMENT_RPC_ENDPOINT}`
 
-/** 管理 RPC 的精确方法名。 */
-export const MANAGEMENT_RPC_METHODS = [
+/** 普通设置 RPC 的精确方法名。 */
+export const SETTINGS_RPC_METHODS = [
   'settings.get',
   'settings.update',
   'settings.setCurrentAccount',
 ] as const
 
+/** 管理 RPC 的全部精确方法名：设置 + 账号。 */
+export const MANAGEMENT_RPC_METHODS = [
+  ...SETTINGS_RPC_METHODS,
+  ...ACCOUNT_RPC_METHODS,
+] as const
+
+/** 普通设置 RPC 方法名。 */
+export type SettingsRpcMethod = (typeof SETTINGS_RPC_METHODS)[number]
+
 /** 管理 RPC 方法名。 */
 export type ManagementRpcMethod = (typeof MANAGEMENT_RPC_METHODS)[number]
 
-/** 每个方法接受的内部 payload。 */
-export interface ManagementRpcPayloads {
+/** 普通设置 RPC 的 payload 形状。 */
+export interface SettingsRpcPayloads {
   'settings.get': Record<string, never>
   'settings.update': { readonly patch: SearchSettingsPatch }
   'settings.setCurrentAccount': {
     readonly channel: ChannelId
     readonly accountId: string | null
   }
+}
+
+/** 每个管理 RPC 方法接受的内部 payload；账号半边复用共享账号契约。 */
+export type ManagementRpcPayloads = SettingsRpcPayloads & AccountRpcPayloads
+
+/** 每个管理 RPC 方法成功时的结果类型。 */
+export interface ManagementRpcResults {
+  'settings.get': SearchSettingsSnapshot
+  'settings.update': SearchSettingsSnapshot
+  'settings.setCurrentAccount': SearchSettingsSnapshot
+  'accounts.list': readonly AccountSummary[]
+  'accounts.current': AccountSummary | null
+  'accounts.setCurrent': AccountSummary | null
+  'accounts.delete': AccountCollection
+  'accounts.clearAll': ClearAccountsResult
 }
 
 /** 管理 RPC 的错误载荷；`details` 是 Connection 客户端解析所必需的对象。 */
@@ -93,7 +129,8 @@ export function isManagementRpcMethod(value: unknown): value is ManagementRpcMet
 /**
  * 严格校验一个方法对应的 payload。
  *
- * 未知键、缺失键和错误类型都抛 `TypeError`；Host 捕获后映射为
+ * 账号方法直接委托 `assertAccountRpcPayload`，因此 Host/Client 不会出现两套
+ * 漂移的账号校验。未知键、缺失键和错误类型都抛错；Host 捕获后映射为
  * `gateway/bad-request`，Client 侧则在真正发出请求前失败。
  */
 export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
@@ -102,6 +139,10 @@ export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
 ): asserts payload is ManagementRpcPayloads[M] {
   if (!isRecord(payload)) {
     throw new TypeError(`管理 RPC ${method} 的 payload 必须是普通对象`)
+  }
+  if (isAccountRpcMethod(method)) {
+    assertAccountRpcPayload(method, payload)
+    return
   }
   switch (method) {
     case 'settings.get':
@@ -127,13 +168,17 @@ export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
   }
 }
 
-/** 调用管理 RPC；无效 method/payload 在发出请求前抛错。 */
+/**
+ * 调用管理 RPC；无效 method/payload 在发出请求前抛错。
+ *
+ * 返回类型按方法映射：设置方法返回设置快照，账号方法返回对应账号 DTO。
+ */
 export function callManagementRpc<M extends ManagementRpcMethod>(
   connection: ManagementRpcConnection,
   method: M,
   payload: ManagementRpcPayloads[M],
   signal?: AbortSignal,
-): Promise<RpcResult<SearchSettingsSnapshot>> {
+): Promise<RpcResult<ManagementRpcResults[M]>> {
   if (!isManagementRpcMethod(method)) {
     throw new TypeError(`未知管理方法：${String(method)}`)
   }
@@ -143,7 +188,7 @@ export function callManagementRpc<M extends ManagementRpcMethod>(
     MANAGEMENT_RPC_ENDPOINT,
     { method, payload },
     signal,
-  ) as Promise<RpcResult<SearchSettingsSnapshot>>
+  ) as Promise<RpcResult<ManagementRpcResults[M]>>
 }
 
 /** 判断普通数据对象。 */

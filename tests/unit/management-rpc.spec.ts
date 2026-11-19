@@ -9,8 +9,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { registerManagementRpc } from '../../src/host/rpc.ts'
-import { SettingsService } from '../../src/host/settings/service.ts'
-import { DEFAULT_SEARCH_SETTINGS } from '../../src/shared/contracts.ts'
+import { DEFAULT_SEARCH_SETTINGS, type SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
+import {
+  AccountRpcValidationError,
+  type AccountCollection,
+  type AccountSummary,
+  type ClearAccountsResult,
+} from '../../src/shared/accounts.ts'
 import {
   callManagementRpc,
   MANAGEMENT_RPC_ENDPOINT,
@@ -19,16 +24,13 @@ import {
   type ManagementRpcRoute,
   type RpcResult,
 } from '../../src/shared/rpc.ts'
-import { createSettingsDouble } from './support/settings-double.ts'
+import { createAccountFixture } from './support/account-fixture.ts'
 
 /** 一个最小但真实的 connection 双端：注册路由 + 用 rpc.call 发信封。 */
 function createRpcHarness() {
-  const double = createSettingsDouble()
-  const settings = new SettingsService({
-    configEditor: double.editor,
-    entry: { id: 'dsh-web-search-channels' },
-    config: double.config,
-  })
+  const fixture = createAccountFixture()
+  const settings = fixture.settings
+  const double = fixture.settingsDouble
   const routes = new Map<string, ManagementRpcRoute>()
   const connection: ManagementRpcConnection = {
     fetch: {
@@ -60,8 +62,16 @@ function createRpcHarness() {
       },
     },
   }
-  const dispose = registerManagementRpc(connection, settings)
-  return { connection, settings, double, routes, dispose }
+  const dispose = registerManagementRpc(connection, settings, fixture.service)
+  return {
+    connection,
+    settings,
+    double,
+    routes,
+    dispose,
+    store: fixture.store,
+    service: fixture.service,
+  }
 }
 
 /** 直接调用已注册路由，绕开 Client 校验以测试 Host 的防御。 */
@@ -401,5 +411,106 @@ describe('callManagementRpc 客户端校验', () => {
       channel: 'buddy',
       accountId: 'Account_1',
     } as never)).toThrow(/slug|account|账号/i)
+  })
+})
+
+describe('accounts.* 共享 Client 契约', () => {
+  it('五个账号方法都经 callManagementRpc 的统一 envelope 有效调用', async () => {
+    const { connection, store, double } = createRpcHarness()
+    const first = await store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'first@example.test',
+      displayName: 'First',
+      secret: { accessToken: 'MGMT_TOKEN_A' },
+    })
+    const second = await store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'second@example.test',
+      displayName: 'Second',
+      secret: { accessToken: 'MGMT_TOKEN_B' },
+    })
+
+    const list = await callManagementRpc(connection, 'accounts.list', { channel: 'buddy' })
+    expect(list.ok).toBe(true)
+    if (list.ok) {
+      const summaries: readonly AccountSummary[] = list.value
+      expect(summaries.map(summary => summary.id).sort()).toEqual(
+        [first.accountId, second.accountId].sort(),
+      )
+    }
+
+    const set = await callManagementRpc(connection, 'accounts.setCurrent', {
+      channel: 'buddy',
+      accountId: first.accountId,
+    })
+    expect(set.ok).toBe(true)
+    if (set.ok) {
+      const current: AccountSummary | null = set.value
+      expect(current?.id).toBe(first.accountId)
+    }
+
+    const current = await callManagementRpc(connection, 'accounts.current', { channel: 'buddy' })
+    expect(current.ok).toBe(true)
+    if (current.ok) {
+      const summary: AccountSummary | null = current.value
+      expect(summary?.id).toBe(first.accountId)
+    }
+
+    const deleted = await callManagementRpc(connection, 'accounts.delete', {
+      channel: 'buddy',
+      accountId: first.accountId,
+    })
+    expect(deleted.ok).toBe(true)
+    if (deleted.ok) {
+      const collection: AccountCollection = deleted.value
+      expect(collection.current).toBeNull()
+      expect(collection.accounts.map(summary => summary.id)).toEqual([second.accountId])
+    }
+
+    const cleared = await callManagementRpc(connection, 'accounts.clearAll', {})
+    expect(cleared.ok).toBe(true)
+    if (cleared.ok) {
+      const result: ClearAccountsResult = cleared.value
+      expect(result).toEqual({ cleared: 1 })
+    }
+    expect(double.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('账号方法非法 payload 在 connection.rpc.call 之前失败', () => {
+    const { connection } = createRpcHarness()
+    let requestCount = 0
+    const original = connection.rpc.call
+    connection.rpc.call = async (...args) => {
+      requestCount += 1
+      return original(...args)
+    }
+
+    const invalidCalls = [
+      ['accounts.list', { channel: 'deepseek' }],
+      ['accounts.current', {}],
+      ['accounts.setCurrent', { channel: 'buddy' }],
+      ['accounts.delete', { channel: 'buddy', accountId: 'Bad_ID' }],
+      ['accounts.clearAll', { channel: 'buddy' }],
+    ] as const
+
+    for (const [method, payload] of invalidCalls) {
+      expect(() => (callManagementRpc as (...args: unknown[]) => unknown)(
+        connection,
+        method,
+        payload,
+      )).toThrow(AccountRpcValidationError)
+    }
+    expect(requestCount).toBe(0)
+  })
+
+  it('settings 方法仍经同一调用器返回设置快照', async () => {
+    const { connection } = createRpcHarness()
+
+    const result = await callManagementRpc(connection, 'settings.get', {})
+    expect(result).toEqual({ ok: true, value: DEFAULT_SEARCH_SETTINGS })
+    if (result.ok) {
+      const snapshot: SearchSettingsSnapshot = result.value
+      expect(snapshot.search).toEqual({ enabled: false, channel: 'buddy' })
+    }
   })
 })
