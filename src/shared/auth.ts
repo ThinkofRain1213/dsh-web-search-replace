@@ -1,10 +1,11 @@
 /**
- * 授权流程（CodeBuddy / WorkBuddy / Qoder 国际版）的共享 RPC 契约。
+ * 授权流程（CodeBuddy / WorkBuddy / Qoder 国际版 / Qoder 中国版）的共享 RPC 契约。
  *
  * 本文件只定义 Client 可见的非秘密投影、严格 payload 校验与通用错误边界：
  *
  * - 四个方法 `auth.start/cancel/status/refresh` 都只接受
- *   `channel: 'buddy' | 'workbuddy' | 'qoder'`；每个产品 flow 仍只处理自己的渠道；
+ *   `channel: 'buddy' | 'workbuddy' | 'qoder' | 'qodercn'`；每个产品 flow 仍只
+ *   处理自己的渠道；
  * - 每个方法只接受自己声明的字段，未知键、缺失键和错误类型一律拒绝；
  * - 状态结果只含 flowId、状态、授权 URL、固定展示说明与 AccountSummary，
  *   绝不包含 accessToken、refreshToken、secret、上游响应正文或异常原文；
@@ -28,11 +29,20 @@ export const WORKBUDDY_AUTH_CHANNEL = 'workbuddy' as const
 /** Qoder 国际版授权渠道；中国版使用独立渠道与独立流程。 */
 export const QODER_AUTH_CHANNEL = 'qoder' as const
 
-/** 共享授权契约允许的三个渠道。 */
+/**
+ * Qoder 中国版授权渠道。
+ *
+ * 与 `QODER_AUTH_CHANNEL` 共享设备授权协议形状，但产品参数、账号、当前账号、
+ * grant、flowId、刷新单飞与 dispose 状态完全独立。
+ */
+export const QODERCN_AUTH_CHANNEL = 'qodercn' as const
+
+/** 共享授权契约允许的四个渠道。 */
 export const AUTH_CHANNELS = [
   BUDDY_AUTH_CHANNEL,
   WORKBUDDY_AUTH_CHANNEL,
   QODER_AUTH_CHANNEL,
+  QODERCN_AUTH_CHANNEL,
 ] as const
 
 /** 授权渠道字面量类型。 */
@@ -46,6 +56,9 @@ export type WorkbuddyAuthChannel = typeof WORKBUDDY_AUTH_CHANNEL
 
 /** Qoder 国际版渠道字面量类型。 */
 export type QoderAuthChannel = typeof QODER_AUTH_CHANNEL
+
+/** Qoder 中国版渠道字面量类型。 */
+export type QoderCnAuthChannel = typeof QODERCN_AUTH_CHANNEL
 
 /** 授权流程状态；`pending` 之外都是终态。 */
 export const AUTH_FLOW_STATES = [
@@ -85,7 +98,8 @@ export type AuthFlowErrorCode = (typeof AUTH_FLOW_ERROR_CODES)[number]
  * 产品授权错误的通用基类。
  *
  * 只承载固定 code 与固定 message；子类（BuddyAuthError / WorkbuddyAuthError /
- * QoderInternationalAuthError）可提供产品文案，但绝不设置 `cause`，避免秘密沿
+ * QoderInternationalAuthError / QoderCnAuthError）可提供产品文案，但绝不设置
+ * `cause`，避免秘密沿
  * 错误链泄漏。Host 根 RPC 只捕获本基类，因此新增渠道不需要再改通用 dispatcher
  * 的产品 import。
  */
@@ -228,11 +242,11 @@ function rejectUnknownKeys(
   }
 }
 
-/** 只接受 buddy|workbuddy|qoder 渠道，绝不静默忽略其他渠道。 */
+/** 只接受 buddy|workbuddy|qoder|qodercn 渠道，绝不静默忽略其他渠道。 */
 function requireAuthChannel(record: Record<string, unknown>, context: string): void {
   if (!Object.hasOwn(record, 'channel') || !isAuthChannel(record.channel)) {
     throw new AuthRpcValidationError(
-      `${context} 只接受 channel=buddy、channel=workbuddy 或 channel=qoder`,
+      `${context} 只接受 channel=buddy、channel=workbuddy、channel=qoder 或 channel=qodercn`,
     )
   }
 }

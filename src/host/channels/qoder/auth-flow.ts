@@ -1,21 +1,23 @@
 /**
- * Qoder 国际版设备授权（PKCE）协议层。
+ * Qoder 设备授权（PKCE）共享协议层。
  *
- * 本文件只处理国际版固定产品参数与纯协议形状：
+ * 本文件只处理纯协议形状与可注入的产品参数：
  *
- * - 授权页 `https://qoder.com/device/selectAccounts`（PKCE + nonce + machine_id
- *   + 精确国际版 client_id）；
- * - 轮询 `https://openapi.qoder.sh/api/v1/deviceToken/poll`（404 = 用户尚未授权）；
- * - 续期 `https://openapi.qoder.sh/api/v1/deviceToken/refresh`（body 为
+ * - 授权页 `{authBase}/device/selectAccounts`（PKCE + nonce + machine_id +
+ *   产品 client_id）；
+ * - 轮询 `{openApiBase}/api/v1/deviceToken/poll`（404 = 用户尚未授权）；
+ * - 续期 `{openApiBase}/api/v1/deviceToken/refresh`（body 为
  *   `{refresh_token, machine_id}`，响应字段为 `device_token`）。
+ *
+ * 国际版默认参数为 `https://qoder.com` / `https://openapi.qoder.sh` / 精确
+ * 国际版 client_id；中国版由 `qodercn/auth.ts` 注入自己的产品参数，绝不把
+ * 两套参数混用。本文件不读写账号库、配置或 RPC，也不持有任何流程状态。
  *
  * 安全与可测性约束：
  * - 所有网络经可注入 fetcher；时钟、请求超时信号、PKCE 随机源与设备会话均可注入；
  * - 所有控制面请求 `redirect: 'error'`，绝不跟随 3xx 把秘密转发到其他 host；
  * - 任何错误都使用固定消息，不携带上游响应正文、异常原文或 cause；
- * - 授权 URL 只接受精确 `qoder.com` 白名单，不做后缀匹配；
- * - 本文件不包含中国版参数（`qoder.cn`、`gateway.qoder.com.cn`、CN clientId），
- *   也不读写账号库、配置或 RPC。
+ * - 授权 URL 只接受调用方注入的精确 host 白名单，不做后缀匹配。
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 
@@ -42,8 +44,33 @@ export const QODER_DEVICE_POLL_PATH = '/api/v1/deviceToken/poll'
 /** 续期路径（挂 `QODER_DEVICE_OPEN_API_BASE`）。 */
 export const QODER_DEVICE_REFRESH_PATH = '/api/v1/deviceToken/refresh'
 
-/** 授权 URL 允许的精确 host；空匹配/后缀匹配一律拒绝。 */
+/** 国际版授权 URL 允许的精确 host；空匹配/后缀匹配一律拒绝。 */
 export const QODER_AUTH_URL_HOSTS = Object.freeze(['qoder.com'])
+
+/**
+ * 一个 Qoder 区域版本固定的设备授权产品参数。
+ *
+ * 只描述协议常量，不包含任何账号/流程状态；国际版与中国版各自持有独立实例，
+ * 绝不把一套参数用于另一渠道。
+ */
+export interface QoderDeviceProduct {
+  /** 授权页基址（浏览器 URL 的 origin）。 */
+  readonly authBase: string
+  /** 设备码轮询与续期基址。 */
+  readonly openApiBase: string
+  /** 精确产品 client_id。 */
+  readonly clientId: string
+  /** 授权 URL 允许的精确 host 白名单。 */
+  readonly authUrlHosts: readonly string[]
+}
+
+/** 国际版固定产品参数（`QODER_DEVICE_AUTH_BASE` 等常量的结构化形式）。 */
+export const QODER_INTERNATIONAL_PRODUCT: QoderDeviceProduct = Object.freeze({
+  authBase: QODER_DEVICE_AUTH_BASE,
+  openApiBase: QODER_DEVICE_OPEN_API_BASE,
+  clientId: QODER_INTERNATIONAL_CLIENT_ID,
+  authUrlHosts: QODER_AUTH_URL_HOSTS,
+})
 
 /** 设备授权整体预算（与参考实现 5 分钟一致）。 */
 export const QODER_LOGIN_TIMEOUT_MS = 300_000
@@ -192,36 +219,46 @@ export function createQoderDeviceSession(
  *
  * 形态：`{authBase}/device/selectAccounts?challenge&challenge_method=S256&nonce&machine_id&client_id`
  */
-export function buildQoderAuthUrl(session: QoderDeviceSession): string {
+export function buildQoderAuthUrl(
+  session: QoderDeviceSession,
+  product: QoderDeviceProduct = QODER_INTERNATIONAL_PRODUCT,
+): string {
   const query = new URLSearchParams({
     challenge: session.pkce.challenge,
     challenge_method: 'S256',
     nonce: session.nonce,
     machine_id: session.machineId,
-    client_id: QODER_INTERNATIONAL_CLIENT_ID,
+    client_id: product.clientId,
   })
-  return `${QODER_DEVICE_AUTH_BASE}${QODER_DEVICE_SELECT_PATH}?${query.toString()}`
+  return `${product.authBase}${QODER_DEVICE_SELECT_PATH}?${query.toString()}`
 }
 
 /**
  * 构造轮询 URL。
  *
- * 挂 `openapi.qoder.sh`，不是授权页 host；写错 host 会让登录永远失败。
+ * 挂产品 `openApiBase`（国际版 `openapi.qoder.sh`、中国版
+ * `openapi.qoder.com.cn`），不是授权页 host；写错 host 会让登录永远失败。
  */
-export function buildQoderPollUrl(session: QoderDeviceSession): string {
+export function buildQoderPollUrl(
+  session: QoderDeviceSession,
+  product: QoderDeviceProduct = QODER_INTERNATIONAL_PRODUCT,
+): string {
   const query = new URLSearchParams({
     nonce: session.nonce,
     verifier: session.pkce.verifier,
     challenge_method: 'S256',
   })
-  return `${QODER_DEVICE_OPEN_API_BASE}${QODER_DEVICE_POLL_PATH}?${query.toString()}`
+  return `${product.openApiBase}${QODER_DEVICE_POLL_PATH}?${query.toString()}`
 }
 
 /**
  * 授权 URL 只接受精确白名单 host、https、无 userinfo、无自定义端口、无 fragment
  * 的绝对 URL；不做后缀匹配。
  */
-export function normalizeQoderAuthUrl(value: unknown): string | undefined {
+export function normalizeQoderAuthUrl(
+  value: unknown,
+  hosts: readonly string[] = QODER_AUTH_URL_HOSTS,
+): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   if (trimmed.length === 0 || trimmed.length > 2048) return undefined
@@ -232,7 +269,7 @@ export function normalizeQoderAuthUrl(value: unknown): string | undefined {
     if (url.username.length > 0 || url.password.length > 0) return undefined
     if (url.port.length > 0 && url.port !== '443') return undefined
     if (url.hash.length > 0) return undefined
-    if (!QODER_AUTH_URL_HOSTS.includes(url.hostname)) return undefined
+    if (!hosts.includes(url.hostname)) return undefined
     return trimmed
   } catch {
     return undefined
@@ -309,6 +346,8 @@ export function parseQoderTokenPayload(value: unknown): QoderTokenPayload {
 
 /** 设备授权客户端依赖；网络/时钟/超时全部可注入。 */
 export interface QoderDeviceAuthClientOptions {
+  /** 产品参数；默认国际版。中国版由 CN flow 显式注入。 */
+  readonly product?: QoderDeviceProduct
   /** 测试注入；生产默认使用全局 fetch。 */
   readonly fetcher?: typeof fetch
   /** 测试注入；生产默认使用系统时钟。 */
@@ -335,12 +374,14 @@ export interface QoderRefreshInput {
 
 /** 设备授权/续期协议客户端；不持有账号或流程状态。 */
 export class QoderDeviceAuthClient {
+  private readonly product: QoderDeviceProduct
   private readonly fetcher: typeof fetch
   private readonly clock: QoderAuthClock
   private readonly requestTimeoutMs: number
   private readonly timeoutSignal: (ms: number) => AbortSignal
 
   constructor(options: QoderDeviceAuthClientOptions = {}) {
+    this.product = options.product ?? QODER_INTERNATIONAL_PRODUCT
     this.fetcher = options.fetcher ?? fetch
     this.clock = options.clock ?? SYSTEM_CLOCK
     this.requestTimeoutMs = options.requestTimeoutMs ?? QODER_REQUEST_TIMEOUT_MS
@@ -358,7 +399,7 @@ export class QoderDeviceAuthClient {
     session: QoderDeviceSession,
     options: QoderPollOptions,
   ): Promise<QoderTokenPayload> {
-    const url = buildQoderPollUrl(session)
+    const url = buildQoderPollUrl(session, this.product)
     for (;;) {
       this.throwIfAborted(options.signal)
       if (this.clock.now() >= options.deadline) {
@@ -401,7 +442,7 @@ export class QoderDeviceAuthClient {
     if (input.refreshToken.length === 0 || input.machineId.length === 0) {
       throw new QoderDeviceTokenError('reauth-required', MESSAGE_REAUTH_REQUIRED)
     }
-    const url = `${QODER_DEVICE_OPEN_API_BASE}${QODER_DEVICE_REFRESH_PATH}`
+    const url = `${this.product.openApiBase}${QODER_DEVICE_REFRESH_PATH}`
     let result: { readonly status: number; readonly body: unknown }
     try {
       result = await this.request(

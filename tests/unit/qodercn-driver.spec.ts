@@ -540,6 +540,42 @@ describe('Qoder CN 驱动：失败分类', () => {
   })
 })
 
+describe('Qoder CN 驱动：可信 HTTP 状态透传', () => {
+  it('实际 HTTP 401 透传 httpStatus=401（供同账号刷新重试判定）', async () => {
+    const { driver, calls } = makeDriver({
+      handler: () => new Response('denied', { status: 401 }),
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal)
+      .catch(caught => caught)
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({
+      code: 'UNAUTHORIZED',
+      channel: 'qodercn',
+      httpStatus: 401,
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url.startsWith('https://gateway.qoder.com.cn/')).toBe(true)
+  })
+
+  it('实际 HTTP 403 透传 httpStatus=403，不得伪造成 401', async () => {
+    const { driver } = makeDriver({
+      handler: () => new Response('forbidden', { status: 403 }),
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal)
+      .catch(caught => caught)
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({
+      code: 'SEARCH_FAILED',
+      channel: 'qodercn',
+      httpStatus: 403,
+    })
+  })
+})
+
 describe('Qoder CN 驱动：签名器生命周期（成功与失败都 dispose）', () => {
   it('成功搜索后 dispose 本次签名器，且无上下文泄漏', async () => {
     const prepareSpy = vi.spyOn(QoderSigner.prototype, 'prepare')

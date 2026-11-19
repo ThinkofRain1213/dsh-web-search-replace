@@ -1677,7 +1677,9 @@ describe('WorkBuddy 授权 RPC 分派与通用错误边界', () => {
     expect(() => assertAuthRpcPayload('auth.start', { channel: 'workbuddy' })).not.toThrow()
     expect(() => assertAuthRpcPayload('auth.start', { channel: 'buddy' })).not.toThrow()
     expect(() => assertAuthRpcPayload('auth.start', { channel: 'qoder' })).not.toThrow()
-    expect(() => assertAuthRpcPayload('auth.start', { channel: 'qodercn' })).toThrow(
+    // Task 12 起共享契约覆盖中国版；WorkBuddy 流程仍只处理 workbuddy。
+    expect(() => assertAuthRpcPayload('auth.start', { channel: 'qodercn' })).not.toThrow()
+    expect(() => assertAuthRpcPayload('auth.start', { channel: 'deepseek' })).toThrow(
       AuthRpcValidationError,
     )
     expect(() => assertAuthRpcPayload('auth.start', {

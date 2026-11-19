@@ -1979,13 +1979,15 @@ describe('Qoder 授权 RPC 分派与安全边界', () => {
     expect(fixture.settingsDouble.edits).toHaveLength(0)
   })
 
-  it('共享 auth 契约接受 qoder，仍拒绝 qodercn 与未知渠道', () => {
+  it('共享 auth 契约接受 qoder 与 qodercn，仍拒绝未知渠道', () => {
     expect(() => assertAuthRpcPayload('auth.start', { channel: 'qoder' })).not.toThrow()
     expect(() => assertAuthRpcPayload('auth.refresh', {
       channel: 'qoder',
       accountId: 'a000000000000',
     })).not.toThrow()
-    for (const channel of ['qodercn', 'deepseek', '']) {
+    // Task 12 起共享契约覆盖中国版；国际版 dispatcher 仍只接受 qoder。
+    expect(() => assertAuthRpcPayload('auth.start', { channel: 'qodercn' })).not.toThrow()
+    for (const channel of ['deepseek', '']) {
       expect(() => assertAuthRpcPayload('auth.start', { channel })).toThrow(
         AuthRpcValidationError,
       )

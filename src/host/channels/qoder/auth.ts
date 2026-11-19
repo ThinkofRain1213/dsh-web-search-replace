@@ -1,8 +1,14 @@
 /**
- * Qoder 国际版独立设备授权、刷新与重新登录流程。
+ * Qoder 设备授权、刷新与重新登录的共享状态机，以及国际版产品包装。
  *
- * 本文件只属于 `qoder` 渠道：
- * - 设备授权固定使用国际版 `qoder.com` / `openapi.qoder.sh` 与精确
+ * 协议状态机（auth-flow.ts）与流程状态机（本文件 `QoderProductAuthFlow`）只复用
+ * **代码形状与安全边界**；每个产品 flow 实例独立持有账号、当前账号、grant、
+ * flowId、刷新单飞 map、取消与 dispose 状态。所有账号读写都使用构造时固定的
+ * `channel`，产品参数（authBase/openApiBase/clientId/authUrlHosts）、展示说明与
+ * 错误工厂都由产品包装注入。
+ *
+ * 国际版包装只属于 `qoder` 渠道：
+ * - 设备授权固定使用 `qoder.com` / `openapi.qoder.sh` 与精确
  *   `clientId=e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb`；绝不使用中国版
  *   clientId、`qoder.cn`、`gateway.qoder.com.cn` 或中国版账号；
  * - 成功授权只经 `AccountStore.saveAccount` 写本插件 qoder grant，秘密包含
@@ -10,9 +16,8 @@
  * - 首个可用账号经 `AccountService.setCurrent` 设为当前，后续账号不自动切换；
  * - 刷新按账号单飞，轮换经 `AccountStore.rotateSecret` 的原子 compare-and-set，
  *   旧刷新/旧 401 不会覆盖新记录；
- * - 只有明确 `UNAUTHORIZED`、channel=qoder 且 `httpStatus===401` 的错误，才允许
- *   刷新同一账号并重试原操作一次；其他错误不重试、不换账号/渠道；
- * - center/api2 端点偏好只属于搜索：本流程不接收设置服务，也不读取该偏好。
+ * - 只有明确 `UNAUTHORIZED`、channel 匹配且 `httpStatus===401` 的错误，才允许
+ *   刷新同一账号并重试原操作一次；其他错误不重试、不换账号/渠道。
  *
  * 授权与重新登录只能由显式方法/RPC 触发：构造函数不启动任何任务，也不注册
  * Agent tool。取消、超时与 dispose 会 abort 在飞请求并等待 settle；状态与错误
@@ -24,6 +29,7 @@ import {
   isAuthFlowError,
   isAuthFlowId,
   QODER_AUTH_CHANNEL,
+  type AuthChannel,
   type AuthFlowErrorCode,
   type AuthFlowPort,
   type AuthFlowStartOptions,
@@ -40,6 +46,7 @@ import type {
 } from '../../accounts/store.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
 import {
+  QODER_INTERNATIONAL_PRODUCT,
   QODER_LOGIN_TIMEOUT_MS,
   QODER_POLL_INTERVAL_MS,
   QODER_REQUEST_TIMEOUT_MS,
@@ -50,12 +57,13 @@ import {
   createQoderDeviceSession,
   normalizeQoderAuthUrl,
   type QoderAuthClock,
+  type QoderDeviceProduct,
   type QoderDeviceSession,
   type QoderTokenPayload,
 } from './auth-flow.ts'
 import type { QoderSigningCredential } from './protocol.ts'
 
-/** 授权流程错误码到固定文案。 */
+/** 国际版授权流程错误码到固定文案。 */
 const ERROR_MESSAGES: Readonly<Record<AuthFlowErrorCode, string>> = Object.freeze({
   'auth/invalid': 'Qoder 国际版授权请求非法',
   'auth/flow-active': '已有进行中的 Qoder 国际版授权流程',
@@ -74,19 +82,21 @@ const ERROR_MESSAGES: Readonly<Record<AuthFlowErrorCode, string>> = Object.freez
   'auth/internal': 'Qoder 国际版授权内部错误',
 })
 
-/** 授权域错误；`cause` 永远不设置，避免秘密沿错误链泄漏。 */
+/** 国际版授权域错误；`cause` 永远不设置，避免秘密沿错误链泄漏。 */
 export class QoderInternationalAuthError extends AuthFlowError {
   override readonly name = 'QoderInternationalAuthError'
 }
 
-/** 构造一个固定文案的授权错误。 */
+/** 构造一个固定文案的国际版授权错误。 */
 function authError(code: AuthFlowErrorCode): QoderInternationalAuthError {
   return new QoderInternationalAuthError(code, ERROR_MESSAGES[code])
 }
 
 /** 保存前能力探测的输入；不含 refreshToken。 */
-export interface QoderCapabilityCredential {
-  readonly channelId: typeof QODER_AUTH_CHANNEL
+export interface QoderCapabilityCredential<
+  C extends AuthChannel = typeof QODER_AUTH_CHANNEL,
+> {
+  readonly channelId: C
   /** 厂商稳定身份（设备码 `user_id`），只用于同渠道去重。 */
   readonly vendorAccountId: string
   /** 签名凭据；只在进程内流转，不进入 RPC/日志。 */
@@ -99,14 +109,18 @@ export interface QoderCapabilityCredential {
  * 必须是 Host-only、可注入且不可省略的依赖；Task 15 用真实 Qoder 搜索路径
  * 实现。探测失败/超时/取消时流程不得落码或设当前。
  */
-export type QoderCapabilityVerifier = (
-  credential: QoderCapabilityCredential,
+export type QoderCapabilityVerifier<
+  C extends AuthChannel = typeof QODER_AUTH_CHANNEL,
+> = (
+  credential: QoderCapabilityCredential<C>,
   signal: AbortSignal,
 ) => Promise<void>
 
 /** 执行期签名凭据快照；只交给调用方操作，不进入 RPC。 */
-export interface QoderAuthCredential {
-  readonly channelId: typeof QODER_AUTH_CHANNEL
+export interface QoderAuthCredential<
+  C extends AuthChannel = typeof QODER_AUTH_CHANNEL,
+> {
+  readonly channelId: C
   readonly accountId: string
   readonly credential: QoderSigningCredential
 }
@@ -114,7 +128,47 @@ export interface QoderAuthCredential {
 /** `start` 的选项；提供 accountId 时等价于重新登录。 */
 export interface QoderStartOptions extends AuthFlowStartOptions {}
 
-/** 授权流程依赖；全部网络/时钟/随机/设备会话可注入。 */
+/**
+ * 产品授权流程依赖；全部网络/时钟/随机/设备会话可注入。
+ *
+ * 本接口由国际版/中国版包装填充产品常量后传给共享状态机；调用方不应直接
+ * 用它构造流程，避免把两套产品参数混用。
+ */
+export interface QoderProductAuthFlowOptions<C extends AuthChannel> {
+  /** 本流程固定归属的顶层渠道。 */
+  readonly channel: C
+  /** 本产品固定的设备授权参数；不随模型/账号变化。 */
+  readonly product: QoderDeviceProduct
+  readonly store: AccountStore
+  readonly accounts: AccountService
+  /** 测试注入；生产默认使用全局 fetch。 */
+  readonly fetcher?: typeof fetch
+  /** 测试注入；生产默认使用系统时钟。 */
+  readonly clock?: QoderAuthClock
+  /** 测试注入；生产默认使用 crypto.randomUUID。 */
+  readonly randomId?: () => string
+  /** 设备会话生成器；测试注入确定性 PKCE/nonce/machineId。 */
+  readonly createDeviceSession?: () => QoderDeviceSession
+  /** 轮询间隔；默认 1000ms。 */
+  readonly pollIntervalMs?: number
+  /** 整个授权流程的预算；默认 5 分钟。 */
+  readonly authTimeoutMs?: number
+  /** 单次控制面请求超时；默认 30s。 */
+  readonly requestTimeoutMs?: number
+  /** 请求超时信号工厂；测试可注入永不触发的信号。 */
+  readonly timeoutSignal?: (ms: number) => AbortSignal
+  /** 展示说明；由产品包装提供固定文案。 */
+  readonly displayHint: string
+  /**
+   * 保存前 Search 能力探测；Host-only 且不可省略。Task 15 必须提供真实
+   * Search 路径；失败/超时/取消都不得落码或设当前。
+   */
+  readonly verifyCapability: QoderCapabilityVerifier<C>
+  /** 产品固定错误工厂；不得设置 cause。 */
+  readonly errorFactory: (code: AuthFlowErrorCode) => AuthFlowError
+}
+
+/** 国际版授权流程依赖；全部网络/时钟/随机/设备会话可注入。 */
 export interface QoderInternationalAuthFlowOptions {
   readonly store: AccountStore
   readonly accounts: AccountService
@@ -180,9 +234,16 @@ interface FlowState {
 /** 保留最近多少个流程状态供 Client 查询。 */
 const MAX_REMEMBERED_FLOWS = 16
 
-/** Qoder 国际版授权、刷新与重新登录流程。 */
-export class QoderInternationalAuthFlow implements AuthFlowPort {
-  private readonly channel = QODER_AUTH_CHANNEL
+/**
+ * Qoder 设备授权产品流程的共享状态机。
+ *
+ * 泛型 `C` 只用于编译期区分渠道；运行时所有账号/配置写入都经构造参数
+ * `channel`，实例之间不共享任何可变状态。国际版/中国版各自包装成独立类，
+ * 不直接暴露本基类给 Host 根组合。
+ */
+export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort {
+  private readonly channel: C
+  private readonly product: QoderDeviceProduct
   private readonly store: AccountStore
   private readonly accounts: AccountService
   private readonly client: QoderDeviceAuthClient
@@ -192,7 +253,8 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
   private readonly pollIntervalMs: number
   private readonly authTimeoutMs: number
   private readonly displayHint: string
-  private readonly verifyCapability: QoderCapabilityVerifier
+  private readonly verifyCapability: QoderCapabilityVerifier<C>
+  private readonly errorFactory: (code: AuthFlowErrorCode) => AuthFlowError
 
   private readonly flows = new Map<string, FlowState>()
   private readonly pendingStarts = new Set<Promise<unknown>>()
@@ -206,10 +268,12 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
   private disposed = false
   private disposePromise: Promise<void> | undefined
 
-  constructor(options: QoderInternationalAuthFlowOptions) {
+  constructor(options: QoderProductAuthFlowOptions<C>) {
     if (typeof options.verifyCapability !== 'function') {
-      throw new TypeError('QoderInternationalAuthFlow requires a verifyCapability function')
+      throw new TypeError('QoderProductAuthFlow requires a verifyCapability function')
     }
+    this.channel = options.channel
+    this.product = options.product
     this.store = options.store
     this.accounts = options.accounts
     this.clock = options.clock ?? SYSTEM_CLOCK
@@ -217,9 +281,11 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
     this.createDeviceSession = options.createDeviceSession ?? (() => createQoderDeviceSession())
     this.pollIntervalMs = options.pollIntervalMs ?? QODER_POLL_INTERVAL_MS
     this.authTimeoutMs = options.authTimeoutMs ?? QODER_LOGIN_TIMEOUT_MS
-    this.displayHint = options.displayHint ?? DEFAULT_DISPLAY_HINT
+    this.displayHint = options.displayHint
     this.verifyCapability = options.verifyCapability
+    this.errorFactory = options.errorFactory
     this.client = new QoderDeviceAuthClient({
+      product: this.product,
       clock: this.clock,
       ...options.fetcher === undefined ? {} : { fetcher: options.fetcher },
       ...options.requestTimeoutMs === undefined
@@ -229,9 +295,9 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
     })
   }
 
-  /** 固定文案的授权错误。 */
-  private error(code: AuthFlowErrorCode): QoderInternationalAuthError {
-    return authError(code)
+  /** 固定文案的授权错误；产品错误类由 errorFactory 决定。 */
+  private error(code: AuthFlowErrorCode): AuthFlowError {
+    return this.errorFactory(code)
   }
 
   /**
@@ -335,13 +401,13 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
   /**
    * 执行一次需要签名凭据的操作；可信 HTTP 401 时刷新同账号并重试一次。
    *
-   * 只有 `ChannelSearchError` 的 `UNAUTHORIZED`、`channel==='qoder'` 且
+   * 只有 `ChannelSearchError` 的 `UNAUTHORIZED`、channel 与本流程一致且
    * `httpStatus===401` 才触发刷新；超时、限流、403、无 HTTP 证据、跨渠道错误
    * 一律原样抛出，不刷新、不重试。
    */
   async runWithAuthRetry<T>(
     accountId: string,
-    operation: (credential: QoderAuthCredential, signal: AbortSignal) => Promise<T>,
+    operation: (credential: QoderAuthCredential<C>, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     this.assertNotDisposed()
     const controller = new AbortController()
@@ -359,7 +425,7 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
   /** 401 重试的实际执行；每个 await 后检查 dispose，dispose 会 abort operation。 */
   private async performAuthRetry<T>(
     accountId: string,
-    operation: (credential: QoderAuthCredential, signal: AbortSignal) => Promise<T>,
+    operation: (credential: QoderAuthCredential<C>, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal,
   ): Promise<T> {
     const first = await this.resolveCredential(accountId)
@@ -452,7 +518,10 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
 
     let authUrl: string | undefined
     try {
-      authUrl = normalizeQoderAuthUrl(buildQoderAuthUrl(session))
+      authUrl = normalizeQoderAuthUrl(
+        buildQoderAuthUrl(session, this.product),
+        this.product.authUrlHosts,
+      )
     } catch {
       authUrl = undefined
     }
@@ -666,7 +735,7 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
   }
 
   /** 读取账号执行期签名凭据。 */
-  private async resolveCredential(accountId: string): Promise<QoderAuthCredential> {
+  private async resolveCredential(accountId: string): Promise<QoderAuthCredential<C>> {
     this.assertNotDisposed()
     if (!isStableChannelAccountId(accountId)) throw this.error('auth/invalid')
     let entry: StoredAccountEntry | undefined
@@ -766,6 +835,20 @@ export class QoderInternationalAuthFlow implements AuthFlowPort {
   }
 }
 
+/** Qoder 国际版设备授权、刷新与重新登录流程。 */
+export class QoderInternationalAuthFlow extends
+  QoderProductAuthFlow<typeof QODER_AUTH_CHANNEL> {
+  constructor(options: QoderInternationalAuthFlowOptions) {
+    super({
+      ...options,
+      channel: QODER_AUTH_CHANNEL,
+      product: QODER_INTERNATIONAL_PRODUCT,
+      displayHint: options.displayHint ?? DEFAULT_DISPLAY_HINT,
+      errorFactory: authError,
+    })
+  }
+}
+
 /** 把轮询阶段错误映射为流程终态。 */
 function mapFlowError(error: unknown): {
   readonly status: AuthFlowState
@@ -791,7 +874,7 @@ function mapFlowError(error: unknown): {
 }
 
 /** 明确 401 且同渠道才允许刷新重试。 */
-function isQoderUnauthorized(error: unknown, channel: typeof QODER_AUTH_CHANNEL): boolean {
+function isQoderUnauthorized(error: unknown, channel: AuthChannel): boolean {
   return error instanceof ChannelSearchError
     && error.code === 'UNAUTHORIZED'
     && error.channel === channel

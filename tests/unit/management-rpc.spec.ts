@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { BuddyAuthFlow } from '../../src/host/channels/buddy/auth.ts'
 import { QoderInternationalAuthFlow } from '../../src/host/channels/qoder/auth.ts'
+import { QoderCnAuthFlow } from '../../src/host/channels/qodercn/auth.ts'
 import { WorkbuddyAuthFlow } from '../../src/host/channels/workbuddy/auth.ts'
 import { registerManagementRpc } from '../../src/host/rpc.ts'
 import { DEFAULT_SEARCH_SETTINGS, type SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
@@ -46,7 +47,7 @@ function json(body: unknown, status = 200): Response {
 
 /** 一个授权流程与它收到的请求 URL；用于证明 Host 按 channel 精确分派。 */
 interface RpcAuthFlowFixture {
-  readonly flow: BuddyAuthFlow | WorkbuddyAuthFlow | QoderInternationalAuthFlow
+  readonly flow: BuddyAuthFlow | WorkbuddyAuthFlow | QoderInternationalAuthFlow | QoderCnAuthFlow
   readonly calls: string[]
 }
 
@@ -265,11 +266,69 @@ function createQoderAuthForRpc(
   return { flow, calls }
 }
 
+/**
+ * 用真实 AccountStore/AccountService 构造一个 Qoder 中国版设备授权流程。
+ *
+ * tokenReady=false 时轮询永远返回 404（用户尚未授权），用于 cancel 测试。
+ */
+function createQoderCnAuthForRpc(
+  fixture: AccountFixture,
+  options: { readonly tokenReady?: boolean } = {},
+): RpcAuthFlowFixture {
+  let now = 4_000_000
+  let flowSequence = 0
+  let accountSequence = 0
+  const calls: string[] = []
+  const session = {
+    pkce: {
+      verifier: 'v'.repeat(43),
+      challenge: 'c'.repeat(43),
+    },
+    nonce: 'rpc-qodercn-nonce',
+    machineId: 'rpc-qodercn-machine',
+  }
+  const fetcher = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    calls.push(url)
+    if (url.includes('/api/v1/deviceToken/refresh')) {
+      return json({
+        device_token: 'QODERCN_RPC_ACCESS_2',
+        refresh_token: 'QODERCN_RPC_REFRESH_2',
+      })
+    }
+    if (url.includes('/api/v1/deviceToken/poll')) {
+      if (options.tokenReady === false) return json({ errorCode: 'NotFound' }, 404)
+      accountSequence += 1
+      return json({
+        token: `QODERCN_RPC_ACCESS_${accountSequence}`,
+        refresh_token: `QODERCN_RPC_REFRESH_${accountSequence}`,
+        user_id: 'qodercn-rpc-user',
+        user_name: 'Qoder CN RPC',
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }) as typeof fetch
+  const flow = new QoderCnAuthFlow({
+    store: fixture.store,
+    accounts: fixture.service,
+    fetcher,
+    clock: { now: () => now, sleep: async (ms) => { now += Math.max(1, ms) } },
+    randomId: () => `rpc-qodercn-flow-${++flowSequence}`,
+    createDeviceSession: () => session,
+    pollIntervalMs: 10,
+    authTimeoutMs: 60_000,
+    timeoutSignal: () => new AbortController().signal,
+    verifyCapability: async () => { /* RPC 契约测试不执行真实能力探测 */ },
+  })
+  return { flow, calls }
+}
+
 /** 一个最小但真实的 connection 双端：注册路由 + 用 rpc.call 发信封。 */
 function createRpcHarness(options: {
   readonly withBuddyAuth?: boolean
   readonly withWorkbuddyAuth?: boolean
   readonly withQoderAuth?: boolean
+  readonly withQoderCnAuth?: boolean
   readonly tokenReady?: boolean
 } = {}) {
   const fixture = createAccountFixture()
@@ -315,10 +374,14 @@ function createRpcHarness(options: {
   const qoderFixture = options.withQoderAuth === true
     ? createQoderAuthForRpc(fixture, { tokenReady: options.tokenReady })
     : undefined
+  const qoderCnFixture = options.withQoderCnAuth === true
+    ? createQoderCnAuthForRpc(fixture, { tokenReady: options.tokenReady })
+    : undefined
   const authFlows = {
     ...buddyFixture === undefined ? {} : { buddy: buddyFixture.flow },
     ...workbuddyFixture === undefined ? {} : { workbuddy: workbuddyFixture.flow },
     ...qoderFixture === undefined ? {} : { qoder: qoderFixture.flow },
+    ...qoderCnFixture === undefined ? {} : { qodercn: qoderCnFixture.flow },
   }
   const dispose = registerManagementRpc(connection, settings, fixture.service, authFlows)
   return {
@@ -332,9 +395,11 @@ function createRpcHarness(options: {
     buddyAuth: buddyFixture?.flow,
     workbuddyAuth: workbuddyFixture?.flow,
     qoderAuth: qoderFixture?.flow,
+    qoderCnAuth: qoderCnFixture?.flow,
     buddyCalls: buddyFixture?.calls ?? [],
     workbuddyCalls: workbuddyFixture?.calls ?? [],
     qoderCalls: qoderFixture?.calls ?? [],
+    qoderCnCalls: qoderCnFixture?.calls ?? [],
   }
 }
 
@@ -918,7 +983,7 @@ describe('auth.* 共享 Client 契约', () => {
 
     const invalidCalls = [
       ['auth.start', {}],
-      ['auth.start', { channel: 'qodercn' }],
+      ['auth.start', { channel: 'qodercn', extra: true }],
       ['auth.start', { channel: 'deepseek' }],
       ['auth.start', { channel: 'buddy', extra: true }],
       ['auth.start', { channel: 'workbuddy', extra: true }],
@@ -927,11 +992,13 @@ describe('auth.* 共享 Client 契约', () => {
       ['auth.cancel', { channel: 'buddy', flowId: 'Bad_ID' }],
       ['auth.cancel', { channel: 'workbuddy', flowId: 'Bad_ID' }],
       ['auth.cancel', { channel: 'qoder', flowId: 'Bad_ID' }],
+      ['auth.cancel', { channel: 'qodercn', flowId: 'Bad_ID' }],
       ['auth.status', { channel: 'buddy', flowId: 'flow-1', extra: true }],
       ['auth.refresh', { channel: 'buddy' }],
       ['auth.refresh', { channel: 'buddy', accountId: 'Bad_ID' }],
       ['auth.refresh', { channel: 'workbuddy', accountId: 'Bad_ID' }],
       ['auth.refresh', { channel: 'qoder', accountId: 'Bad_ID' }],
+      ['auth.refresh', { channel: 'qodercn', accountId: 'Bad_ID' }],
     ] as const
 
     for (const [method, payload] of invalidCalls) {
@@ -947,11 +1014,11 @@ describe('auth.* 共享 Client 契约', () => {
   it('Host 拒绝未知渠道与未知键，且不写账号', async () => {
     const harness = createRpcHarness({ withBuddyAuth: true, withWorkbuddyAuth: true })
     for (const payload of [
-      { channel: 'qodercn' },
       { channel: 'deepseek' },
       { channel: 'buddy', extra: true },
       { channel: 'workbuddy', extra: true },
       { channel: 'qoder', extra: true },
+      { channel: 'qodercn', extra: true },
     ]) {
       const response = await rawCall(harness, {
         type: 'client-request',
@@ -969,14 +1036,16 @@ describe('auth.* 共享 Client 契约', () => {
     expect(await harness.store.listEntries('buddy')).toHaveLength(0)
     expect(await harness.store.listEntries('workbuddy')).toHaveLength(0)
     expect(await harness.store.listEntries('qoder')).toHaveLength(0)
+    expect(await harness.store.listEntries('qodercn')).toHaveLength(0)
     expect(harness.buddyCalls).toHaveLength(0)
     expect(harness.workbuddyCalls).toHaveLength(0)
     expect(harness.qoderCalls).toHaveLength(0)
+    expect(harness.qoderCnCalls).toHaveLength(0)
   })
 
   it('未提供授权流程时 auth.* 返回 bad-request', async () => {
     const harness = createRpcHarness()
-    for (const channel of ['buddy', 'workbuddy', 'qoder'] as const) {
+    for (const channel of ['buddy', 'workbuddy', 'qoder', 'qodercn'] as const) {
       const response = await rawCall(harness, {
         type: 'client-request',
         rpcId: 'raw-auth-unwired',
@@ -1031,6 +1100,107 @@ describe('auth.* 共享 Client 契约', () => {
     expect(harness.qoderCalls.length).toBeGreaterThan(0)
     expect(harness.qoderCalls.every((url) => url.startsWith('https://openapi.qoder.sh'))).toBe(true)
     expect(JSON.stringify(completed)).not.toMatch(/QODER_RPC_ACCESS|QODER_RPC_REFRESH/)
+  })
+
+  it('Host 按 channel 精确分派：qodercn 只调用 Qoder 中国版 flow', async () => {
+    const harness = createRpcHarness({
+      withBuddyAuth: true,
+      withWorkbuddyAuth: true,
+      withQoderAuth: true,
+      withQoderCnAuth: true,
+    })
+
+    const started = await callManagementRpc(harness.connection, 'auth.start', {
+      channel: 'qodercn',
+    })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    expect(started.value.channel).toBe('qodercn')
+    expect(started.value.authUrl?.startsWith('https://qoder.cn/device/selectAccounts?')).toBe(true)
+    expect(started.value.authUrl).toContain('client_id=732aef47-9cf2-46a2-95fe-4cebb5d0d1fa')
+    expect(started.value.authUrl).not.toContain('e883ade2')
+    expect(new URL(started.value.authUrl!).searchParams.getAll('machine_id')).toEqual([
+      'rpc-qodercn-machine',
+    ])
+
+    const completed = await waitForRpcAuthStatus(
+      harness.connection,
+      'qodercn',
+      started.value.flowId,
+    )
+    expect(completed.status).toBe('completed')
+    expect(completed.account?.channelId).toBe('qodercn')
+    // Client RPC 结果里 machine_id 只允许出现在 authUrl 查询参数中。
+    expect(JSON.stringify(completed).split('rpc-qodercn-machine')).toHaveLength(2)
+    expect(JSON.stringify(harness.double.getState())).not.toContain('rpc-qodercn-machine')
+    expect(harness.double.getState().qodercn.currentAccountId).toBe(completed.account?.id)
+    expect(harness.double.getState().qoder.currentAccountId).toBeNull()
+    expect(harness.double.getState().buddy.currentAccountId).toBeNull()
+    expect(harness.double.getState().workbuddy.currentAccountId).toBeNull()
+    expect(await harness.store.listEntries('qodercn')).toHaveLength(1)
+    expect(await harness.store.listEntries('qoder')).toHaveLength(0)
+    expect(harness.buddyCalls).toHaveLength(0)
+    expect(harness.workbuddyCalls).toHaveLength(0)
+    expect(harness.qoderCalls).toHaveLength(0)
+    expect(harness.qoderCnCalls.length).toBeGreaterThan(0)
+    expect(
+      harness.qoderCnCalls.every((url) => url.startsWith('https://openapi.qoder.com.cn')),
+    ).toBe(true)
+    expect(harness.qoderCnCalls.some((url) => url.includes('openapi.qoder.sh'))).toBe(false)
+    expect(JSON.stringify(completed)).not.toMatch(/QODERCN_RPC_ACCESS|QODERCN_RPC_REFRESH/)
+  })
+
+  it('Host 按 channel 精确分派：qodercn 与 qoder 账号绝不串用', async () => {
+    const harness = createRpcHarness({ withQoderAuth: true, withQoderCnAuth: true })
+    const qoderAccount = await harness.store.saveAccount({
+      channel: 'qoder',
+      vendorAccountId: 'rpc-intl-user',
+      secret: {
+        securityOauthToken: 'INTL_RPC_ACCESS',
+        machineId: 'intl-rpc-machine',
+        refreshToken: 'INTL_RPC_REFRESH',
+        uid: 'rpc-intl-user',
+      },
+    })
+    const cnAccount = await harness.store.saveAccount({
+      channel: 'qodercn',
+      vendorAccountId: 'rpc-cn-user',
+      secret: {
+        securityOauthToken: 'CN_RPC_ACCESS',
+        machineId: 'cn-rpc-machine',
+        refreshToken: 'CN_RPC_REFRESH',
+        uid: 'rpc-cn-user',
+      },
+    })
+
+    const cnResult = await callManagementRpc(harness.connection, 'auth.refresh', {
+      channel: 'qodercn',
+      accountId: qoderAccount.accountId,
+    })
+    expect(cnResult.ok).toBe(false)
+    if (!cnResult.ok) expect(cnResult.error.code).toBe('auth/account-not-found')
+    expect(harness.qoderCalls).toHaveLength(0)
+    expect(harness.qoderCnCalls).toHaveLength(0)
+
+    const intlResult = await callManagementRpc(harness.connection, 'auth.refresh', {
+      channel: 'qoder',
+      accountId: cnAccount.accountId,
+    })
+    expect(intlResult.ok).toBe(false)
+    if (!intlResult.ok) expect(intlResult.error.code).toBe('auth/account-not-found')
+    expect(harness.qoderCalls).toHaveLength(0)
+    expect(harness.qoderCnCalls).toHaveLength(0)
+
+    const intlStored = await harness.store.readEntry('qoder', qoderAccount.accountId)
+    expect(intlStored?.account?.secret).toMatchObject({
+      securityOauthToken: 'INTL_RPC_ACCESS',
+      refreshToken: 'INTL_RPC_REFRESH',
+    })
+    const cnStored = await harness.store.readEntry('qodercn', cnAccount.accountId)
+    expect(cnStored?.account?.secret).toMatchObject({
+      securityOauthToken: 'CN_RPC_ACCESS',
+      refreshToken: 'CN_RPC_REFRESH',
+    })
   })
 
   it('Host 按 channel 精确分派：qoder payload 绝不落到腾讯 flow', async () => {
