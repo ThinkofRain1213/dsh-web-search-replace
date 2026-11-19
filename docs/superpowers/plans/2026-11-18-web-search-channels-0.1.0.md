@@ -22,6 +22,7 @@
 - 不修改官方 `web.searchProvider/fetchProvider`，不注册默认 Shadow，不新增 `tool:web_search` 提示词 section。
 - Qoder 国际版端点偏好为 `auto / center / api2`，默认 `auto`；自动初始 center，仅在 DNS/TCP/TLS/连接失败、超时或 5xx 时在两个国际版域名间切换一次并粘性，固定模式不切换。不得并行双发、后台测速或使用 `gateway.qoder.com.cn`。
 - 普通配置只保存非秘密用户意图；token、刷新材料和签名秘密只进入本插件 Host credentials。Client 只接收脱敏 DTO。登录、授权、重新登录、删除和清除数据不开放 Agent tool。
+- Qoder `machine_id` 是每次登录新生成的随机、非秘密设备标识（不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密）；设备绑定协议要求它出现在授权 URL 中，因此只允许它作为该次授权 URL 的 `machine_id` 查询参数进入发起流程的 Client 可见 `authUrl`。它仍保存于对应 qoder grant 供签名和续期使用，但不得进入日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化，此例外不适用于 token、刷新材料或其他签名秘密。
 - 最低验收矩阵：Desktop `0.2.2-rc.3` 及其 Web GUI、Native + PTC、Magpie/WPS 灵犀的 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash、DeepSeek 官方路由 OFF 对照。任一声明项失败阻断发布，不得从报告中删项。
 - 第三方设置卡只用 `plugins.bundle.config`，key 必须等于 npm 包名 `dsh-web-search-channels`；该 slot 只请求 `view:'page'`，不使用 `plugins.item`，不期待 Host 传 `form`。
 - 设置页严格使用复审后的 rc3 规范：下拉锚点 `34px / 0 12px`；Menu 项 `min-height:34px; padding:6px 8px; gap:6px`；Switch 轨道 `36×20`、thumb `16×16`、`translateX(16px)`、`120ms`；`.fieldSlot { padding:0; min-width:0 }`，内部 `.field` 才是 `padding:12px 0; gap:6px`。
@@ -347,7 +348,7 @@ git commit -m "feat: add Qoder international endpoint policy"
 
 - [ ] **Step 1: 写凭据隔离与账号生命周期失败测试**
 
-断言：record ID 与 payload 均含 channelId；credential key 的 scope/id 两段均满足 `^[a-z][a-z0-9-]*$`，账号记录使用生成的稳定小写 ID 而不是直接拿邮箱或厂商原始 ID 拼 key；跨 channel resolve 失败；RPC 不含 token/refresh/machine_id；首账号可设当前；删除当前不自动递补，只有显式 replacement 才替换；clearAll 需显式用户调用；写失败保持旧快照。
+断言：record ID 与 payload 均含 channelId；credential key 的 scope/id 两段均满足 `^[a-z][a-z0-9-]*$`，账号记录使用生成的稳定小写 ID 而不是直接拿邮箱或厂商原始 ID 拼 key；跨 channel resolve 失败；账号管理 RPC 不含 token/refresh/machine_id（Qoder 授权 URL 的 `machine_id` 窄例外见 Global Constraints）；首账号可设当前；删除当前不自动递补，只有显式 replacement 才替换；clearAll 需显式用户调用；写失败保持旧快照。
 
 - [ ] **Step 2: 运行测试，确认账号域缺失**
 
@@ -454,7 +455,7 @@ git commit -m "feat: add WorkBuddy account authorization lifecycle"
 
 - [ ] **Step 1: 写国际版授权与刷新失败测试**
 
-覆盖设备授权、取消、超时、国际版 client ID、账号身份去重、刷新单飞、401 同账号重试一次、签名所需秘密保存；不得使用中国版 client ID 或 gateway。
+覆盖设备授权、取消、超时、国际版 client ID、账号身份去重、刷新单飞、401 同账号重试一次、签名所需秘密保存；`machine_id` 只允许作为发起流程授权 URL 的 `machine_id` 查询参数，不得进入其他状态/DTO/普通配置；不得使用中国版 client ID 或 gateway。
 
 - [ ] **Step 2: 运行测试，确认流程缺失**
 
@@ -463,7 +464,7 @@ Expected: FAIL，提示国际版授权流程不存在。
 
 - [ ] **Step 3: 提取并实现国际版授权与签名配置**
 
-授权服务与搜索端点偏好分离；center/api2 只影响搜索，不改变授权账号。Client 只收到等待/成功/失败等脱敏状态。
+授权服务与搜索端点偏好分离；center/api2 只影响搜索，不改变授权账号。Client 只收到等待/成功/失败等脱敏状态（Qoder 授权 URL 的 `machine_id` 窄例外见 Global Constraints）。
 
 - [ ] **Step 4: 运行授权与签名配置测试**
 

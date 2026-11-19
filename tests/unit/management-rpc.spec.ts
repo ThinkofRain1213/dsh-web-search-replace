@@ -1005,6 +1005,11 @@ describe('auth.* 共享 Client 契约', () => {
     expect(started.value.authUrl).toContain('https://qoder.com/device/selectAccounts')
     expect(started.value.authUrl).toContain('client_id=e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb')
     expect(started.value.authUrl).not.toContain('732aef47')
+    const startedAuthUrl = started.value.authUrl
+    expect(startedAuthUrl).not.toBeNull()
+    expect(new URL(startedAuthUrl!).searchParams.getAll('machine_id')).toEqual([
+      'rpc-qoder-machine',
+    ])
 
     const completed = await waitForRpcAuthStatus(
       harness.connection,
@@ -1013,6 +1018,9 @@ describe('auth.* 共享 Client 契约', () => {
     )
     expect(completed.status).toBe('completed')
     expect(completed.account?.channelId).toBe('qoder')
+    // Client RPC 结果里 machine_id 只允许出现在 authUrl 查询参数中。
+    expect(JSON.stringify(completed).split('rpc-qoder-machine')).toHaveLength(2)
+    expect(JSON.stringify(harness.double.getState())).not.toContain('rpc-qoder-machine')
     expect(harness.double.getState().qoder.currentAccountId).toBe(completed.account?.id)
     expect(harness.double.getState().buddy.currentAccountId).toBeNull()
     expect(harness.double.getState().workbuddy.currentAccountId).toBeNull()

@@ -263,10 +263,13 @@ async function seedAccount(
 /**
  * 断言 Client 可见对象不含任何令牌/秘密字段或值。
  *
+ * 规格 §7.2 的窄例外只允许 Qoder `machine_id` 作为发起流程授权 URL 的
+ * `machine_id` 查询参数出现；授权 URL 之外仍按秘密值检查。
+ *
  * ⚠️ `machineId` 是设备授权协议的一部分：真实 `machine_id` 查询参数必须出现在
  * 授权 URL 里（服务端据此绑定设备，续期也要原样回传），参考实现同样如此。
  * 因此这里只检查它**不以凭据字段/值**出现在状态的其他位置；授权 URL 的
- * `machine_id` 由专门断言验证。
+ * `machine_id` 由 `expectMachineIdOnlyInAuthUrl` 专门验证。
  */
 function expectNoSecret(value: unknown): void {
   const text = JSON.stringify(value)
@@ -290,6 +293,33 @@ function expectNoSecret(value: unknown): void {
       expect(new URL(authUrl).searchParams.get('machine_id')).toBe('machine-abc')
     }
   }
+}
+
+/**
+ * 规格 §7.2 的窄例外：`machine_id` 只允许作为本次 flow 授权 URL 的
+ * `machine_id` 查询参数出现，且该 URL 只有协议固定参数。
+ */
+function expectMachineIdOnlyInAuthUrl(
+  value: unknown,
+  authUrl: string | null,
+  machineId = SESSION.machineId,
+): void {
+  const serialized = JSON.stringify(value) ?? ''
+  const occurrences = serialized.split(machineId).length - 1
+  if (authUrl === null) {
+    expect(occurrences, serialized).toBe(0)
+    return
+  }
+  expect(occurrences, serialized).toBe(1)
+  const parsed = new URL(authUrl)
+  expect([...parsed.searchParams.keys()].sort()).toEqual([
+    'challenge',
+    'challenge_method',
+    'client_id',
+    'machine_id',
+    'nonce',
+  ])
+  expect(parsed.searchParams.getAll('machine_id')).toEqual([machineId])
 }
 
 describe('Qoder 国际版设备授权协议参数', () => {
@@ -1331,6 +1361,7 @@ describe('Qoder 刷新单飞与旧刷新保护', () => {
     expect(error).toMatchObject({ code: 'auth/reauth-required' })
     expect(String((error as Error).message)).not.toContain(sentinel)
     expect(JSON.stringify(error)).not.toContain(sentinel)
+    expect(JSON.stringify(error)).not.toContain('machine-abc')
     expect((error as { cause?: unknown }).cause).toBeUndefined()
     expect(calls.filter((call) => call.url.includes(QODER_DEVICE_REFRESH_PATH))).toHaveLength(1)
     const stored = await fixture.store.readEntry('qoder', account.accountId)
@@ -2110,5 +2141,145 @@ describe('Qoder 授权 RPC 分派与安全边界', () => {
     const error = new QoderInternationalAuthError('auth/failed', terminal.errorCode ?? 'failed')
     expect(error.cause).toBeUndefined()
     expect(Object.keys(error)).toContain('code')
+  })
+})
+
+describe('Qoder machine_id 的 Client 边界', () => {
+  it('pending 与完成/失败/取消/超时终态只把 machine_id 放在本流程 authUrl', async () => {
+    const completedFixture = createQoderAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      pollRoute(() => okToken()),
+      refreshRoute(() => okRefresh()),
+    ])
+    const completedFlow = completedFixture.createFlow(fetcher)
+    const started = await completedFlow.start()
+    expectMachineIdOnlyInAuthUrl(started, started.authUrl)
+
+    const completed = await waitForTerminal(completedFlow, started.flowId)
+    expect(completed.status).toBe('completed')
+    expect(completed.authUrl).not.toBeNull()
+    expectMachineIdOnlyInAuthUrl(completed, completed.authUrl)
+    expectMachineIdOnlyInAuthUrl(await completedFlow.status(started.flowId), completed.authUrl)
+
+    const refreshed = await completedFlow.refresh(completed.account!.id)
+    expectMachineIdOnlyInAuthUrl(refreshed, null)
+
+    const failureFixture = createQoderAuthFixture()
+    const failedFlow = failureFixture.createFlow(createScriptedFetcher([
+      pollRoute(() => new Response('boom', { status: 500 })),
+    ]).fetcher)
+    const failedStarted = await failedFlow.start()
+    const failed = await waitForTerminal(failedFlow, failedStarted.flowId)
+    expect(failed.status).toBe('failed')
+    expect(failed.authUrl).not.toBeNull()
+    expectMachineIdOnlyInAuthUrl(failed, failed.authUrl)
+
+    const gate = deferred<Response>()
+    const { fetcher: cancelFetcher, calls: cancelCalls } = createScriptedFetcher([
+      pollRoute(() => gate.promise),
+    ])
+    const cancellingFlow = failureFixture.createFlow(cancelFetcher)
+    const cancelStarted = await cancellingFlow.start()
+    await waitForCall(cancelCalls, (call) => call.url.includes(QODER_DEVICE_POLL_PATH))
+    const cancelling = cancellingFlow.cancel(cancelStarted.flowId)
+    gate.resolve(okToken())
+    const cancelled = await cancelling
+    expect(cancelled.status).toBe('cancelled')
+    expect(cancelled.authUrl).not.toBeNull()
+    expectMachineIdOnlyInAuthUrl(cancelled, cancelled.authUrl)
+
+    const timeoutFlow = failureFixture.createFlow(
+      createScriptedFetcher([
+        pollRoute(() => new Response('{"errorCode":"NotFound"}', { status: 404 })),
+      ]).fetcher,
+      { authTimeoutMs: 100, pollIntervalMs: 10 },
+    )
+    const timeoutStarted = await timeoutFlow.start()
+    const timedOut = await waitForTerminal(timeoutFlow, timeoutStarted.flowId)
+    expect(timedOut.status).toBe('timed_out')
+    expect(timedOut.authUrl).not.toBeNull()
+    expectMachineIdOnlyInAuthUrl(timedOut, timedOut.authUrl)
+
+    expect(failureFixture.credentials.writes).toHaveLength(0)
+    expect(await failureFixture.store.listEntries('qoder')).toHaveLength(0)
+    expect(JSON.stringify(failureFixture.settingsDouble.getState()))
+      .not.toContain(SESSION.machineId)
+  })
+
+  it('authUrl 不持久化；grant 保存 machine_id，普通配置与账号投影不包含它', async () => {
+    const fixture = createQoderAuthFixture()
+    const { fetcher } = createScriptedFetcher([pollRoute(() => okToken())])
+    const flow = fixture.createFlow(fetcher)
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+    const accountId = terminal.account!.id
+    const authUrl = started.authUrl
+    expect(authUrl).not.toBeNull()
+
+    const raw = fixture.credentials.raw(accountRecordKey('qoder', accountId))
+    const rawText = JSON.stringify(raw)
+    expect(rawText).toContain(SESSION.machineId)
+    expect(rawText).not.toContain('authUrl')
+    expect(rawText).not.toContain(authUrl!)
+    expect(rawText).not.toContain(SESSION.nonce)
+    expect(rawText).not.toContain('challenge')
+
+    const settingsText = JSON.stringify(fixture.settingsDouble.getState())
+    expect(settingsText).not.toContain(SESSION.machineId)
+    expect(settingsText).not.toContain('authUrl')
+    expect(settingsText).not.toContain(authUrl!)
+
+    const summaries = await fixture.service.list('qoder')
+    expect(summaries).toHaveLength(1)
+    for (const summary of summaries) expectMachineIdOnlyInAuthUrl(summary, null)
+    expectMachineIdOnlyInAuthUrl(await fixture.service.getCurrent('qoder'), null)
+  })
+
+  it('每次 start 都新建设备会话，两个流程的 authUrl 与 grant 各自只含自己的 machine_id', async () => {
+    const fixture = createQoderAuthFixture()
+    const sessions: QoderDeviceSession[] = [
+      { ...SESSION, machineId: 'machine-first' },
+      { ...SESSION, machineId: 'machine-second' },
+    ]
+    let generated = 0
+    const createDeviceSession = (): QoderDeviceSession => {
+      const session = sessions[generated]
+      generated += 1
+      return session
+    }
+
+    const firstFlow = fixture.createFlow(
+      createScriptedFetcher([pollRoute(() => okToken())]).fetcher,
+      { createDeviceSession },
+    )
+    const firstStarted = await firstFlow.start()
+    expectMachineIdOnlyInAuthUrl(firstStarted, firstStarted.authUrl, 'machine-first')
+    const firstTerminal = await waitForTerminal(firstFlow, firstStarted.flowId)
+    expect(firstTerminal.status).toBe('completed')
+
+    const secondFlow = fixture.createFlow(
+      createScriptedFetcher([
+        pollRoute(() => okToken({ user_id: 'uid-2', user_name: 'Qoder Second' })),
+      ]).fetcher,
+      { createDeviceSession },
+    )
+    const secondStarted = await secondFlow.start()
+    expectMachineIdOnlyInAuthUrl(secondStarted, secondStarted.authUrl, 'machine-second')
+    const secondTerminal = await waitForTerminal(secondFlow, secondStarted.flowId)
+    expect(secondTerminal.status).toBe('completed')
+
+    expect(generated).toBe(2)
+    expect(firstTerminal.account?.id).not.toBe(secondTerminal.account?.id)
+
+    const firstRecordText = JSON.stringify(
+      fixture.credentials.raw(accountRecordKey('qoder', firstTerminal.account!.id)),
+    )
+    const secondRecordText = JSON.stringify(
+      fixture.credentials.raw(accountRecordKey('qoder', secondTerminal.account!.id)),
+    )
+    expect(firstRecordText).toContain('machine-first')
+    expect(firstRecordText).not.toContain('machine-second')
+    expect(secondRecordText).toContain('machine-second')
+    expect(secondRecordText).not.toContain('machine-first')
   })
 })

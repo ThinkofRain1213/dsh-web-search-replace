@@ -300,6 +300,7 @@ qoder.endpointPreference: "auto" | "center" | "api2" = "auto"
 - 使用本插件自己的 credentials scope；记录 ID 同时编码 `channelId` 与账号稳定 ID，记录内容也保留 `channelId`，禁止跨渠道引用。
 - 四个账号型渠道分别使用独立 grant 记录，保存访问令牌、刷新材料、该渠道端点、账号稳定身份和签名所需数据。即使协议相同，也不把一条记录同时视为另一渠道可用。
 - Client 只接收账号 ID、显示名、`channelId`、端点标签、状态和脱敏标识，不接收秘密。
+- `machine_id` 的窄例外（仅 Qoder 设备授权）：`machine_id` 是本插件每次登录新生成的随机、非秘密设备标识，不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密（它只是 COSY 签名输入之一）；由于设备绑定协议要求，仅允许它作为该次授权 URL 的 `machine_id` 查询参数，出现在发起该流程的 Client 可见 `authUrl` 中。它仍需作为签名和续期所需数据保存于对应的 qoder grant，但不得出现在日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化。该例外不得扩展为 token、刷新材料或其他签名秘密可进入 Client。
 - 不写自定义 token 文件，不使用 localStorage，不记录到日志、Session 事件或普通配置。
 - CodeBuddy 与 WorkBuddy 是独立的顶层渠道，不是同一账号配置下的变体。
 - Qoder 国际版与 Qoder 中国版是独立的顶层渠道；即使历史上存在跨域搜索成功，也不共享账号、当前账号、授权或刷新状态。
@@ -340,7 +341,7 @@ AND 对应 Host 驱动可用
 1. 用户在实际要使用的渠道下选择“添加账号”。
 2. 页面展示数据发送对象、用途和授权说明。
 3. 启动当前渠道自己的授权流程：CodeBuddy 与 WorkBuddy 分别使用各自的 external-link 产品参数和账号记录；Qoder 国际版与中国版分别使用各自授权服务、client ID、设备授权和签名配置。渠道内不再要求用户重复选择产品。
-4. 授权流程在当前渠道配置区内显示等待、取消、超时和失败状态。
+4. 授权流程在当前渠道配置区内显示等待、取消、超时和失败状态。Qoder 授权 URL 中的 `machine_id` 仅遵循 §7.2 的窄例外；Client 只能为当前用户发起的流程取得该 URL，不得把它当作可复用凭据或写入 Client 持久状态。
 5. 成功后验证账号身份和 Search 能力，再保存本插件自己的凭据记录。
 6. 首个账号自动设为当前；后续账号由用户决定是否设为当前。
 7. 添加账号本身不自动打开 Search，也不改变渠道选择。
