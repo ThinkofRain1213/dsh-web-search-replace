@@ -5,8 +5,9 @@
  * `connection.rpc.call('/api', 'web-search-channels', { method, payload }, signal)`
  * 调用。两端共用同一份 method/payload 校验，避免只信任其中一侧。
  *
- * 方法空间由两部分组成：普通设置（settings.*）与账号管理（accounts.*）。
- * 账号 payload 校验复用 `shared/accounts.ts` 的单一实现，不在这里复制第二套。
+ * 方法空间由三部分组成：普通设置（settings.*）、账号管理（accounts.*）与
+ * 授权流程（auth.*）。账号与授权 payload 校验分别复用 `shared/accounts.ts`
+ * 和 `shared/auth.ts` 的单一实现，不在这里复制第二套。
  */
 import type { ChannelId } from './channels.ts'
 import {
@@ -18,6 +19,13 @@ import {
   type AccountSummary,
   type ClearAccountsResult,
 } from './accounts.ts'
+import {
+  AUTH_RPC_METHODS,
+  assertAuthRpcPayload,
+  isAuthRpcMethod,
+  type AuthRpcPayloads,
+  type AuthRpcResults,
+} from './auth.ts'
 import {
   assertSearchSettingsPatch,
   assertSetCurrentAccountRequest,
@@ -39,10 +47,11 @@ export const SETTINGS_RPC_METHODS = [
   'settings.setCurrentAccount',
 ] as const
 
-/** 管理 RPC 的全部精确方法名：设置 + 账号。 */
+/** 管理 RPC 的全部精确方法名：设置 + 账号 + 授权。 */
 export const MANAGEMENT_RPC_METHODS = [
   ...SETTINGS_RPC_METHODS,
   ...ACCOUNT_RPC_METHODS,
+  ...AUTH_RPC_METHODS,
 ] as const
 
 /** 普通设置 RPC 方法名。 */
@@ -61,11 +70,11 @@ export interface SettingsRpcPayloads {
   }
 }
 
-/** 每个管理 RPC 方法接受的内部 payload；账号半边复用共享账号契约。 */
-export type ManagementRpcPayloads = SettingsRpcPayloads & AccountRpcPayloads
+/** 每个管理 RPC 方法接受的内部 payload；账号/授权半边复用共享契约。 */
+export type ManagementRpcPayloads = SettingsRpcPayloads & AccountRpcPayloads & AuthRpcPayloads
 
-/** 每个管理 RPC 方法成功时的结果类型。 */
-export interface ManagementRpcResults {
+/** 每个管理 RPC 方法成功时的结果类型；授权半边复用共享结果契约。 */
+export type ManagementRpcResults = {
   'settings.get': SearchSettingsSnapshot
   'settings.update': SearchSettingsSnapshot
   'settings.setCurrentAccount': SearchSettingsSnapshot
@@ -74,7 +83,7 @@ export interface ManagementRpcResults {
   'accounts.setCurrent': AccountSummary | null
   'accounts.delete': AccountCollection
   'accounts.clearAll': ClearAccountsResult
-}
+} & AuthRpcResults
 
 /** 管理 RPC 的错误载荷；`details` 是 Connection 客户端解析所必需的对象。 */
 export interface RpcErrorPayload {
@@ -129,9 +138,10 @@ export function isManagementRpcMethod(value: unknown): value is ManagementRpcMet
 /**
  * 严格校验一个方法对应的 payload。
  *
- * 账号方法直接委托 `assertAccountRpcPayload`，因此 Host/Client 不会出现两套
- * 漂移的账号校验。未知键、缺失键和错误类型都抛错；Host 捕获后映射为
- * `gateway/bad-request`，Client 侧则在真正发出请求前失败。
+ * 账号方法直接委托 `assertAccountRpcPayload`，授权方法委托
+ * `assertAuthRpcPayload`，因此 Host/Client 不会出现多套漂移校验。未知键、
+ * 缺失键和错误类型都抛错；Host 捕获后映射为 `gateway/bad-request` 或对应域
+ * 错误，Client 侧则在真正发出请求前失败。
  */
 export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
   method: M,
@@ -142,6 +152,10 @@ export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
   }
   if (isAccountRpcMethod(method)) {
     assertAccountRpcPayload(method, payload)
+    return
+  }
+  if (isAuthRpcMethod(method)) {
+    assertAuthRpcPayload(method, payload)
     return
   }
   switch (method) {
@@ -171,7 +185,8 @@ export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
 /**
  * 调用管理 RPC；无效 method/payload 在发出请求前抛错。
  *
- * 返回类型按方法映射：设置方法返回设置快照，账号方法返回对应账号 DTO。
+ * 返回类型按方法映射：设置方法返回设置快照，账号方法返回对应账号 DTO，
+ * 授权方法返回脱敏流程状态或 AccountSummary。
  */
 export function callManagementRpc<M extends ManagementRpcMethod>(
   connection: ManagementRpcConnection,

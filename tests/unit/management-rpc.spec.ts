@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
+import { BuddyAuthFlow } from '../../src/host/channels/buddy/auth.ts'
 import { registerManagementRpc } from '../../src/host/rpc.ts'
 import { DEFAULT_SEARCH_SETTINGS, type SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import {
@@ -17,6 +18,12 @@ import {
   type ClearAccountsResult,
 } from '../../src/shared/accounts.ts'
 import {
+  AuthRpcValidationError,
+  isAccountSummary,
+  isAuthFlowStatus,
+  type AuthFlowStatus,
+} from '../../src/shared/auth.ts'
+import {
   callManagementRpc,
   MANAGEMENT_RPC_ENDPOINT,
   MANAGEMENT_RPC_PATH,
@@ -24,10 +31,95 @@ import {
   type ManagementRpcRoute,
   type RpcResult,
 } from '../../src/shared/rpc.ts'
-import { createAccountFixture } from './support/account-fixture.ts'
+import { createAccountFixture, type AccountFixture } from './support/account-fixture.ts'
+
+/** 构造一个最小 JSON 响应。 */
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+/**
+ * 用真实 AccountStore/AccountService 构造一个 CodeBuddy 授权流程。
+ *
+ * tokenReady=false 时 token 轮询永远返回 11217，用于 cancel 测试。
+ */
+function createBuddyAuthForRpc(
+  fixture: AccountFixture,
+  options: { readonly tokenReady?: boolean } = {},
+): BuddyAuthFlow {
+  let now = 1_000_000
+  let flowSequence = 0
+  let accountSequence = 0
+  const fetcher = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/v2/plugin/auth/state')) {
+      return json({
+        code: 0,
+        data: {
+          state: 'rpc-state',
+          authUrl: 'https://www.codebuddy.cn/login/?platform=ide&state=rpc-state',
+        },
+      })
+    }
+    if (url.includes('/v2/plugin/auth/token/refresh')) {
+      return json({
+        code: 0,
+        data: {
+          accessToken: 'RPC_ACCESS_2',
+          refreshToken: 'RPC_REFRESH_2',
+          expiresIn: 3600,
+          tokenType: 'Bearer',
+          domain: 'copilot.tencent.com',
+        },
+      })
+    }
+    if (url.includes('/v2/plugin/auth/token')) {
+      if (options.tokenReady === false) return json({ code: 11217 }, 400)
+      accountSequence += 1
+      return json({
+        code: 0,
+        data: {
+          accessToken: `RPC_ACCESS_${accountSequence}`,
+          refreshToken: `RPC_REFRESH_${accountSequence}`,
+          expiresIn: 3600,
+          tokenType: 'Bearer',
+          domain: 'copilot.tencent.com',
+        },
+      })
+    }
+    if (url.includes('/v2/plugin/login/account')) {
+      return json({
+        code: 0,
+        data: {
+          uid: 'rpc-user',
+          nickname: 'RPC User',
+          enterpriseId: '',
+          type: 'personal',
+        },
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }) as typeof fetch
+  return new BuddyAuthFlow({
+    store: fixture.store,
+    accounts: fixture.service,
+    fetcher,
+    clock: { now: () => now, sleep: async (ms) => { now += Math.max(1, ms) } },
+    randomId: () => `rpc-flow-${++flowSequence}`,
+    pollIntervalMs: 10,
+    authTimeoutMs: 60_000,
+    timeoutSignal: () => new AbortController().signal,
+  })
+}
 
 /** 一个最小但真实的 connection 双端：注册路由 + 用 rpc.call 发信封。 */
-function createRpcHarness() {
+function createRpcHarness(options: {
+  readonly withBuddyAuth?: boolean
+  readonly tokenReady?: boolean
+} = {}) {
   const fixture = createAccountFixture()
   const settings = fixture.settings
   const double = fixture.settingsDouble
@@ -62,7 +154,10 @@ function createRpcHarness() {
       },
     },
   }
-  const dispose = registerManagementRpc(connection, settings, fixture.service)
+  const buddyAuth = options.withBuddyAuth === true
+    ? createBuddyAuthForRpc(fixture, { tokenReady: options.tokenReady })
+    : undefined
+  const dispose = registerManagementRpc(connection, settings, fixture.service, buddyAuth)
   return {
     connection,
     settings,
@@ -71,7 +166,25 @@ function createRpcHarness() {
     dispose,
     store: fixture.store,
     service: fixture.service,
+    buddyAuth,
   }
+}
+
+/** 轮询 RPC 授权状态直到终态。 */
+async function waitForRpcAuthStatus(
+  connection: ManagementRpcConnection,
+  flowId: string,
+): Promise<AuthFlowStatus> {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const result = await callManagementRpc(connection, 'auth.status', {
+      channel: 'buddy',
+      flowId,
+    })
+    if (!result.ok) throw new Error(`auth.status failed: ${result.error.code}`)
+    if (result.value.status !== 'pending') return result.value
+    await new Promise<void>((resolve) => { setTimeout(resolve, 1) })
+  }
+  throw new Error('auth flow did not settle')
 }
 
 /** 直接调用已注册路由，绕开 Client 校验以测试 Host 的防御。 */
@@ -512,5 +625,194 @@ describe('accounts.* 共享 Client 契约', () => {
       const snapshot: SearchSettingsSnapshot = result.value
       expect(snapshot.search).toEqual({ enabled: false, channel: 'buddy' })
     }
+  })
+})
+
+describe('auth.* 共享 Client 契约', () => {
+  it('auth.start 返回 pending 授权 URL，完成后状态含 AccountSummary 与当前账号', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true })
+
+    const started = await callManagementRpc(harness.connection, 'auth.start', {
+      channel: 'buddy',
+    })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    const pending: AuthFlowStatus = started.value
+    expect(pending.channel).toBe('buddy')
+    expect(pending.status).toBe('pending')
+    expect(pending.authUrl).toContain('www.codebuddy.cn')
+    expect(pending.account).toBeNull()
+
+    const completed = await waitForRpcAuthStatus(harness.connection, pending.flowId)
+    expect(completed.status).toBe('completed')
+    expect(isAuthFlowStatus(completed)).toBe(true)
+    const summary: AccountSummary | null = completed.account
+    expect(summary?.channelId).toBe('buddy')
+    expect(summary?.status).toBe('ready')
+    expect(harness.double.getState().buddy.currentAccountId).toBe(summary?.id)
+    expect(JSON.stringify(completed)).not.toMatch(/RPC_ACCESS|RPC_REFRESH|accessToken|refreshToken/)
+  })
+
+  it('auth.cancel 取消 pending 流程，auth.status 返回 cancelled 且不落码', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true, tokenReady: false })
+
+    const started = await callManagementRpc(harness.connection, 'auth.start', {
+      channel: 'buddy',
+    })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+
+    const cancelled = await callManagementRpc(harness.connection, 'auth.cancel', {
+      channel: 'buddy',
+      flowId: started.value.flowId,
+    })
+    expect(cancelled.ok).toBe(true)
+    if (cancelled.ok) {
+      const status: AuthFlowStatus = cancelled.value
+      expect(status.status).toBe('cancelled')
+      expect(status.errorCode).toBe('auth/cancelled')
+    }
+
+    const queried = await callManagementRpc(harness.connection, 'auth.status', {
+      channel: 'buddy',
+      flowId: started.value.flowId,
+    })
+    expect(queried.ok).toBe(true)
+    if (queried.ok) expect(queried.value.status).toBe('cancelled')
+    expect(await harness.store.listEntries('buddy')).toHaveLength(0)
+    expect(harness.double.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('auth.refresh 返回 AccountSummary 并轮换秘密', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true })
+    const account = await harness.store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'rpc-refresh-user',
+      secret: { accessToken: 'RPC_ACCESS_1', refreshToken: 'RPC_REFRESH_1' },
+    })
+
+    const result = await callManagementRpc(harness.connection, 'auth.refresh', {
+      channel: 'buddy',
+      accountId: account.accountId,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const summary: AccountSummary = result.value
+      expect(isAccountSummary(summary)).toBe(true)
+      expect(summary.id).toBe(account.accountId)
+      expect(summary.channelId).toBe('buddy')
+    }
+    const stored = await harness.store.readEntry('buddy', account.accountId)
+    expect(stored?.account?.secret).toMatchObject({
+      accessToken: 'RPC_ACCESS_2',
+      refreshToken: 'RPC_REFRESH_2',
+    })
+  })
+
+  it('auth.start 携带 accountId 时走重新登录并复用账号 ID', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true })
+    const first = await callManagementRpc(harness.connection, 'auth.start', { channel: 'buddy' })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    const firstCompleted = await waitForRpcAuthStatus(harness.connection, first.value.flowId)
+    const accountId = firstCompleted.account!.id
+
+    const reauth = await callManagementRpc(harness.connection, 'auth.start', {
+      channel: 'buddy',
+      accountId,
+    })
+    expect(reauth.ok).toBe(true)
+    if (!reauth.ok) return
+    const reauthCompleted = await waitForRpcAuthStatus(harness.connection, reauth.value.flowId)
+
+    expect(reauthCompleted.status).toBe('completed')
+    expect(reauthCompleted.account?.id).toBe(accountId)
+    expect(await harness.store.listEntries('buddy')).toHaveLength(1)
+  })
+
+  it('四个授权方法非法 payload 在 connection.rpc.call 之前失败', () => {
+    const { connection } = createRpcHarness({ withBuddyAuth: true })
+    let requestCount = 0
+    const original = connection.rpc.call
+    connection.rpc.call = async (...args) => {
+      requestCount += 1
+      return original(...args)
+    }
+
+    const invalidCalls = [
+      ['auth.start', {}],
+      ['auth.start', { channel: 'workbuddy' }],
+      ['auth.start', { channel: 'buddy', extra: true }],
+      ['auth.cancel', { channel: 'buddy' }],
+      ['auth.cancel', { channel: 'buddy', flowId: 'Bad_ID' }],
+      ['auth.status', { channel: 'buddy', flowId: 'flow-1', extra: true }],
+      ['auth.refresh', { channel: 'buddy' }],
+      ['auth.refresh', { channel: 'buddy', accountId: 'Bad_ID' }],
+    ] as const
+
+    for (const [method, payload] of invalidCalls) {
+      expect(() => (callManagementRpc as (...args: unknown[]) => unknown)(
+        connection,
+        method,
+        payload,
+      )).toThrow(AuthRpcValidationError)
+    }
+    expect(requestCount).toBe(0)
+  })
+
+  it('Host 拒绝伪造 channel 与未知键，且不写账号', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true })
+    for (const payload of [
+      { channel: 'workbuddy' },
+      { channel: 'buddy', extra: true },
+    ]) {
+      const response = await rawCall(harness, {
+        type: 'client-request',
+        rpcId: 'raw-auth-invalid',
+        method: MANAGEMENT_RPC_ENDPOINT,
+        payload: { method: 'auth.start', payload },
+      })
+      const body = await response.json() as {
+        result: { ok: boolean; error?: { code: string; details: unknown } }
+      }
+      expect(body.result.ok).toBe(false)
+      expect(body.result.error?.code).toBe('auth/invalid')
+      expect(typeof body.result.error?.details).toBe('object')
+    }
+    expect(await harness.store.listEntries('buddy')).toHaveLength(0)
+  })
+
+  it('未提供 buddyAuth 时 auth.* 返回 bad-request', async () => {
+    const harness = createRpcHarness()
+    const response = await rawCall(harness, {
+      type: 'client-request',
+      rpcId: 'raw-auth-unwired',
+      method: MANAGEMENT_RPC_ENDPOINT,
+      payload: { method: 'auth.start', payload: { channel: 'buddy' } },
+    })
+    const body = await response.json() as { result: { ok: boolean; error?: { code: string } } }
+    expect(body.result.ok).toBe(false)
+    expect(body.result.error?.code).toBe('bad-request')
+  })
+
+  it('auth.refresh 不读取 WorkBuddy 账号', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true })
+    const foreign = await harness.store.saveAccount({
+      channel: 'workbuddy',
+      vendorAccountId: 'rpc-work-user',
+      secret: { accessToken: 'WB_ACCESS', refreshToken: 'WB_REFRESH' },
+    })
+
+    const result = await callManagementRpc(harness.connection, 'auth.refresh', {
+      channel: 'buddy',
+      accountId: foreign.accountId,
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('auth/account-not-found')
+    const stored = await harness.store.readEntry('workbuddy', foreign.accountId)
+    expect(stored?.account?.secret).toMatchObject({
+      accessToken: 'WB_ACCESS',
+      refreshToken: 'WB_REFRESH',
+    })
   })
 })

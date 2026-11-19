@@ -96,6 +96,23 @@ export interface SaveAccountInput {
   readonly secret: Readonly<Record<string, unknown>>
 }
 
+/**
+ * 刷新轮换的原子更新输入。
+ *
+ * `expectedRefreshToken` 是本次网络刷新实际使用的 refresh token；只有当前记录
+ * 的 `secret.refreshToken` 仍等于它时才写入。旧刷新迟到、重新登录已换新令牌
+ * 或记录被删除时都不覆盖当前记录。
+ */
+export interface RotateAccountSecretInput {
+  readonly channel: ChannelId
+  readonly accountId: string
+  readonly expectedRefreshToken: string
+  /** 省略时保留当前秘密，只更新状态。 */
+  readonly secret?: Readonly<Record<string, unknown>>
+  /** 省略时保留当前状态。 */
+  readonly status?: PersistedAccountStatus
+}
+
 /** 账号库依赖。 */
 export interface AccountStoreOptions {
   readonly credentials: AccountCredentialProvider
@@ -199,6 +216,43 @@ export class AccountStore {
     })
 
     if (saved === undefined) throw accountStorageFailed()
+    return saved
+  }
+
+  /**
+   * 原子刷新轮换：仅当当前记录的 refresh token 仍等于期望值时更新秘密/状态。
+   *
+   * 这是刷新迟到保护的唯一写入口：`modifyRecord` 的独占读改写保证比较与写入
+   * 之间没有其他写入插入；不匹配时返回 undefined，绝不覆盖新记录。记录不存在、
+   * 损坏或跨渠道时同样返回 undefined，不创建也不修复记录。
+   *
+   * @throws {AccountError} 输入非法或存储失败时。
+   */
+  async rotateSecret(input: RotateAccountSecretInput): Promise<StoredAccountRecord | undefined> {
+    const channel = requireChannel(input.channel)
+    const accountId = requireAccountId(input.accountId)
+    if (typeof input.expectedRefreshToken !== 'string') throw accountInvalid()
+    const expectedRefreshToken = input.expectedRefreshToken
+    const nextSecret = input.secret === undefined ? undefined : cloneSecret(input.secret)
+    const nextStatus = input.status === undefined
+      ? undefined
+      : requirePersistedStatus(input.status)
+    const key = accountRecordKey(channel, accountId)
+
+    let saved: StoredAccountRecord | undefined
+    await this.modifyRaw(key, async (current) => {
+      const parsed = parseRecord(current, channel, accountId)
+      if (parsed.kind !== 'valid') return undefined
+      const currentRefreshToken = readSecretString(parsed.record.secret, 'refreshToken') ?? ''
+      if (currentRefreshToken !== expectedRefreshToken) return undefined
+      const record: StoredAccountRecord = Object.freeze({
+        ...parsed.record,
+        secret: nextSecret ?? parsed.record.secret,
+        status: nextStatus ?? parsed.record.status,
+      })
+      saved = record
+      return { kind: 'grant', payload: toPayload(record) }
+    })
     return saved
   }
 
@@ -518,6 +572,17 @@ function tryCloneSecret(value: unknown): Readonly<Record<string, unknown>> | und
   } catch {
     return undefined
   }
+}
+
+/** 读取非空秘密字符串并 trim；缺失/空串/非字符串返回 undefined。 */
+function readSecretString(
+  secret: Readonly<Record<string, unknown>>,
+  key: string,
+): string | undefined {
+  const value = secret[key]
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length === 0 ? undefined : trimmed
 }
 
 /** 判断普通数据对象。 */
