@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 import { AccountError } from '../../src/host/accounts/errors.ts'
 import { accountRecordKey } from '../../src/host/accounts/store.ts'
+import { SettingsWriteCancelledError } from '../../src/host/settings/service.ts'
 import type { ChannelId } from '../../src/shared/channels.ts'
 import { ChannelSearchError } from '../../src/host/search/errors.ts'
 import {
@@ -222,6 +223,18 @@ describe('当前账号生命周期', () => {
     expect((error as { cause?: unknown }).cause).toBeUndefined()
     expect(fixture.settings.getSnapshot()).toBe(before)
     expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBe(first.accountId)
+  })
+
+  it('取消信号在设置当前账号提交前生效，不写配置', async () => {
+    const fixture = createAccountFixture()
+    const account = await saveTencent(fixture, 'buddy', 'cancel-current@example.test')
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(fixture.service.setCurrent('buddy', account.accountId, controller.signal))
+      .rejects.toBeInstanceOf(SettingsWriteCancelledError)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+    expect(fixture.settingsDouble.edits).toHaveLength(0)
   })
 })
 

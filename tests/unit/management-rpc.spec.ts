@@ -112,6 +112,7 @@ function createBuddyAuthForRpc(
     pollIntervalMs: 10,
     authTimeoutMs: 60_000,
     timeoutSignal: () => new AbortController().signal,
+    verifyCapability: async () => { /* RPC 契约测试不执行真实能力探测 */ },
   })
 }
 

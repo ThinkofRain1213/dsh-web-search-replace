@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { Config, type SearchConfig } from '../../src/host/config.ts'
-import { SettingsService } from '../../src/host/settings/service.ts'
+import { SettingsService, SettingsWriteCancelledError } from '../../src/host/settings/service.ts'
 import { DEFAULT_SEARCH_SETTINGS } from '../../src/shared/contracts.ts'
 import { createSettingsDouble } from './support/settings-double.ts'
 
@@ -235,5 +235,37 @@ describe('SettingsService.setCurrentAccount', () => {
 
     expect(service.getSnapshot().buddy.currentAccountId).toBe('old-account')
     expect(double.getState().buddy.currentAccountId).toBe('old-account')
+  })
+
+  it('已取消的信号在 configEditor 提交前拒绝写入', async () => {
+    const { service, double } = createService()
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(service.setCurrentAccount('buddy', 'new-account', controller.signal))
+      .rejects.toBeInstanceOf(SettingsWriteCancelledError)
+    expect(service.getSnapshot().buddy.currentAccountId).toBeNull()
+    expect(double.edits).toHaveLength(0)
+  })
+
+  it('取消落在 configEditor 提交回调内时不写当前账号', async () => {
+    const { service, double } = createService()
+    const controller = new AbortController()
+    const originalEdit = double.editor.edit.bind(double.editor)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    double.editor.edit = async (entry, change) => {
+      await gate
+      return await originalEdit(entry, change)
+    }
+
+    const writing = service.setCurrentAccount('buddy', 'new-account', controller.signal)
+      .catch((error: unknown) => error)
+    controller.abort()
+    release()
+
+    expect(await writing).toBeInstanceOf(SettingsWriteCancelledError)
+    expect(service.getSnapshot().buddy.currentAccountId).toBeNull()
+    expect(double.edits).toHaveLength(0)
   })
 })

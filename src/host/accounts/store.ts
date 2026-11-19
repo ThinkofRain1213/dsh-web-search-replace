@@ -28,6 +28,7 @@ import {
 import { isStableChannelAccountId } from '../../shared/contracts.ts'
 import {
   AccountError,
+  accountCancelled,
   accountConflict,
   accountInvalid,
   accountStorageFailed,
@@ -94,6 +95,11 @@ export interface SaveAccountInput {
   readonly endpointLabel?: string
   readonly status?: PersistedAccountStatus
   readonly secret: Readonly<Record<string, unknown>>
+  /**
+   * 可选取消信号；在 modifyRecord 的提交回调内、实际写入前再次检查。
+   * 取消早于提交时抛 `accounts/cancelled`，不写记录。
+   */
+  readonly signal?: AbortSignal
 }
 
 /**
@@ -172,6 +178,7 @@ export class AccountStore {
    * @throws {AccountError} 输入非法、记录地址冲突或存储失败时。
    */
   async saveAccount(input: SaveAccountInput): Promise<StoredAccountRecord> {
+    if (input.signal?.aborted) throw accountCancelled()
     const channel = requireChannel(input.channel)
     const vendorAccountId = requireVendorAccountId(input.vendorAccountId)
     const secret = cloneSecret(input.secret)
@@ -189,6 +196,7 @@ export class AccountStore {
 
     let saved: StoredAccountRecord | undefined
     await this.modifyRaw(key, async (current) => {
+      if (input.signal?.aborted) throw accountCancelled()
       const parsed = parseRecord(current, channel, accountId)
       // 伪造记录（payload 声称其他渠道）绝不覆盖；本渠道的损坏记录允许修复，
       // 否则用户重新登录会被一条旧 schema 的脏记录永久卡住。

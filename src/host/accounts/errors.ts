@@ -11,6 +11,7 @@ export type AccountErrorCode =
   | 'accounts/not-found'
   | 'accounts/conflict'
   | 'accounts/unavailable'
+  | 'accounts/cancelled'
   | 'accounts/storage-failed'
 
 /** 账号域错误；`cause` 永远不设置，避免秘密沿错误链泄漏。 */
@@ -43,6 +44,11 @@ export function accountUnavailable(): AccountError {
 /** 凭据存储或普通配置写入失败。 */
 export function accountStorageFailed(): AccountError {
   return new AccountError('accounts/storage-failed', '账号操作未能写入配置或凭据存储')
+}
+
+/** 取消信号在持久化提交边界生效；调用方应把本次操作视为已取消。 */
+export function accountCancelled(): AccountError {
+  return new AccountError('accounts/cancelled', '账号操作已取消')
 }
 
 /** 账号记录 key 与已有未知/跨渠道数据冲突，拒绝覆盖。 */

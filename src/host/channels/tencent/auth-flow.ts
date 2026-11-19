@@ -46,6 +46,11 @@ export interface TencentExternalLinkProduct {
   readonly endpoint: string
   readonly apiDomain: string
   readonly userAgent: string
+  /**
+   * authUrl 允许的精确 host 列表；必须由产品显式提供，本文件不做后缀匹配。
+   * 空列表意味着所有 authUrl 都失败（fail-closed）。
+   */
+  readonly authUrlHosts: readonly string[]
 }
 
 /** 构造 external-link 客户端的依赖。 */
@@ -198,7 +203,7 @@ export class TencentExternalLinkClient {
       throw new TencentExternalLinkError('invalid-response', MESSAGE_INVALID)
     }
     const state = normalizeState(data.state)
-    const authUrl = normalizeAuthUrl(data.authUrl)
+    const authUrl = normalizeAuthUrl(data.authUrl, this.product.authUrlHosts)
     if (state === undefined || authUrl === undefined) {
       throw new TencentExternalLinkError('invalid-response', MESSAGE_INVALID)
     }
@@ -359,7 +364,14 @@ export class TencentExternalLinkClient {
     const composed = AbortSignal.any([signal, timeout])
     let response: Response
     try {
-      response = await this.fetcher(url, { method, headers, signal: composed })
+      response = await this.fetcher(url, {
+        method,
+        headers,
+        signal: composed,
+        // 控制面请求绝不跟随 3xx：跨源/降级重定向不得转发 Authorization、
+        // X-Refresh-Token 或其他秘密。3xx 会以 fetch TypeError 进入固定错误映射。
+        redirect: 'error',
+      })
     } catch {
       if (signal.aborted) throw new TencentExternalLinkError('cancelled', MESSAGE_CANCELLED)
       if (timeout.aborted) {
@@ -531,8 +543,11 @@ function normalizeState(value: unknown): string | undefined {
   return trimmed
 }
 
-/** authUrl 只接受 https、无凭据、长度受限的绝对 URL。 */
-function normalizeAuthUrl(value: unknown): string | undefined {
+/**
+ * authUrl 只接受产品显式允许的精确 host、https、无 userinfo、无自定义端口、
+ * 无 fragment 的绝对 URL；不做后缀匹配。
+ */
+function normalizeAuthUrl(value: unknown, allowedHosts: readonly string[]): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   if (trimmed.length === 0 || trimmed.length > 2048) return undefined
@@ -541,6 +556,9 @@ function normalizeAuthUrl(value: unknown): string | undefined {
     const url = new URL(trimmed)
     if (url.protocol !== 'https:') return undefined
     if (url.username.length > 0 || url.password.length > 0) return undefined
+    if (url.port.length > 0 && url.port !== '443') return undefined
+    if (url.hash.length > 0) return undefined
+    if (!allowedHosts.includes(url.hostname)) return undefined
     return trimmed
   } catch {
     return undefined

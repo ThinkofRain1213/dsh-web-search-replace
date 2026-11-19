@@ -17,9 +17,10 @@ import {
   BuddyAuthFlow,
   BuddyAuthError,
   type BuddyAuthFlowOptions,
+  type BuddyCapabilityCredential,
 } from '../../src/host/channels/buddy/auth.ts'
 import { accountRecordKey } from '../../src/host/accounts/store.ts'
-import { ChannelSearchError } from '../../src/host/search/errors.ts'
+import { ChannelSearchError, normalizeChannelSearchError } from '../../src/host/search/errors.ts'
 import type { AccountSummary } from '../../src/shared/accounts.ts'
 import type { AuthFlowStatus } from '../../src/shared/auth.ts'
 import { createAccountFixture, type AccountFixture } from './support/account-fixture.ts'
@@ -98,6 +99,48 @@ function refreshRoute(response: () => Response | Promise<Response>): Route {
     when: (url) => url.includes('/v2/plugin/auth/token/refresh'),
     respond: response,
   }
+}
+
+/**
+ * 模拟真实 fetch 的跨源重定向跟随：只有 `redirect:'error'` 才拒绝；
+ * 其他设置会把同一请求（含原始头）发到 evil 目标。用于证明控制面请求
+ * 不会把秘密转发给重定向目标。
+ */
+function createRedirectGuardFetcher(
+  stage: 'state' | 'token' | 'account' | 'refresh',
+  redirectTarget = 'https://evil.example/collect',
+): { readonly fetcher: typeof fetch; readonly calls: FetchCall[] } {
+  const calls: FetchCall[] = []
+  async function follow(init: RequestInit): Promise<Response> {
+    if (init.redirect === 'error') throw new TypeError('fetch failed: redirect mode is error')
+    return await fetcher(redirectTarget, init)
+  }
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const requestInit = init ?? {}
+    calls.push({ url, init: requestInit })
+    if (url.includes('evil.example')) return new Response('leaked', { status: 200 })
+    if (stage === 'state' && url.includes('/v2/plugin/auth/state')) return await follow(requestInit)
+    if (stage === 'token' && url.includes('/v2/plugin/auth/token') && !url.includes('/refresh')) {
+      return await follow(requestInit)
+    }
+    if (stage === 'account' && url.includes('/v2/plugin/login/account')) {
+      return await follow(requestInit)
+    }
+    if (stage === 'refresh' && url.includes('/v2/plugin/auth/token/refresh')) {
+      return await follow(requestInit)
+    }
+    if (url.includes('/v2/plugin/auth/state')) {
+      return jsonResponse({ code: 0, data: { state: STATE, authUrl: AUTH_URL } })
+    }
+    if (url.includes('/v2/plugin/auth/token') && !url.includes('/refresh')) return okToken()
+    if (url.includes('/v2/plugin/login/account')) return okAccount()
+    if (url.includes('/v2/plugin/auth/token/refresh')) {
+      return okToken({ accessToken: 'ACCESS_2', refreshToken: 'REFRESH_2' })
+    }
+    return new Response('not found', { status: 404 })
+  }) as typeof fetch
+  return { fetcher, calls }
 }
 
 /** 默认令牌数据。 */
@@ -209,6 +252,7 @@ function createBuddyAuthFixture(): BuddyAuthFixture {
     requestTimeoutMs: 5_000,
     // 测试不让每个请求挂真实 60s 定时器；取消/超时由流程级 deadline 覆盖。
     timeoutSignal: () => new AbortController().signal,
+    verifyCapability: async () => { /* 默认能力探测成功；需要失败/延迟的用例显式覆盖 */ },
     ...overrides,
   })
   return { ...accounts, createFlow, now: () => now }
@@ -361,16 +405,229 @@ describe('CodeBuddy 授权 URL 与生命周期', () => {
     expect(terminal.status).toBe('completed')
   })
 
-  it('auth/state 返回非 https 或空 authUrl 时拒绝', async () => {
+  it('auth/state 只接受精确 CodeBuddy host 的 https authUrl', async () => {
     const fixture = createBuddyAuthFixture()
-    for (const authUrl of ['', 'http://www.codebuddy.cn/login', 'javascript:alert(1)']) {
+    const malicious = [
+      '',
+      'http://www.codebuddy.cn/login',
+      'javascript:alert(1)',
+      'https://evil.example/login',
+      'https://codebuddy.cn.evil.example/login',
+      'https://www.codebuddy.cn.evil.example/login',
+      'https://www.codebuddy.cn:444/login',
+      'https://user:pass@www.codebuddy.cn/login',
+      'https://www.codebuddy.cn/login#@evil.example',
+    ]
+    for (const authUrl of malicious) {
       const { fetcher } = createScriptedFetcher([
         stateRoute(() => jsonResponse({ code: 0, data: { state: STATE, authUrl } })),
       ])
       const flow = fixture.createFlow(fetcher)
-      await expect(flow.start()).rejects.toMatchObject({ code: 'auth/invalid-response' })
+      const started = await flow.start().then(
+        (status) => status,
+        (error: unknown) => error,
+      )
+      if (!(started instanceof Error)) await flow.dispose()
+      expect(started, authUrl).toMatchObject({ code: 'auth/invalid-response' })
       expect(fixture.credentials.writes).toHaveLength(0)
     }
+  })
+
+  it('auth/state 接受 copilot.tencent.com 的精确 https authUrl', async () => {
+    const fixture = createBuddyAuthFixture()
+    const copilotAuthUrl = 'https://copilot.tencent.com/login?platform=ide&state=state-abc'
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(() => jsonResponse({
+        code: 0,
+        data: { state: STATE, authUrl: copilotAuthUrl },
+      })),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+
+    const started = await flow.start()
+    expect(started.authUrl).toBe(copilotAuthUrl)
+    const terminal = await waitForTerminal(flow, started.flowId)
+    expect(terminal.status).toBe('completed')
+  })
+})
+
+describe('CodeBuddy 控制面重定向与秘密边界', () => {
+  it('auth/state 跨源 302 不跟随，秘密不出源', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher, calls } = createRedirectGuardFetcher('state')
+    const flow = fixture.createFlow(fetcher)
+
+    const error = await flow.start().catch((failure: unknown) => failure)
+
+    expect(error).toMatchObject({ code: 'auth/failed' })
+    expect(calls.filter((call) => call.url.includes('evil.example'))).toHaveLength(0)
+    expect(fixture.credentials.writes).toHaveLength(0)
+  })
+
+  it('token 轮询跨源 302 不跟随，秘密不出源', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher, calls } = createRedirectGuardFetcher('token')
+    const flow = fixture.createFlow(fetcher, { authTimeoutMs: 50, pollIntervalMs: 10 })
+
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('timed_out')
+    expect(calls.filter((call) => call.url.includes('evil.example'))).toHaveLength(0)
+    expect(fixture.credentials.writes).toHaveLength(0)
+  })
+
+  it('account 轮询跨源 302 不跟随，Authorization 不出源', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher, calls } = createRedirectGuardFetcher('account')
+    const flow = fixture.createFlow(fetcher, { authTimeoutMs: 50, pollIntervalMs: 10 })
+
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('timed_out')
+    expect(calls.filter((call) => call.url.includes('evil.example'))).toHaveLength(0)
+    expect(fixture.credentials.writes).toHaveLength(0)
+  })
+
+  it('refresh 跨源且降级到 http 的 302 不跟随，refreshToken 不出源', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher, calls } = createRedirectGuardFetcher(
+      'refresh',
+      'http://evil.example/collect',
+    )
+    const flow = fixture.createFlow(fetcher)
+
+    const error = await flow.refresh(account.accountId).catch((failure: unknown) => failure)
+
+    expect(error).toMatchObject({ code: 'auth/refresh-failed' })
+    expect(calls.filter((call) => call.url.includes('evil.example'))).toHaveLength(0)
+    const stored = await fixture.store.readEntry('buddy', account.accountId)
+    expect(stored?.account?.secret).toMatchObject({
+      accessToken: 'ACCESS_1',
+      refreshToken: 'REFRESH_1',
+    })
+  })
+})
+
+describe('CodeBuddy 保存前能力探测', () => {
+  it('身份验证后、保存前调用 verifyCapability 并传入脱敏凭据', async () => {
+    const fixture = createBuddyAuthFixture()
+    let probed: BuddyCapabilityCredential | undefined
+    let probedSignal: AbortSignal | undefined
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher, {
+      verifyCapability: async (credential, signal) => {
+        probed = credential
+        probedSignal = signal
+      },
+    })
+
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('completed')
+    expect(probed).toEqual({
+      channelId: 'buddy',
+      accessToken: 'ACCESS_1',
+      vendorAccountId: 'user-1',
+    })
+    expect(probedSignal).toBeInstanceOf(AbortSignal)
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(1)
+  })
+
+  it('能力探测失败时不落码、不设当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher, {
+      verifyCapability: async () => {
+        throw new Error('account has no search permission')
+      },
+    })
+
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('failed')
+    expect(terminal.errorCode).toBe('auth/failed')
+    expect(terminal.account).toBeNull()
+    expect(fixture.credentials.writes).toHaveLength(0)
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(0)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('能力探测超时不落码、不设当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher, {
+      verifyCapability: async () => {
+        throw new DOMException('capability timed out', 'TimeoutError')
+      },
+    })
+
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('timed_out')
+    expect(terminal.errorCode).toBe('auth/timeout')
+    expect(terminal.account).toBeNull()
+    expect(fixture.credentials.writes).toHaveLength(0)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('能力探测期间取消：不落码、不设当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher, {
+      verifyCapability: async (_credential, signal) => {
+        await new Promise<void>((resolve, reject) => {
+          if (signal.aborted) {
+            reject(new Error('capability aborted'))
+            return
+          }
+          const timer = setTimeout(resolve, 1_000)
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(new Error('capability aborted'))
+          }, { once: true })
+        })
+      },
+    })
+
+    const started = await flow.start()
+    const cancelled = await flow.cancel(started.flowId)
+
+    expect(cancelled.status).toBe('cancelled')
+    expect(fixture.credentials.writes).toHaveLength(0)
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(0)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('verifyCapability 不可省略', () => {
+    const fixture = createBuddyAuthFixture()
+    expect(() => new BuddyAuthFlow({
+      store: fixture.store,
+      accounts: fixture.service,
+    } as never)).toThrow(TypeError)
   })
 })
 
@@ -498,6 +755,59 @@ describe('CodeBuddy 授权成功落码与当前账号', () => {
     expect(calls.some((call) => call.url.includes('/login/account'))).toBe(true)
     expect(fixture.credentials.writes).toHaveLength(0)
     expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('首个账号写当前失败时返回 auth/current-account-failed，账号保留但不设当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const probeEntered = deferred<void>()
+    const probeRelease = deferred<void>()
+    const flow = fixture.createFlow(fetcher, {
+      verifyCapability: async () => {
+        probeEntered.resolve()
+        await probeRelease.promise
+      },
+    })
+
+    const started = await flow.start()
+    await probeEntered.promise
+    fixture.settingsDouble.failNextWrite('settings write failed')
+    probeRelease.resolve()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('failed')
+    expect(terminal.errorCode).toBe('auth/current-account-failed')
+    expect(terminal.account).not.toBeNull()
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(1)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('已有记录缺 accessToken 时不算可用账号，首个新账号仍设为当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const unusable = await fixture.store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'empty-secret-user',
+      secret: {},
+    })
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+
+    const started = await flow.start()
+    const terminal = await waitForTerminal(flow, started.flowId)
+
+    expect(terminal.status).toBe('completed')
+    expect(terminal.account?.id).not.toBe(unusable.accountId)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBe(
+      terminal.account?.id,
+    )
   })
 })
 
@@ -637,6 +947,173 @@ describe('CodeBuddy 取消、超时与卸载', () => {
   })
 })
 
+describe('CodeBuddy dispose 覆盖全部在飞工作', () => {
+  it('dispose 等待 reauthenticate 的预读 settle，且不启动新流程', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const originalRead = fixture.store.readEntry.bind(fixture.store)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    let gate = true
+    fixture.store.readEntry = async (channel, accountId) => {
+      if (gate && channel === 'buddy' && accountId === account.accountId) {
+        gate = false
+        entered.resolve()
+        await release.promise
+      }
+      return await originalRead(channel, accountId)
+    }
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+
+    const reauthenticating = flow.reauthenticate(account.accountId).catch(
+      (error: unknown) => error,
+    )
+    const writesBefore = fixture.credentials.writes.length
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    expect(await reauthenticating).toMatchObject({ code: 'auth/disposed' })
+    expect(fixture.credentials.writes).toHaveLength(writesBefore)
+  })
+
+  it('dispose 等待 runWithAuthRetry 的首次 credential resolve，且不启动 operation', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const originalRead = fixture.store.readEntry.bind(fixture.store)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    let gate = true
+    fixture.store.readEntry = async (channel, accountId) => {
+      if (gate && channel === 'buddy' && accountId === account.accountId) {
+        gate = false
+        entered.resolve()
+        await release.promise
+      }
+      return await originalRead(channel, accountId)
+    }
+    const { fetcher } = createScriptedFetcher([stateRoute()])
+    const flow = fixture.createFlow(fetcher)
+    let operationCalls = 0
+
+    const running = flow.runWithAuthRetry(account.accountId, async () => {
+      operationCalls += 1
+      return 'ok'
+    }).catch((error: unknown) => error)
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    expect(await running).toMatchObject({ code: 'auth/disposed' })
+    expect(operationCalls).toBe(0)
+  })
+
+  it('dispose 等待已启动的 operation settle，且不启动第二次 operation', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher } = createScriptedFetcher([stateRoute()])
+    const flow = fixture.createFlow(fetcher)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    let receivedSignal: AbortSignal | undefined
+    let operationCalls = 0
+
+    const running = flow.runWithAuthRetry(account.accountId, async (_credential, signal) => {
+      operationCalls += 1
+      receivedSignal = signal
+      entered.resolve()
+      await release.promise
+      return 'result'
+    }).catch((error: unknown) => error)
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    expect(await running).toMatchObject({ code: 'auth/disposed' })
+    expect(receivedSignal).toBeInstanceOf(AbortSignal)
+    expect(operationCalls).toBe(1)
+  })
+
+  it('dispose 等待 401 刷新后的第二次 credential resolve，且不启动第二次 operation', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher } = createScriptedFetcher([
+      refreshRoute(() => okToken({ accessToken: 'ACCESS_2', refreshToken: 'REFRESH_2' })),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const originalRefresh = flow.refresh.bind(flow)
+    let refreshDone = false
+    flow.refresh = async (accountId: string) => {
+      const result = await originalRefresh(accountId)
+      refreshDone = true
+      return result
+    }
+    const originalRead = fixture.store.readEntry.bind(fixture.store)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    let gate = true
+    fixture.store.readEntry = async (channel, accountId) => {
+      if (refreshDone && gate && channel === 'buddy' && accountId === account.accountId) {
+        gate = false
+        entered.resolve()
+        await release.promise
+      }
+      return await originalRead(channel, accountId)
+    }
+    let operationCalls = 0
+    const running = flow.runWithAuthRetry(account.accountId, async () => {
+      operationCalls += 1
+      if (operationCalls === 1) {
+        throw new ChannelSearchError('UNAUTHORIZED', 'buddy', '401', undefined, 401)
+      }
+      return 'ok'
+    }).catch((error: unknown) => error)
+
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    expect(await running).toMatchObject({ code: 'auth/disposed' })
+    expect(operationCalls).toBe(1)
+  })
+
+  it('dispose 后 runWithAuthRetry 直接拒绝且不启动 operation', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher } = createScriptedFetcher([stateRoute()])
+    const flow = fixture.createFlow(fetcher)
+    await flow.dispose()
+    let operationCalls = 0
+
+    await expect(flow.runWithAuthRetry(account.accountId, async () => {
+      operationCalls += 1
+      return 'ok'
+    })).rejects.toMatchObject({ code: 'auth/disposed' })
+    expect(operationCalls).toBe(0)
+  })
+})
+
 describe('CodeBuddy 刷新单飞与旧刷新保护', () => {
   it('刷新请求使用 CodeBuddy 产品头与 X-Refresh-Token', async () => {
     const fixture = createBuddyAuthFixture()
@@ -735,6 +1212,33 @@ describe('CodeBuddy 刷新单飞与旧刷新保护', () => {
     expect(stored?.account?.secret).toMatchObject({
       accessToken: 'ACCESS_1',
       refreshToken: 'REFRESH_1',
+    })
+  })
+
+  it('旧 401 迟到时 CAS 不覆盖已轮换的新记录状态', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const gate = deferred<Response>()
+    const { fetcher, calls } = createScriptedFetcher([
+      refreshRoute(() => gate.promise),
+    ])
+    const flow = fixture.createFlow(fetcher)
+
+    const refreshing = flow.refresh(account.accountId).catch((failure: unknown) => failure)
+    await waitForCall(calls, (call) => call.url.includes('/auth/token/refresh'))
+    await fixture.store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'user-1',
+      secret: { accessToken: 'ACCESS_NEW', refreshToken: 'REFRESH_NEW' },
+    })
+    gate.resolve(jsonResponse({ code: 401, message: 'expired' }, 401))
+
+    expect(await refreshing).toMatchObject({ code: 'auth/reauth-required' })
+    const stored = await fixture.store.readEntry('buddy', account.accountId)
+    expect(stored?.account?.status).toBe('ready')
+    expect(stored?.account?.secret).toMatchObject({
+      accessToken: 'ACCESS_NEW',
+      refreshToken: 'REFRESH_NEW',
     })
   })
 
@@ -858,6 +1362,160 @@ describe('CodeBuddy 刷新单飞与旧刷新保护', () => {
   })
 })
 
+describe('CodeBuddy 取消落在持久化提交边界', () => {
+  it('cancel 落在 saveAccount 的 modifyRecord 提交前：不写账号、不设当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const originalModify = fixture.credentials.modifyRecord.bind(fixture.credentials)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    fixture.credentials.modifyRecord = async (key, mutate) => {
+      entered.resolve()
+      await release.promise
+      return await originalModify(key, mutate)
+    }
+
+    const started = await flow.start()
+    await entered.promise
+    const cancelling = flow.cancel(started.flowId)
+    release.resolve()
+    const cancelled = await cancelling
+
+    expect(cancelled.status).toBe('cancelled')
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(0)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('dispose 落在 saveAccount 的 modifyRecord 提交前：等待 settle 且不写账号', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const originalModify = fixture.credentials.modifyRecord.bind(fixture.credentials)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    fixture.credentials.modifyRecord = async (key, mutate) => {
+      entered.resolve()
+      await release.promise
+      return await originalModify(key, mutate)
+    }
+
+    const started = await flow.start()
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    expect((await flow.status(started.flowId)).status).toBe('cancelled')
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(0)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('cancel 落在 setCurrent 的 configEditor 提交前：账号保留但不写当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const originalEdit = fixture.settingsDouble.editor.edit.bind(fixture.settingsDouble.editor)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    fixture.settingsDouble.editor.edit = async (entry, change) => {
+      entered.resolve()
+      await release.promise
+      return await originalEdit(entry, change)
+    }
+
+    const started = await flow.start()
+    await entered.promise
+    const cancelling = flow.cancel(started.flowId)
+    release.resolve()
+    const cancelled = await cancelling
+
+    expect(cancelled.status).toBe('cancelled')
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(1)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('dispose 落在 setCurrent 的 configEditor 提交前：等待 settle 且不写当前', async () => {
+    const fixture = createBuddyAuthFixture()
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken()),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const originalEdit = fixture.settingsDouble.editor.edit.bind(fixture.settingsDouble.editor)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    fixture.settingsDouble.editor.edit = async (entry, change) => {
+      entered.resolve()
+      await release.promise
+      return await originalEdit(entry, change)
+    }
+
+    const started = await flow.start()
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    expect((await flow.status(started.flowId)).status).toBe('cancelled')
+    expect(await fixture.store.listEntries('buddy')).toHaveLength(1)
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
+  })
+
+  it('取消重新登录不得用新秘密覆盖旧记录', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    await fixture.service.setCurrent('buddy', account.accountId)
+    const { fetcher } = createScriptedFetcher([
+      stateRoute(),
+      tokenRoute(() => okToken({ accessToken: 'ACCESS_2', refreshToken: 'REFRESH_2' })),
+      accountRoute(() => okAccount()),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const originalModify = fixture.credentials.modifyRecord.bind(fixture.credentials)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    fixture.credentials.modifyRecord = async (key, mutate) => {
+      entered.resolve()
+      await release.promise
+      return await originalModify(key, mutate)
+    }
+
+    const started = await flow.reauthenticate(account.accountId)
+    await entered.promise
+    const cancelling = flow.cancel(started.flowId)
+    release.resolve()
+    const cancelled = await cancelling
+
+    expect(cancelled.status).toBe('cancelled')
+    const stored = await fixture.store.readEntry('buddy', account.accountId)
+    expect(stored?.account?.secret).toMatchObject({
+      accessToken: 'ACCESS_1',
+      refreshToken: 'REFRESH_1',
+    })
+    expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBe(account.accountId)
+  })
+})
+
 describe('CodeBuddy 401 同账号重试一次', () => {
   it('明确 UNAUTHORIZED 时刷新同一账号并重试原操作一次', async () => {
     const fixture = createBuddyAuthFixture()
@@ -874,7 +1532,9 @@ describe('CodeBuddy 401 同账号重试一次', () => {
       expect(credential.accountId).toBe(account.accountId)
       seen.push(credential.accessToken)
       attempts += 1
-      if (attempts === 1) throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'upstream 401')
+      if (attempts === 1) {
+        throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'upstream 401', undefined, 401)
+      }
       return 'search-ok'
     })
 
@@ -906,12 +1566,99 @@ describe('CodeBuddy 401 同账号重试一次', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('仅业务 code=UNAUTHORIZED、没有可信 HTTP 401 时不刷新不重试', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher, calls } = createScriptedFetcher([refreshRoute(() => okToken())])
+    const flow = fixture.createFlow(fetcher)
+    const businessError = new ChannelSearchError('UNAUTHORIZED', 'buddy', 'business code')
+    let attempts = 0
+
+    const error = await flow.runWithAuthRetry(account.accountId, async () => {
+      attempts += 1
+      throw businessError
+    }).catch((failure: unknown) => failure)
+
+    expect(error).toBe(businessError)
+    expect(attempts).toBe(1)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('HTTP 403/429 即使带 UNAUTHORIZED 也不刷新不重试', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher, calls } = createScriptedFetcher([refreshRoute(() => okToken())])
+    const flow = fixture.createFlow(fetcher)
+
+    for (const httpStatus of [403, 429]) {
+      let attempts = 0
+      const error = await flow.runWithAuthRetry(account.accountId, async () => {
+        attempts += 1
+        throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'not 401', undefined, httpStatus)
+      }).catch((failure: unknown) => failure)
+      expect(error).toMatchObject({ code: 'UNAUTHORIZED', httpStatus })
+      expect(attempts).toBe(1)
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  it('共享 normalize 从实际 HTTP 401 产生的 UNAUTHORIZED 可以刷新重试', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher, calls } = createScriptedFetcher([
+      refreshRoute(() => okToken({ accessToken: 'ACCESS_2', refreshToken: 'REFRESH_2' })),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const unauthorized = normalizeChannelSearchError(
+      { status: 401, code: 'UNAUTHORIZED', message: 'raw upstream text' },
+      'buddy',
+    )
+    let attempts = 0
+
+    const result = await flow.runWithAuthRetry(account.accountId, async () => {
+      attempts += 1
+      if (attempts === 1) throw unauthorized
+      return 'ok'
+    })
+
+    expect(result).toBe('ok')
+    expect(attempts).toBe(2)
+    expect(calls.filter((call) => call.url.includes('/auth/token/refresh'))).toHaveLength(1)
+  })
+
+  it('共享 normalize 从 HTTP 403 产生的 UNAUTHORIZED 不刷新不重试', async () => {
+    const fixture = createBuddyAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher, calls } = createScriptedFetcher([refreshRoute(() => okToken())])
+    const flow = fixture.createFlow(fetcher)
+    const unauthorized = normalizeChannelSearchError(
+      { status: 403, code: 'UNAUTHORIZED', message: 'forbidden' },
+      'buddy',
+    )
+    let attempts = 0
+
+    const error = await flow.runWithAuthRetry(account.accountId, async () => {
+      attempts += 1
+      throw unauthorized
+    }).catch((failure: unknown) => failure)
+
+    expect(error).toBe(unauthorized)
+    expect(attempts).toBe(1)
+    expect(calls).toHaveLength(0)
+  })
+
   it('跨渠道 UNAUTHORIZED 不刷新、不重试', async () => {
     const fixture = createBuddyAuthFixture()
     const account = await seedAccount(fixture)
     const { fetcher, calls } = createScriptedFetcher([refreshRoute(() => okToken())])
     const flow = fixture.createFlow(fetcher)
-    const foreign = new ChannelSearchError('UNAUTHORIZED', 'workbuddy', 'foreign 401')
+    const foreign = new ChannelSearchError(
+      'UNAUTHORIZED',
+      'workbuddy',
+      'foreign 401',
+      undefined,
+      401,
+    )
     let attempts = 0
 
     const error = await flow.runWithAuthRetry(account.accountId, async () => {
@@ -935,7 +1682,7 @@ describe('CodeBuddy 401 同账号重试一次', () => {
 
     await expect(flow.runWithAuthRetry(account.accountId, async () => {
       attempts += 1
-      throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'still 401')
+      throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'still 401', undefined, 401)
     })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
 
     expect(attempts).toBe(2)
@@ -957,7 +1704,9 @@ describe('CodeBuddy 401 同账号重试一次', () => {
       let attempts = 0
       return async (credential: { readonly accessToken: string }) => {
         attempts += 1
-        if (attempts === 1) throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'concurrent 401')
+        if (attempts === 1) {
+          throw new ChannelSearchError('UNAUTHORIZED', 'buddy', 'concurrent 401', undefined, 401)
+        }
         return credential.accessToken
       }
     }
@@ -982,7 +1731,7 @@ describe('CodeBuddy 401 同账号重试一次', () => {
 
     await expect(flow.runWithAuthRetry(account.accountId, async () => {
       attempts += 1
-      throw new ChannelSearchError('UNAUTHORIZED', 'buddy', '401')
+      throw new ChannelSearchError('UNAUTHORIZED', 'buddy', '401', undefined, 401)
     })).rejects.toMatchObject({ code: 'auth/reauth-required' })
 
     expect(attempts).toBe(1)

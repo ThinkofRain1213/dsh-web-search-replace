@@ -4,6 +4,7 @@ import {
   postTencentSearch,
   TENCENT_SEARCH_TIMEOUT_MS,
   TencentSearchProtocolError,
+  toTencentChannelSearchError,
   type TencentSearchRequest,
 } from '../../src/host/channels/tencent/protocol.ts'
 
@@ -183,6 +184,18 @@ describe('postTencentSearch HTTP 与传输错误分类', () => {
       code,
       status,
     })
+  })
+
+  it('toTencentChannelSearchError 把实际 HTTP 401/403 保留为可信 httpStatus', async () => {
+    for (const status of [401, 403]) {
+      const { fetcher } = textFetcher('upstream detail', status)
+      const protocolError = await postTencentSearch(request({ fetcher })).catch(
+        (error: unknown) => error,
+      )
+      const bound = toTencentChannelSearchError(protocolError, 'buddy')
+      expect(bound).toMatchObject({ channel: 'buddy', httpStatus: status })
+      expect(bound.cause).toBe(protocolError)
+    }
   })
 
   it('非 abort 的网络错误 → SEARCH_FAILED，并保留 cause', async () => {

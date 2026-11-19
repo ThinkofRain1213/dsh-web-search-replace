@@ -24,6 +24,7 @@ import { isStableChannelAccountId } from '../../shared/contracts.ts'
 import type { QoderSigningCredential } from '../channels/qoder/protocol.ts'
 import { ChannelSearchError } from '../search/errors.ts'
 import type { SettingsService } from '../settings/service.ts'
+import { SettingsWriteCancelledError } from '../settings/service.ts'
 import {
   accountInvalid,
   accountNotFound,
@@ -89,10 +90,14 @@ export class AccountService {
    * R2：写普通配置前先验证记录真实存在于该渠道；不存在/损坏/跨渠道都失败，
    * 且不写配置。配置写失败保留旧快照。
    */
-  async setCurrent(channel: ChannelId, accountId: string | null): Promise<AccountSummary | null> {
+  async setCurrent(
+    channel: ChannelId,
+    accountId: string | null,
+    signal?: AbortSignal,
+  ): Promise<AccountSummary | null> {
     const exactChannel = requireChannel(channel)
     if (accountId === null) {
-      await this.writeCurrent(exactChannel, null)
+      await this.writeCurrent(exactChannel, null, signal)
       return null
     }
     const exactAccountId = requireAccountId(accountId)
@@ -101,7 +106,7 @@ export class AccountService {
     if (entry.account === undefined || projectSecret(entry.account) === undefined) {
       throw accountUnavailable()
     }
-    await this.writeCurrent(exactChannel, exactAccountId)
+    await this.writeCurrent(exactChannel, exactAccountId, signal)
     return toSummary(entry)
   }
 
@@ -213,11 +218,16 @@ export class AccountService {
     return this.options.settings.getSnapshot()[channel].currentAccountId
   }
 
-  /** 写当前账号；失败保留旧快照并转换为固定账号域错误。 */
-  private async writeCurrent(channel: ChannelId, accountId: string | null): Promise<void> {
+  /** 写当前账号；取消错误原样抛出，其他失败转换为固定账号域错误。 */
+  private async writeCurrent(
+    channel: ChannelId,
+    accountId: string | null,
+    signal?: AbortSignal,
+  ): Promise<void> {
     try {
-      await this.options.settings.setCurrentAccount(channel, accountId)
-    } catch {
+      await this.options.settings.setCurrentAccount(channel, accountId, signal)
+    } catch (error) {
+      if (error instanceof SettingsWriteCancelledError) throw error
       throw accountStorageFailed()
     }
   }

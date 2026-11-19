@@ -53,6 +53,8 @@ export const BUDDY_AUTH_PRODUCT: TencentExternalLinkProduct = Object.freeze({
   endpoint: 'https://copilot.tencent.com',
   apiDomain: 'copilot.tencent.com',
   userAgent: 'CodeBuddyIDE/1.106.1',
+  // 真实样本只出现这两个精确 host；不做后缀匹配，其他域名一律 invalid-response。
+  authUrlHosts: Object.freeze(['www.codebuddy.cn', 'copilot.tencent.com']),
 })
 
 /** 默认展示说明；不含账号身份或任何秘密。 */
@@ -104,6 +106,24 @@ export interface BuddyAccessCredential {
   readonly accessToken: string
 }
 
+/** 保存前能力探测的输入；不含 refreshToken 或账号秘密。 */
+export interface BuddyCapabilityCredential {
+  readonly channelId: 'buddy'
+  readonly accessToken: string
+  readonly vendorAccountId: string
+}
+
+/**
+ * 保存前 Search 能力探测。
+ *
+ * 必须是 Host-only、可注入且不可省略的依赖；Task 15 用真实 CodeBuddy 搜索
+ * 路径实现。探测失败/超时/取消时流程不得落码或设当前。
+ */
+export type BuddyCapabilityVerifier = (
+  credential: BuddyCapabilityCredential,
+  signal: AbortSignal,
+) => Promise<void>
+
 /** `start` 的选项；提供 accountId 时等价于重新登录。 */
 export interface BuddyStartOptions {
   readonly accountId?: string
@@ -131,6 +151,11 @@ export interface BuddyAuthFlowOptions {
   readonly timeoutSignal?: (ms: number) => AbortSignal
   /** 展示说明；默认固定中文说明。 */
   readonly displayHint?: string
+  /**
+   * 保存前 Search 能力探测；Host-only 且不可省略。Task 15 必须提供真实
+   * CodeBuddy 搜索路径；失败/超时/取消都不得落码或设当前。
+   */
+  readonly verifyCapability: BuddyCapabilityVerifier
 }
 
 /** 简单 deferred。 */
@@ -174,9 +199,12 @@ export class BuddyAuthFlow {
   private readonly pollIntervalMs: number
   private readonly authTimeoutMs: number
   private readonly displayHint: string
+  private readonly verifyCapability: BuddyCapabilityVerifier
 
   private readonly flows = new Map<string, FlowState>()
   private readonly pendingStarts = new Set<Promise<unknown>>()
+  private readonly pendingOperations = new Set<Promise<unknown>>()
+  private readonly operationControllers = new Set<AbortController>()
   private readonly inFlightRefreshes = new Map<string, Promise<AccountSummary>>()
   private readonly refreshControllers = new Map<string, AbortController>()
   private activeFlow: FlowState | undefined
@@ -186,6 +214,9 @@ export class BuddyAuthFlow {
   private disposePromise: Promise<void> | undefined
 
   constructor(options: BuddyAuthFlowOptions) {
+    if (typeof options.verifyCapability !== 'function') {
+      throw new TypeError('BuddyAuthFlow requires a verifyCapability function')
+    }
     this.store = options.store
     this.accounts = options.accounts
     this.clock = options.clock ?? SYSTEM_CLOCK
@@ -193,6 +224,7 @@ export class BuddyAuthFlow {
     this.pollIntervalMs = options.pollIntervalMs ?? 1_000
     this.authTimeoutMs = options.authTimeoutMs ?? 5 * 60 * 1000
     this.displayHint = options.displayHint ?? DEFAULT_DISPLAY_HINT
+    this.verifyCapability = options.verifyCapability
     this.client = new TencentExternalLinkClient({
       product: BUDDY_AUTH_PRODUCT,
       clock: this.clock,
@@ -224,6 +256,24 @@ export class BuddyAuthFlow {
    */
   async reauthenticate(accountId: string): Promise<AuthFlowStatus> {
     this.assertNotDisposed()
+    const controller = new AbortController()
+    this.operationControllers.add(controller)
+    const run = this.performReauthenticate(accountId, controller.signal)
+    this.pendingOperations.add(run)
+    try {
+      return await run
+    } finally {
+      this.pendingOperations.delete(run)
+      this.operationControllers.delete(controller)
+    }
+  }
+
+  /** 重登预读与启动；预读也纳入 dispose 的在飞集合。 */
+  private async performReauthenticate(
+    accountId: string,
+    signal: AbortSignal,
+  ): Promise<AuthFlowStatus> {
+    this.assertNotDisposed()
     if (!isStableChannelAccountId(accountId)) throw authError('auth/invalid')
     let entry: StoredAccountEntry | undefined
     try {
@@ -231,9 +281,10 @@ export class BuddyAuthFlow {
     } catch {
       throw authError('auth/credential-unavailable')
     }
+    this.assertNotDisposed()
+    if (signal.aborted) throw authError('auth/disposed')
     if (entry === undefined) throw authError('auth/account-not-found')
     if (entry.account === undefined) throw authError('auth/credential-unavailable')
-    if (this.disposed) throw authError('auth/disposed')
     return await this.beginFlow(entry.account)
   }
 
@@ -292,18 +343,51 @@ export class BuddyAuthFlow {
    */
   async runWithAuthRetry<T>(
     accountId: string,
-    operation: (credential: BuddyAccessCredential) => Promise<T>,
+    operation: (credential: BuddyAccessCredential, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     this.assertNotDisposed()
-    const first = await this.resolveCredential(accountId)
+    const controller = new AbortController()
+    this.operationControllers.add(controller)
+    const run = this.performAuthRetry(accountId, operation, controller.signal)
+    this.pendingOperations.add(run)
     try {
-      return await operation(first)
+      return await run
+    } finally {
+      this.pendingOperations.delete(run)
+      this.operationControllers.delete(controller)
+    }
+  }
+
+  /** 401 重试的实际执行；每个 await 后检查 dispose，dispose 会 abort operation。 */
+  private async performAuthRetry<T>(
+    accountId: string,
+    operation: (credential: BuddyAccessCredential, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    const first = await this.resolveCredential(accountId)
+    this.assertNotDisposed()
+    if (signal.aborted) throw authError('auth/disposed')
+
+    try {
+      const result = await operation(first, signal)
+      this.assertNotDisposed()
+      if (signal.aborted) throw authError('auth/disposed')
+      return result
     } catch (error) {
+      if (this.disposed || signal.aborted) throw authError('auth/disposed')
       if (!isBuddyUnauthorized(error)) throw error
     }
+
     await this.refresh(accountId)
+    this.assertNotDisposed()
+    if (signal.aborted) throw authError('auth/disposed')
     const second = await this.resolveCredential(accountId)
-    return await operation(second)
+    this.assertNotDisposed()
+    if (signal.aborted) throw authError('auth/disposed')
+    const result = await operation(second, signal)
+    this.assertNotDisposed()
+    if (signal.aborted) throw authError('auth/disposed')
+    return result
   }
 
   /**
@@ -316,8 +400,9 @@ export class BuddyAuthFlow {
     if (this.disposePromise !== undefined) return await this.disposePromise
     this.disposed = true
     this.startController?.abort()
+    for (const controller of this.operationControllers.values()) controller.abort()
     this.disposePromise = (async () => {
-      await Promise.allSettled([...this.pendingStarts])
+      await Promise.allSettled([...this.pendingStarts, ...this.pendingOperations])
       for (const flow of this.flows.values()) {
         if (flow.terminal) continue
         flow.cancelRequested = true
@@ -335,6 +420,7 @@ export class BuddyAuthFlow {
 
   /** 打开 auth/state 并启动后台轮询。 */
   private async beginFlow(target: StoredAccountRecord | undefined): Promise<AuthFlowStatus> {
+    this.assertNotDisposed()
     if (this.starting || this.activeFlow !== undefined) throw authError('auth/flow-active')
     this.starting = true
     const controller = new AbortController()
@@ -415,9 +501,28 @@ export class BuddyAuthFlow {
         && vendorAccountId !== flow.targetVendorAccountId) {
         throw authError('auth/identity-mismatch')
       }
+      if (this.clock.now() >= flow.deadline) throw authError('auth/timeout')
+      try {
+        await this.verifyCapability(
+          {
+            channelId: BUDDY_AUTH_CHANNEL,
+            accessToken: token.accessToken,
+            vendorAccountId,
+          },
+          flow.controller.signal,
+        )
+      } catch (error) {
+        if (flow.cancelRequested || this.disposed) throw authError('auth/cancelled')
+        if (isTimeoutError(error)) throw authError('auth/timeout')
+        throw authError('auth/failed')
+      }
+      this.ensureFlowActive(flow)
+      if (this.clock.now() >= flow.deadline) throw authError('auth/timeout')
+
       const displayName = resolveDisplayName(token, account)
       const hadUsableAccounts = await this.hasUsableAccounts()
       this.ensureFlowActive(flow)
+      if (this.clock.now() >= flow.deadline) throw authError('auth/timeout')
 
       const saved = await this.store.saveAccount({
         channel: CHANNEL,
@@ -425,6 +530,7 @@ export class BuddyAuthFlow {
         ...displayName === undefined ? {} : { displayName },
         status: 'ready',
         secret: buildSecret(token),
+        signal: flow.controller.signal,
       })
       flow.account = toSummary(saved)
 
@@ -433,8 +539,12 @@ export class BuddyAuthFlow {
 
       if (flow.targetAccountId === undefined && !hadUsableAccounts) {
         try {
-          await this.accounts.setCurrent(CHANNEL, saved.accountId)
+          await this.accounts.setCurrent(CHANNEL, saved.accountId, flow.controller.signal)
         } catch {
+          if (flow.cancelRequested || this.disposed) {
+            this.finishFlow(flow, 'cancelled', 'auth/cancelled')
+            return
+          }
           this.finishFlow(flow, 'failed', 'auth/current-account-failed')
           return
         }
@@ -447,7 +557,11 @@ export class BuddyAuthFlow {
         return
       }
       if (error instanceof BuddyAuthError) {
-        this.finishFlow(flow, 'failed', error.code)
+        this.finishFlow(
+          flow,
+          error.code === 'auth/timeout' ? 'timed_out' : 'failed',
+          error.code,
+        )
         return
       }
       if (error instanceof AccountError) {
@@ -472,6 +586,8 @@ export class BuddyAuthFlow {
     }
     if (entry === undefined) throw authError('auth/account-not-found')
     if (entry.account === undefined) throw authError('auth/credential-unavailable')
+    this.assertNotDisposed()
+    if (signal.aborted) throw authError('auth/disposed')
     const secret = entry.account.secret
     const accessToken = readSecretString(secret, 'accessToken')
     if (accessToken === undefined) throw authError('auth/credential-unavailable')
@@ -509,6 +625,7 @@ export class BuddyAuthFlow {
     } catch {
       throw authError('auth/refresh-failed')
     }
+    if (this.disposed || signal.aborted) throw authError('auth/disposed')
     if (updated !== undefined) return toSummary(updated)
 
     // 当前记录已被更新（重新登录/另一次刷新/删除）：返回当前值，绝不覆盖。
@@ -518,6 +635,7 @@ export class BuddyAuthFlow {
     } catch {
       throw authError('auth/refresh-failed')
     }
+    if (this.disposed || signal.aborted) throw authError('auth/disposed')
     if (current === undefined) throw authError('auth/account-not-found')
     if (current.account === undefined) throw authError('auth/credential-unavailable')
     return toSummary(current.account)
@@ -554,6 +672,7 @@ export class BuddyAuthFlow {
     }
     if (entry === undefined) throw authError('auth/account-not-found')
     if (entry.account === undefined) throw authError('auth/credential-unavailable')
+    this.assertNotDisposed()
     const accessToken = readSecretString(entry.account.secret, 'accessToken')
     if (accessToken === undefined) throw authError('auth/credential-unavailable')
     return Object.freeze({
@@ -563,10 +682,11 @@ export class BuddyAuthFlow {
     })
   }
 
-  /** 是否存在可用账号；损坏记录不算「首个账号」。 */
+  /** 是否存在可用账号；损坏记录或缺 accessToken 的记录不算「首个账号」。 */
   private async hasUsableAccounts(): Promise<boolean> {
     const entries = await this.store.listEntries(CHANNEL)
-    return entries.some((entry) => entry.account !== undefined)
+    return entries.some((entry) => entry.account !== undefined
+      && readSecretString(entry.account.secret, 'accessToken') !== undefined)
   }
 
   /** 断言未 dispose；dispose 后拒绝一切新授权/刷新任务。 */
@@ -679,6 +799,17 @@ function isBuddyUnauthorized(error: unknown): boolean {
   return error instanceof ChannelSearchError
     && error.code === 'UNAUTHORIZED'
     && error.channel === BUDDY_AUTH_CHANNEL
+    && error.httpStatus === 401
+}
+
+/** 能力探测抛出的超时类错误；只用于固定错误映射，不读取原文。 */
+function isTimeoutError(error: unknown): boolean {
+  const record = typeof error === 'object' && error !== null
+    ? error as { name?: unknown; code?: unknown }
+    : {}
+  return record.name === 'TimeoutError'
+    || record.code === 'TOOL_TIMEOUT'
+    || record.code === 'ETIMEDOUT'
 }
 
 /** 从 login/account 或 JWT sub 解析稳定厂商身份。 */

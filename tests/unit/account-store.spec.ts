@@ -449,6 +449,43 @@ describe('并发写入与写失败', () => {
       expect(String((error as Error).message)).not.toContain(TOKEN_SENTINEL)
     }
   })
+  it('取消信号在 modifyRecord 提交回调内生效，不写记录', async () => {
+    const { store, credentials } = createStore()
+    const controller = new AbortController()
+    const originalModify = credentials.modifyRecord.bind(credentials)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    credentials.modifyRecord = async (key, mutate) => {
+      await gate
+      return await originalModify(key, mutate)
+    }
+
+    const saving = store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'cancel-during-save@example.test',
+      secret: { accessToken: TOKEN_SENTINEL },
+      signal: controller.signal,
+    }).catch((error: unknown) => error)
+    controller.abort()
+    release()
+
+    expect(await saving).toMatchObject({ code: 'accounts/cancelled' })
+    expect(await store.listEntries('buddy')).toHaveLength(0)
+  })
+
+  it('已取消的信号在进入 store 前就拒绝保存', async () => {
+    const { store } = createStore()
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'already-cancelled@example.test',
+      secret: { accessToken: TOKEN_SENTINEL },
+      signal: controller.signal,
+    })).rejects.toMatchObject({ code: 'accounts/cancelled' })
+    expect(await store.listEntries('buddy')).toHaveLength(0)
+  })
 })
 
 describe('删除与清理', () => {

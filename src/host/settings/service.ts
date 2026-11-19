@@ -24,6 +24,16 @@ import type { SearchConfig } from '../config.ts'
 /** 普通配置的原始嵌套对象。 */
 type RawConfig = Record<string, unknown>
 
+/** 取消信号在 configEditor 提交回调内生效；调用方应把本次写入视为已取消。 */
+export class SettingsWriteCancelledError extends Error {
+  readonly code = 'settings/cancelled'
+
+  constructor() {
+    super('设置写入已取消')
+    this.name = 'SettingsWriteCancelledError'
+  }
+}
+
 /** `configEditor.edit` 的变更回调。 */
 type ConfigChange = (current: RawConfig, inherited: RawConfig) => RawConfig
 
@@ -91,6 +101,7 @@ export class SettingsService {
   async setCurrentAccount(
     channel: ChannelId,
     accountId: string | null,
+    signal?: AbortSignal,
   ): Promise<SearchSettingsSnapshot> {
     if (!isChannelId(channel)) {
       throw new SearchSettingsValidationError(`非法搜索渠道：${String(channel)}`)
@@ -98,7 +109,10 @@ export class SettingsService {
     if (accountId !== null && !isStableChannelAccountId(accountId)) {
       throw new SearchSettingsValidationError(`非法账号 slug：${String(accountId)}`)
     }
+    if (signal?.aborted) throw new SettingsWriteCancelledError()
     await this.options.configEditor.edit(this.options.entry, (current) => {
+      // 在 configEditor 的提交回调内、实际写入前再次检查；取消早于提交则不写。
+      if (signal?.aborted) throw new SettingsWriteCancelledError()
       const base = isRecord(current) ? current : {}
       const existing = base[channel]
       const channelConfig = isRecord(existing) ? { ...existing } : {}

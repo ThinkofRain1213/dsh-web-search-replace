@@ -51,7 +51,7 @@ export class TencentSearchProtocolError extends Error {
 /** 把共享协议失败绑定到渠道；其他错误走既有 normalize 边界。 */
 export function toTencentChannelSearchError(error: unknown, channel: ChannelId): ChannelSearchError {
   if (error instanceof TencentSearchProtocolError) {
-    return new ChannelSearchError(error.code, channel, error.message, error)
+    return new ChannelSearchError(error.code, channel, error.message, error, error.status)
   }
   return normalizeChannelSearchError(error, channel)
 }

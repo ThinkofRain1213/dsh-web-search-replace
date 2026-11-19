@@ -19,6 +19,12 @@ export class ChannelSearchError extends Error {
     readonly channel: ChannelId,
     message: string,
     cause?: unknown,
+    /**
+     * 可信的实际 HTTP 状态；只有能从结构化上游证据确定时设置。
+     * 业务 code='UNAUTHORIZED' 但没有 HTTP 401 时保持 undefined，避免
+     * 调用方把 403/业务错误误判成可刷新重试的 401。
+     */
+    readonly httpStatus?: number,
   ) {
     super(message, cause === undefined ? undefined : { cause })
   }
@@ -37,14 +43,24 @@ export function normalizeChannelSearchError(error: unknown, channel: ChannelId):
   const name = typeof record.name === 'string' ? record.name : undefined
   const message = error instanceof Error ? error.message : String(error)
 
-  if (status === 401) return new ChannelSearchError('UNAUTHORIZED', channel, message, error)
-  if (status === 429) return new ChannelSearchError('RATE_LIMITED', channel, message, error)
+  if (status === 401) {
+    return new ChannelSearchError('UNAUTHORIZED', channel, message, error, 401)
+  }
+  if (status === 429) {
+    return new ChannelSearchError('RATE_LIMITED', channel, message, error, 429)
+  }
   if (status === 408 || code === 'TOOL_TIMEOUT' || code === 'ETIMEDOUT' || name === 'TimeoutError') {
-    return new ChannelSearchError('TIMEOUT', channel, message, error)
+    return new ChannelSearchError('TIMEOUT', channel, message, error, status)
   }
   if (code === 'NO_ACCOUNT') return new ChannelSearchError('NO_ACCOUNT', channel, message, error)
-  if (code === 'UNAUTHORIZED') return new ChannelSearchError('UNAUTHORIZED', channel, message, error)
-  if (code === 'RATE_LIMITED') return new ChannelSearchError('RATE_LIMITED', channel, message, error)
-  if (code === 'BAD_RESPONSE') return new ChannelSearchError('BAD_RESPONSE', channel, message, error)
-  return new ChannelSearchError('SEARCH_FAILED', channel, message, error)
+  if (code === 'UNAUTHORIZED') {
+    return new ChannelSearchError('UNAUTHORIZED', channel, message, error, status)
+  }
+  if (code === 'RATE_LIMITED') {
+    return new ChannelSearchError('RATE_LIMITED', channel, message, error, status)
+  }
+  if (code === 'BAD_RESPONSE') {
+    return new ChannelSearchError('BAD_RESPONSE', channel, message, error, status)
+  }
+  return new ChannelSearchError('SEARCH_FAILED', channel, message, error, status)
 }
