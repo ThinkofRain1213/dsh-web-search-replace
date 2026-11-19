@@ -1,6 +1,7 @@
 import type { ChannelId } from '../../../shared/channels.ts'
 import type { SearchDriver, SearchDriverResult } from '../../drivers/mock-driver.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
+import { toChannelAccountSearchError } from '../../accounts/resolver-errors.ts'
 import {
   postTencentSearch,
   toTencentChannelSearchError,
@@ -15,11 +16,23 @@ export const BUDDY_SEARCH_HOST = 'copilot.tencent.com'
 /** CodeBuddy 产品请求头；与产品配置一致，不按模型或账号切换。 */
 export const BUDDY_SEARCH_USER_AGENT = 'CodeBuddyIDE/1.106.1'
 
+/**
+ * CodeBuddy 的账号快照。
+ *
+ * `channelId` 是编译期精确渠道；运行期仍会校验，防止注入的解析器返回其他
+ * 渠道（含同协议族 WorkBuddy）的快照。
+ */
+export interface BuddyAccountCredential {
+  readonly channelId: 'buddy'
+  readonly accountId: string
+  readonly accessToken: string
+}
+
 /** CodeBuddy 驱动只接受本渠道账号解析与可选测试 fetcher。 */
 export interface BuddyDriverDeps {
-  /** 只解析 CodeBuddy 自己的访问令牌；空值表示无可用账号。 */
-  readonly resolveAccessToken: () => string | null | undefined
-    | Promise<string | null | undefined>
+  /** 只解析 CodeBuddy 自己的账号快照；空值表示无可用账号。 */
+  readonly resolveCredential: () => BuddyAccountCredential | null | undefined
+    | Promise<BuddyAccountCredential | null | undefined>
   /** 测试注入；生产默认使用全局 fetch。 */
   readonly fetcher?: typeof fetch
 }
@@ -47,20 +60,41 @@ export function createBuddyDriver(deps: BuddyDriverDeps): SearchDriver {
   }
 }
 
-/** 无 token 必须在任何 fetch 之前失败；账号解析异常也绑定到本渠道。 */
+/**
+ * 无账号必须在任何 fetch 之前失败；其他渠道快照也 fail-closed。
+ *
+ * 解析器异常保留安全结构化 code、重绑 buddy，并使用固定消息丢弃底层原文/cause。
+ */
 async function requireAccessToken(deps: BuddyDriverDeps): Promise<string> {
-  let token: string | null | undefined
+  let credential: BuddyAccountCredential | null | undefined
   try {
-    token = await deps.resolveAccessToken()
+    credential = await deps.resolveCredential()
   } catch (error) {
-    throw toTencentChannelSearchError(error, BUDDY_CHANNEL)
-  }
-  if (typeof token !== 'string' || token.trim().length === 0) {
-    throw new ChannelSearchError(
-      'NO_ACCOUNT',
+    throw toChannelAccountSearchError(
+      error,
       BUDDY_CHANNEL,
-      'CodeBuddy search has no usable account; select a CodeBuddy account first',
+      'CodeBuddy search could not read the account credential',
     )
   }
+  if (credential === null || credential === undefined) throw noAccount()
+  if (credential.channelId !== BUDDY_CHANNEL) throw foreignAccount()
+  const token = typeof credential.accessToken === 'string' ? credential.accessToken.trim() : ''
+  if (token.length === 0) throw noAccount()
   return token
+}
+
+function noAccount(): ChannelSearchError {
+  return new ChannelSearchError(
+    'NO_ACCOUNT',
+    BUDDY_CHANNEL,
+    'CodeBuddy search has no usable account; select a CodeBuddy account first',
+  )
+}
+
+function foreignAccount(): ChannelSearchError {
+  return new ChannelSearchError(
+    'SEARCH_FAILED',
+    BUDDY_CHANNEL,
+    'CodeBuddy search received an account from another channel',
+  )
 }

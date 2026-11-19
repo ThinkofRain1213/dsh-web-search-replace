@@ -48,8 +48,16 @@ const CREDENTIAL: QoderSigningCredential = {
 
 const SECRET_VALUES = [CREDENTIAL.uid!, CREDENTIAL.securityOauthToken, CREDENTIAL.machineId]
 
-const ACCOUNT_A: QoderInternationalAccount = { accountKey: 'account-a-7f2c', credential: CREDENTIAL }
-const ACCOUNT_B: QoderInternationalAccount = { accountKey: 'account-b-7f2c', credential: CREDENTIAL }
+const ACCOUNT_A: QoderInternationalAccount = {
+  channelId: 'qoder',
+  accountId: 'a0000000000a1',
+  credential: CREDENTIAL,
+}
+const ACCOUNT_B: QoderInternationalAccount = {
+  channelId: 'qoder',
+  accountId: 'a0000000000b2',
+  credential: CREDENTIAL,
+}
 
 const QUERY = '国际版测试查询 7f2c'
 
@@ -424,7 +432,11 @@ describe('Qoder 国际版驱动：账号边界（先于 fetch/WASM）', () => {
     ['空白 machineId', { machineId: '   ' }],
   ])('%s → NO_ACCOUNT 且不发请求', async (_label, overrides) => {
     const { driver, calls } = makeHarness({
-      account: { accountKey: 'account-x', credential: { ...CREDENTIAL, ...overrides } },
+      account: {
+        channelId: 'qoder',
+        accountId: 'a0000000000c3',
+        credential: { ...CREDENTIAL, ...overrides },
+      },
     })
 
     await expect(driver.searchOnce(QUERY, 10, signal())).rejects.toMatchObject({
@@ -436,7 +448,7 @@ describe('Qoder 国际版驱动：账号边界（先于 fetch/WASM）', () => {
 
   it('缺账号键 → INVALID_ARGUMENTS 且不发请求', async () => {
     const { driver, calls } = makeHarness({
-      account: { accountKey: '   ', credential: CREDENTIAL },
+      account: { channelId: 'qoder', accountId: '   ', credential: CREDENTIAL },
     })
 
     await expect(driver.searchOnce(QUERY, 10, signal())).rejects.toMatchObject({
@@ -444,6 +456,49 @@ describe('Qoder 国际版驱动：账号边界（先于 fetch/WASM）', () => {
       channel: QODER_CHANNEL,
     })
     expect(calls).toHaveLength(0)
+  })
+
+  it('拿到其他渠道的账号快照时 fail-closed（SEARCH_FAILED）且不发请求/不加载 WASM', async () => {
+    const before = __testing.wasmStats()
+    const { driver, calls, preferenceResolver } = makeHarness({
+      account: {
+        channelId: 'qodercn',
+        accountId: 'a0000000000d4',
+        credential: CREDENTIAL,
+      } as unknown as QoderInternationalAccount,
+    })
+
+    const error = await driver.searchOnce(QUERY, 10, signal()).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', channel: QODER_CHANNEL })
+    expect(calls).toHaveLength(0)
+    expect(preferenceResolver).not.toHaveBeenCalled()
+    const after = __testing.wasmStats()
+    expect(after.contextsCreated).toBe(before.contextsCreated)
+  })
+
+  it.each([
+    ['NO_ACCOUNT', '账号缺失'],
+    ['UNAUTHORIZED', '凭据过期'],
+    ['TIMEOUT', '解析超时'],
+  ])('解析器抛 %s（其他渠道绑定 + 秘密原文）时保留 code、重绑 qoder 且不泄露', async (code) => {
+    const secret = 'QODER_RESOLVER_SECRET_7f2c'
+    const fetcher = vi.fn(async () => jsonResponse(DEFAULT_RESULT))
+    const driver = createQoderInternationalDriver({
+      resolveAccount: async () => {
+        throw new ChannelSearchError(code as never, 'qodercn', `store echoed ${secret}`)
+      },
+      resolveEndpointPreference: async () => 'auto' as const,
+      networkExitKey: () => 'exit-a',
+      fetcher: fetcher as unknown as typeof fetch,
+    })
+
+    const error = await driver.searchOnce(QUERY, 10, signal()).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code, channel: QODER_CHANNEL })
+    expect(errorTextOf(error)).not.toContain(secret)
+    expect((error as { cause?: unknown }).cause).toBeUndefined()
+    expect(fetcher).not.toHaveBeenCalled()
   })
 
   it('账号解析器抛错 → SEARCH_FAILED 且不 fetch', async () => {
@@ -621,7 +676,7 @@ describe('Qoder 国际版驱动：观察记录与秘密卫生', () => {
     const text = JSON.stringify(observation)
     expect(text).not.toContain(QUERY)
     for (const secret of SECRET_VALUES) expect(text).not.toContain(secret)
-    expect(text).not.toContain(ACCOUNT_A.accountKey)
+    expect(text).not.toContain(ACCOUNT_A.accountId)
     expect(text).not.toContain('COSY')
   })
 

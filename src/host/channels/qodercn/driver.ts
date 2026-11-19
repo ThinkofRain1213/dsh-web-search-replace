@@ -11,11 +11,13 @@
  * 3. 调共享协议层签名并发送（真实 WASM，不 mock）；
  * 4. 把共享协议错误绑定到 `qodercn` 渠道。
  *
- * ⚠️ 本任务不包含国际版双域策略、账号池、授权或 UI；账号解析由 Task 8 接线。
+ * ⚠️ 账号由 Task 8 的 `createQoderCnSearchBinding` 以精确渠道快照注入；本驱动
+ * 不包含国际版双域策略、账号池、授权或 UI。
  */
 import type { ChannelId } from '../../../shared/channels.ts'
 import type { SearchDriver, SearchDriverResult } from '../../drivers/mock-driver.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
+import { toChannelAccountSearchError } from '../../accounts/resolver-errors.ts'
 import {
   postQoderSearch,
   QODER_SEARCH_PATH,
@@ -33,11 +35,19 @@ export const QODERCN_SEARCH_HOST = 'gateway.qoder.com.cn'
 /** 中国版签名输入路径（与共享协议一致）。 */
 export const QODERCN_SEARCH_PATH = QODER_SEARCH_PATH
 
+/** Qoder 中国版的账号快照：稳定账号 ID 与签名凭据绑定在一起。 */
+export interface QoderCnAccountCredential {
+  /** 编译期精确渠道；运行期仍会校验，防止解析器返回国际版/其他渠道快照。 */
+  readonly channelId: 'qodercn'
+  readonly accountId: string
+  readonly credential: QoderSigningCredential
+}
+
 /** Qoder 中国版驱动只接受本渠道凭据解析与可选测试 fetcher。 */
 export interface QoderCnDriverDeps {
-  /** 只解析 Qoder 中国版自己的签名凭据；空值表示无可用账号。 */
-  readonly resolveCredential: () => QoderSigningCredential | null | undefined
-    | Promise<QoderSigningCredential | null | undefined>
+  /** 只解析 Qoder 中国版自己的账号快照；空值表示无可用账号。 */
+  readonly resolveCredential: () => QoderCnAccountCredential | null | undefined
+    | Promise<QoderCnAccountCredential | null | undefined>
   /** 测试注入；生产默认使用全局 fetch。 */
   readonly fetcher?: typeof fetch
 }
@@ -78,19 +88,24 @@ export function createQoderCnDriver(deps: QoderCnDriverDeps): SearchDriver {
   }
 }
 
-/** 无 token / machineId 必须在任何 fetch/WASM 之前失败；解析异常绑定本渠道。 */
+/**
+ * 无 token / machineId 必须在任何 fetch/WASM 之前失败；其他渠道快照同样
+ * fail-closed。解析器异常保留安全 code 并重绑本渠道，丢弃底层原文/cause。
+ */
 async function requireCredential(deps: QoderCnDriverDeps): Promise<QoderSigningCredential> {
-  let credential: QoderSigningCredential | null | undefined
+  let account: QoderCnAccountCredential | null | undefined
   try {
-    credential = await deps.resolveCredential()
-  } catch {
-    // R16：凭据解析器的底层异常原文/cause 可能回显 token / machineId，不向上透传。
-    throw new ChannelSearchError(
-      'SEARCH_FAILED',
+    account = await deps.resolveCredential()
+  } catch (error) {
+    throw toChannelAccountSearchError(
+      error,
       QODERCN_CHANNEL,
       'Qoder China search could not read the account credential',
     )
   }
+  if (account === null || account === undefined) throw noAccount()
+  if (account.channelId !== QODERCN_CHANNEL) throw foreignAccount()
+  const credential = account.credential
   if (credential === null || credential === undefined) throw noAccount()
   const token = typeof credential.securityOauthToken === 'string'
     ? credential.securityOauthToken.trim()
@@ -105,5 +120,13 @@ function noAccount(): ChannelSearchError {
     'NO_ACCOUNT',
     QODERCN_CHANNEL,
     'Qoder China search has no usable account; sign in to a Qoder China account first',
+  )
+}
+
+function foreignAccount(): ChannelSearchError {
+  return new ChannelSearchError(
+    'SEARCH_FAILED',
+    QODERCN_CHANNEL,
+    'Qoder China search received an account from another channel',
   )
 }

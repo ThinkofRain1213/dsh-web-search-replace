@@ -22,6 +22,7 @@ import {
   createQoderCnDriver,
   QODERCN_SEARCH_HOST,
   QODERCN_SEARCH_PATH,
+  type QoderCnAccountCredential,
 } from '../../src/host/channels/qodercn/driver.ts'
 import type {
   QoderRequestSigner,
@@ -61,6 +62,11 @@ function makeCredential(overrides: Partial<QoderSigningCredential> = {}): QoderS
   return { ...CREDENTIAL, ...overrides }
 }
 
+/** 本渠道账号快照：稳定账号 ID 与签名凭据绑定在一起。 */
+function accountCredential(credential: QoderSigningCredential): QoderCnAccountCredential {
+  return { channelId: 'qodercn', accountId: 'a0000000000e5', credential }
+}
+
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
@@ -74,7 +80,9 @@ function makeDriver(options: {
 } = {}): DriverHarness {
   const calls: FetchCall[] = []
   const credential = 'credential' in options ? options.credential : makeCredential()
-  const resolver = vi.fn(async () => credential)
+  const resolver = vi.fn(async () => credential === null || credential === undefined
+    ? credential
+    : accountCredential(credential))
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(input), init: init ?? {} })
     return await (options.handler ?? (() => jsonResponse({ pageItems: [] })))(init)
@@ -162,6 +170,48 @@ describe('Qoder CN 驱动：无可用账号（先于 fetch/WASM）', () => {
       code: 'SEARCH_FAILED',
       channel: 'qodercn',
     })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('拿到其他渠道的账号快照时 fail-closed（SEARCH_FAILED）且不发请求/不加载 WASM', async () => {
+    const before = __testing.wasmStats()
+    const fetcher = vi.fn(async () => jsonResponse({ pageItems: [] }))
+    const driver = createQoderCnDriver({
+      resolveCredential: async () => ({
+        channelId: 'qoder',
+        accountId: 'a0000000000f6',
+        credential: makeCredential(),
+      } as unknown as QoderCnAccountCredential),
+      fetcher: fetcher as unknown as typeof fetch,
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', channel: 'qodercn' })
+    expect(fetcher).not.toHaveBeenCalled()
+    const after = __testing.wasmStats()
+    expect(after.contextsCreated).toBe(before.contextsCreated)
+  })
+
+  it.each([
+    ['NO_ACCOUNT', '账号缺失'],
+    ['UNAUTHORIZED', '凭据过期'],
+    ['TIMEOUT', '解析超时'],
+  ])('解析器抛 %s（其他渠道绑定 + 秘密原文）时保留 code、重绑 qodercn 且不泄露', async (code) => {
+    const secret = 'QODERCN_RESOLVER_SECRET_9f3a'
+    const fetcher = vi.fn(async () => jsonResponse({ pageItems: [] }))
+    const driver = createQoderCnDriver({
+      resolveCredential: async () => {
+        throw new ChannelSearchError(code as never, 'qoder', `store echoed ${secret}`)
+      },
+      fetcher: fetcher as unknown as typeof fetch,
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code, channel: 'qodercn' })
+    expect(errorTextOf(error)).not.toContain(secret)
+    expect((error as { cause?: unknown }).cause).toBeUndefined()
     expect(fetcher).not.toHaveBeenCalled()
   })
 

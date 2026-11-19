@@ -1,12 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createWorkbuddyDriver, WORKBUDDY_SEARCH_HOST, WORKBUDDY_SEARCH_USER_AGENT } from '../../src/host/channels/workbuddy/driver.ts'
+import {
+  createWorkbuddyDriver,
+  WORKBUDDY_SEARCH_HOST,
+  WORKBUDDY_SEARCH_USER_AGENT,
+  type WorkbuddyAccountCredential,
+} from '../../src/host/channels/workbuddy/driver.ts'
 import { createBuddyDriver } from '../../src/host/channels/buddy/driver.ts'
 import { ChannelSearchError } from '../../src/host/search/errors.ts'
 
 interface FetchCall {
   readonly url: string
   readonly init: RequestInit
+}
+
+/** 本渠道账号快照。 */
+function credential(accessToken: string): WorkbuddyAccountCredential {
+  return { channelId: 'workbuddy', accountId: 'a000000000002', accessToken }
 }
 
 function jsonFetcher(
@@ -37,7 +47,7 @@ describe('WorkBuddy 驱动请求形状', () => {
   it('只请求 www.workbuddy.ai/agenttool/v1/search，body 与产品头固定', async () => {
     const { fetcher, calls } = jsonFetcher({ results: [{ url: 'https://a.test/' }] })
     const driver = createWorkbuddyDriver({
-      resolveAccessToken: () => 'WORKBUDDY_AT',
+      resolveCredential: () => credential('WORKBUDDY_AT'),
       fetcher,
     })
 
@@ -65,7 +75,10 @@ describe('WorkBuddy 驱动请求形状', () => {
         { url: 'https://b.test/', title: 'B', snippet: 'SB' },
       ],
     })
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => 'WORKBUDDY_AT', fetcher })
+    const driver = createWorkbuddyDriver({
+      resolveCredential: () => credential('WORKBUDDY_AT'),
+      fetcher,
+    })
 
     await expect(driver.searchOnce('q', 10, new AbortController().signal)).resolves.toEqual({
       sources: [{ url: 'https://b.test/', title: 'B', snippet: 'SB' }],
@@ -75,9 +88,9 @@ describe('WorkBuddy 驱动请求形状', () => {
 })
 
 describe('WorkBuddy 驱动账号隔离与失败边界', () => {
-  it('无 token 时在任何 fetch 前以 NO_ACCOUNT 失败', async () => {
+  it('无账号时在任何 fetch 前以 NO_ACCOUNT 失败', async () => {
     const { fetcher, calls } = jsonFetcher({ results: [] })
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => undefined, fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: () => undefined, fetcher })
 
     await expect(driver.searchOnce('q', 10, new AbortController().signal)).rejects.toMatchObject({
       name: 'ChannelSearchError',
@@ -87,9 +100,14 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
     expect(calls).toHaveLength(0)
   })
 
-  it.each([undefined, '', '   '])('空 token %j 同样不发请求', async (token) => {
+  it.each([undefined, null, '', '   '])('空账号快照/空 token %j 同样不发请求', async (token) => {
     const { fetcher, calls } = jsonFetcher({ results: [] })
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => token, fetcher })
+    const driver = createWorkbuddyDriver({
+      resolveCredential: () => token === undefined || token === null
+        ? token
+        : credential(token),
+      fetcher,
+    })
 
     await expect(driver.searchOnce('q', 10, new AbortController().signal)).rejects.toMatchObject({
       code: 'NO_ACCOUNT',
@@ -99,10 +117,14 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
   })
 
   it('只读取本渠道账号解析，不触碰 CodeBuddy 解析器，也不请求 CodeBuddy', async () => {
-    const workbuddyResolver = vi.fn(() => 'WORKBUDDY_AT')
-    const buddyResolver = vi.fn(() => 'BUDDY_AT')
+    const workbuddyResolver = vi.fn(() => credential('WORKBUDDY_AT'))
+    const buddyResolver = vi.fn(() => ({
+      channelId: 'buddy',
+      accountId: 'a000000000001',
+      accessToken: 'BUDDY_AT',
+    }))
     const { fetcher, calls } = jsonFetcher({ results: [] })
-    const driver = createWorkbuddyDriver({ resolveAccessToken: workbuddyResolver, fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: workbuddyResolver, fetcher })
 
     await driver.searchOnce('q', 10, new AbortController().signal)
 
@@ -114,13 +136,17 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
   })
 
   it('两驱动各用各的账号与 host，互不读取、互不串用', async () => {
-    const buddyResolver = vi.fn(() => 'BUDDY_AT')
-    const workbuddyResolver = vi.fn(() => 'WORKBUDDY_AT')
+    const buddyResolver = vi.fn(() => ({
+      channelId: 'buddy' as const,
+      accountId: 'a000000000001',
+      accessToken: 'BUDDY_AT',
+    }))
+    const workbuddyResolver = vi.fn(() => credential('WORKBUDDY_AT'))
     const buddyFetcher = jsonFetcher({ results: [] })
     const workbuddyFetcher = jsonFetcher({ results: [] })
-    const buddyDriver = createBuddyDriver({ resolveAccessToken: buddyResolver, fetcher: buddyFetcher.fetcher })
+    const buddyDriver = createBuddyDriver({ resolveCredential: buddyResolver, fetcher: buddyFetcher.fetcher })
     const workbuddyDriver = createWorkbuddyDriver({
-      resolveAccessToken: workbuddyResolver,
+      resolveCredential: workbuddyResolver,
       fetcher: workbuddyFetcher.fetcher,
     })
 
@@ -139,11 +165,66 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
     expect(headersOf(workbuddyFetcher.calls[0]!.init).get('Authorization')).toBe('Bearer WORKBUDDY_AT')
   })
 
+  it('拿到其他渠道的账号快照时 fail-closed（SEARCH_FAILED）且不发请求', async () => {
+    const { fetcher, calls } = jsonFetcher({ results: [] })
+    const driver = createWorkbuddyDriver({
+      resolveCredential: () => ({
+        channelId: 'buddy',
+        accountId: 'a000000000001',
+        accessToken: 'BUDDY_AT',
+      } as unknown as WorkbuddyAccountCredential),
+      fetcher,
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', channel: 'workbuddy' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it.each([
+    ['NO_ACCOUNT', '账号缺失'],
+    ['UNAUTHORIZED', '凭据过期'],
+    ['TIMEOUT', '解析超时'],
+  ])('解析器抛 %s（其他渠道绑定 + 秘密原文）时保留 code、重绑 workbuddy 且不泄露', async (code) => {
+    const secret = 'WORKBUDDY_RESOLVER_SECRET_5f1c'
+    const { fetcher, calls } = jsonFetcher({ results: [] })
+    const driver = createWorkbuddyDriver({
+      resolveCredential: () => {
+        throw new ChannelSearchError(code as never, 'buddy', `store echoed ${secret}`)
+      },
+      fetcher,
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code, channel: 'workbuddy' })
+    expect(String((error as Error).message)).not.toContain(secret)
+    expect((error as { cause?: unknown }).cause).toBeUndefined()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('解析器普通异常只产生固定 SEARCH_FAILED，不泄露底层原文或 cause', async () => {
+    const secret = 'WORKBUDDY_GENERIC_SECRET_5f1c'
+    const { fetcher, calls } = jsonFetcher({ results: [] })
+    const driver = createWorkbuddyDriver({
+      resolveCredential: () => { throw new Error(`store offline ${secret}`) },
+      fetcher,
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', channel: 'workbuddy' })
+    expect(String((error as Error).message)).not.toContain(secret)
+    expect((error as { cause?: unknown }).cause).toBeUndefined()
+    expect(calls).toHaveLength(0)
+  })
+
   it('WorkBuddy 失败不会回退到 CodeBuddy 或官方全局 fetch', async () => {
     const officialFetch = vi.fn(async () => new Response('{}'))
     vi.stubGlobal('fetch', officialFetch)
     const { fetcher, calls } = jsonFetcher({ error: 'rate limited' }, 429)
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => 'WORKBUDDY_AT', fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: () => credential('WORKBUDDY_AT'), fetcher })
 
     await expect(driver.searchOnce('q', 10, new AbortController().signal)).rejects.toMatchObject({
       code: 'RATE_LIMITED',
@@ -160,7 +241,7 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
     { status: 500, code: 'SEARCH_FAILED' },
   ])('HTTP $status → $code（渠道为 workbuddy）', async ({ status, code }) => {
     const { fetcher } = jsonFetcher({}, status)
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => 'WORKBUDDY_AT', fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: () => credential('WORKBUDDY_AT'), fetcher })
 
     const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(error => error)
     expect(error).toBeInstanceOf(ChannelSearchError)
@@ -169,7 +250,7 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
 
   it('坏响应 → BAD_RESPONSE', async () => {
     const { fetcher } = jsonFetcher({ results: null })
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => 'WORKBUDDY_AT', fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: () => credential('WORKBUDDY_AT'), fetcher })
 
     await expect(driver.searchOnce('q', 10, new AbortController().signal)).rejects.toMatchObject({
       code: 'BAD_RESPONSE',
@@ -185,7 +266,7 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
       return timeoutController.signal
     })
     const { fetcher } = hangingFetcher()
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => 'WORKBUDDY_AT', fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: () => credential('WORKBUDDY_AT'), fetcher })
     const promise = driver.searchOnce('q', 10, new AbortController().signal)
     const assertion = expect(promise).rejects.toMatchObject({
       code: 'TIMEOUT',
@@ -200,7 +281,7 @@ describe('WorkBuddy 驱动账号隔离与失败边界', () => {
   it('外层 abort → SEARCH_FAILED，不误报成 TIMEOUT', async () => {
     const outer = new AbortController()
     const { fetcher } = hangingFetcher()
-    const driver = createWorkbuddyDriver({ resolveAccessToken: () => 'WORKBUDDY_AT', fetcher })
+    const driver = createWorkbuddyDriver({ resolveCredential: () => credential('WORKBUDDY_AT'), fetcher })
     const promise = driver.searchOnce('q', 10, outer.signal)
     const assertion = expect(promise).rejects.toMatchObject({
       code: 'SEARCH_FAILED',

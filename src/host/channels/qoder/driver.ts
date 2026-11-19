@@ -12,11 +12,13 @@
  * - `auto`：初始 center，只有连接失败/超时/上游 5xx 才在同一账号、同一 query 下
  *   顺序换域一次，并按「账号 + 网络出口」在当前进程内粘性。
  *
- * ⚠️ 本任务不包含账号库、授权、刷新、UI 或 executor 接线；账号解析由 Task 8 接线。
+ * ⚠️ 账号由 Task 8 的 `createQoderInternationalSearchBinding` 以精确渠道快照注入；
+ * 本驱动不读账号库、不做授权/刷新/UI，也不接触其他渠道账号。
  */
 import type { ChannelId, QoderEndpointPreference } from '../../../shared/channels.ts'
 import type { SearchDriver, SearchDriverResult } from '../../drivers/mock-driver.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
+import { toChannelAccountSearchError } from '../../accounts/resolver-errors.ts'
 import {
   QODER_INTERNATIONAL_HOSTS,
   QoderEndpointPolicy,
@@ -44,11 +46,15 @@ export const QODER_INTERNATIONAL_SEARCH_HOSTS = QODER_INTERNATIONAL_HOSTS
 /** 一次搜索使用的账号快照：稳定账号 ID 与签名凭据绑定在一起。 */
 export interface QoderInternationalAccount {
   /**
+   * 编译期精确渠道；运行期仍会校验，防止解析器返回中国版/其他渠道快照。
+   */
+  readonly channelId: 'qoder'
+  /**
    * 账号库中的稳定账号 ID。
    *
    * 只用于端点粘性键（与网络出口键一起）；不进入错误消息、观察记录或日志。
    */
-  readonly accountKey: string
+  readonly accountId: string
   /** 本账号的签名凭据；只在进程内流转。 */
   readonly credential: QoderSigningCredential
 }
@@ -120,7 +126,7 @@ export function createQoderInternationalDriver(deps: QoderInternationalDriverDep
       try {
         const sources = await policy.execute({
           preference,
-          accountKey: account.accountKey,
+          accountKey: account.accountId,
           operation,
           signal,
         })
@@ -141,22 +147,24 @@ function toQoderChannelError(error: unknown): ChannelSearchError {
 }
 
 /**
- * 账号必须可用：缺账号、缺 token/machineId、缺稳定账号键都在任何 WASM/fetch
- * 之前失败。
+ * 账号必须可用：缺账号、缺 token/machineId、缺稳定账号键、拿到其他渠道快照
+ * 都在任何 WASM/fetch 之前失败。
+ *
+ * 解析器异常保留安全结构化 code 并重绑本渠道；底层原文/cause 一律丢弃（R16）。
  */
 async function requireAccount(deps: QoderInternationalDriverDeps): Promise<QoderInternationalAccount> {
   let account: QoderInternationalAccount | null | undefined
   try {
     account = await deps.resolveAccount()
-  } catch {
-    // R16：凭据解析器的底层异常原文/cause 可能回显 token / machineId，不向上透传。
-    throw new ChannelSearchError(
-      'SEARCH_FAILED',
+  } catch (error) {
+    throw toChannelAccountSearchError(
+      error,
       QODER_CHANNEL,
       'Qoder international search could not read the account credential',
     )
   }
   if (account === null || account === undefined) throw noAccount()
+  if (account.channelId !== QODER_CHANNEL) throw foreignAccount()
 
   const token = typeof account.credential?.securityOauthToken === 'string'
     ? account.credential.securityOauthToken.trim()
@@ -166,8 +174,8 @@ async function requireAccount(deps: QoderInternationalDriverDeps): Promise<Qoder
     : ''
   if (token.length === 0 || machineId.length === 0) throw noAccount()
 
-  const accountKey = typeof account.accountKey === 'string' ? account.accountKey.trim() : ''
-  if (accountKey.length === 0) {
+  const accountId = typeof account.accountId === 'string' ? account.accountId.trim() : ''
+  if (accountId.length === 0) {
     throw new ChannelSearchError(
       'INVALID_ARGUMENTS',
       QODER_CHANNEL,
@@ -177,15 +185,15 @@ async function requireAccount(deps: QoderInternationalDriverDeps): Promise<Qoder
   return account
 }
 
-/** 端点偏好解析异常绑定本渠道，且不携带底层异常原文。 */
+/** 端点偏好解析异常绑定本渠道，保留安全 code，且不携带底层异常原文。 */
 async function requireEndpointPreference(
   deps: QoderInternationalDriverDeps,
 ): Promise<QoderEndpointPreference> {
   try {
     return await deps.resolveEndpointPreference()
-  } catch {
-    throw new ChannelSearchError(
-      'SEARCH_FAILED',
+  } catch (error) {
+    throw toChannelAccountSearchError(
+      error,
       QODER_CHANNEL,
       'Qoder international search could not read the endpoint preference',
     )
@@ -197,5 +205,13 @@ function noAccount(): ChannelSearchError {
     'NO_ACCOUNT',
     QODER_CHANNEL,
     'Qoder international search has no usable account; sign in to a Qoder account first',
+  )
+}
+
+function foreignAccount(): ChannelSearchError {
+  return new ChannelSearchError(
+    'SEARCH_FAILED',
+    QODER_CHANNEL,
+    'Qoder international search received an account from another channel',
   )
 }

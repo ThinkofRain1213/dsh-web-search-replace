@@ -18,9 +18,13 @@ import {
   type RpcResult,
 } from '../shared/rpc.ts'
 import {
-  SearchSettingsValidationError,
-  type SearchSettingsSnapshot,
-} from '../shared/contracts.ts'
+  AccountRpcValidationError,
+  isAccountRpcMethod,
+} from '../shared/accounts.ts'
+import { SearchSettingsValidationError } from '../shared/contracts.ts'
+import { AccountError } from './accounts/errors.ts'
+import { dispatchAccountRpc } from './accounts/rpc-methods.ts'
+import type { AccountService } from './accounts/service.ts'
 import type { SettingsService } from './settings/service.ts'
 
 /** 未知管理方法；映射为 RPC 的 `bad-request`。 */
@@ -38,17 +42,20 @@ class UnknownManagementMethodError extends Error {
  *
  * @param connection Connection Host 服务。
  * @param settings 普通设置服务。
+ * @param accounts 账号服务；Task 15 的 Host 根组合负责提供，未提供时账号方法
+ *   返回 `bad-request`，普通设置方法不受影响。
  * @returns 异步 disposer；调用方应把它登记到插件生命周期。
  */
 export function registerManagementRpc(
   connection: ManagementRpcConnection,
   settings: SettingsService,
+  accounts?: AccountService,
 ): () => Promise<void> {
   return connection.fetch.register({
     path: MANAGEMENT_RPC_PATH,
     methods: ['POST'],
     requestBody: 'buffered',
-    fetch: (request) => handleManagementRpcRequest(settings, request),
+    fetch: (request) => handleManagementRpcRequest(settings, request, accounts),
   })
 }
 
@@ -61,6 +68,7 @@ export function registerManagementRpc(
 export async function handleManagementRpcRequest(
   settings: SettingsService,
   request: Request,
+  accounts?: AccountService,
 ): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response('method not allowed', { status: 405 })
@@ -81,7 +89,7 @@ export async function handleManagementRpcRequest(
     return jsonReply(envelope.rpcId, { ok: false, error: envelope.error })
   }
   try {
-    const value = await dispatch(settings, envelope.call.method, envelope.call.payload)
+    const value = await dispatch(settings, accounts, envelope.call.method, envelope.call.payload)
     return jsonReply(envelope.rpcId, { ok: true, value })
   } catch (error) {
     return jsonReply(envelope.rpcId, { ok: false, error: toFailure(error) })
@@ -133,12 +141,17 @@ function parseEnvelope(body: unknown): ParsedEnvelope {
   return { rpcId, call: { method: call.method, payload: call.payload } }
 }
 
-/** 按 method 分派到设置服务。 */
+/** 按 method 分派到设置或账号服务。 */
 async function dispatch(
   settings: SettingsService,
+  accounts: AccountService | undefined,
   method: string,
   payload: unknown,
-): Promise<SearchSettingsSnapshot> {
+): Promise<unknown> {
+  if (isAccountRpcMethod(method)) {
+    if (accounts === undefined) throw new UnknownManagementMethodError(method)
+    return dispatchAccountRpc(accounts, method, payload)
+  }
   switch (method) {
     case 'settings.get':
       assertManagementRpcPayload(method, payload)
@@ -154,9 +167,23 @@ async function dispatch(
   }
 }
 
-/** 把任意错误映射为稳定的 RPC 失败；不泄露秘密。 */
+/** 把任意错误映射为稳定的 RPC 失败；不泄露秘密或依赖原文。 */
 function toFailure(error: unknown): RpcErrorPayload {
   if (error instanceof SearchSettingsValidationError) {
+    return {
+      code: error.code,
+      message: error.message,
+      details: {},
+    }
+  }
+  if (error instanceof AccountRpcValidationError) {
+    return {
+      code: error.code,
+      message: error.message,
+      details: {},
+    }
+  }
+  if (error instanceof AccountError) {
     return {
       code: error.code,
       message: error.message,
