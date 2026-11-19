@@ -83,8 +83,13 @@ async function requireCredential(deps: QoderCnDriverDeps): Promise<QoderSigningC
   let credential: QoderSigningCredential | null | undefined
   try {
     credential = await deps.resolveCredential()
-  } catch (error) {
-    throw toQoderChannelSearchError(error, QODERCN_CHANNEL)
+  } catch {
+    // R16：凭据解析器的底层异常原文/cause 可能回显 token / machineId，不向上透传。
+    throw new ChannelSearchError(
+      'SEARCH_FAILED',
+      QODERCN_CHANNEL,
+      'Qoder China search could not read the account credential',
+    )
   }
   if (credential === null || credential === undefined) throw noAccount()
   const token = typeof credential.securityOauthToken === 'string'

@@ -13,6 +13,11 @@
  *    （进程级最终释放属于 Task 15）。
  * 4. **秘密卫生**：token / machineId / uid / 签名头不得进入日志或错误消息。
  */
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -20,7 +25,16 @@ import {
   QoderSearchProtocolError,
   type QoderSigningCredential,
 } from '../../src/host/channels/qoder/protocol.ts'
-import { QoderSigner, __testing } from '../../src/host/channels/qoder/signer.ts'
+import {
+  QoderSigner,
+  __testing,
+  readApprovedQoderWasm,
+  resolveQoderWasmAssetPath,
+} from '../../src/host/channels/qoder/signer.ts'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+const REAL_WASM = resolve(ROOT, 'assets/qoder/qoder-auth-wasm.wasm')
+const APPROVED_WASM_SHA256 = '6419471EFFA631519DEF7797D76D7EDE38B9FCFA9A83C2148C8EF5D43355B43D'
 
 const HOST = 'gateway.qoder.com.cn'
 const SIGNED_URL = 'https://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch?Encode=1'
@@ -50,7 +64,40 @@ function logText(spies: readonly { mock: { calls: readonly unknown[][] } }[]): s
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  __testing.resetInputWriteFault()
+  while (tempRoots.length > 0) {
+    rmSync(tempRoots.pop()!, { recursive: true, force: true })
+  }
 })
+
+/** 每个用例创建的临时包目录；afterEach 统一清理。 */
+const tempRoots: string[] = []
+
+/**
+ * 造一个「包内真实资产 + 包外同名恶意资产」的临时布局。
+ *
+ * 返回的 `pkg` 同时包含 `lib/` 与 `src/host/channels/qoder/` 两种模块位置，
+ * 用于验证两种运行布局都只解析包内资产。
+ */
+function makeTempPackage(): {
+  readonly root: string
+  readonly pkg: string
+  readonly pkgAsset: string
+  readonly parentAsset: string
+} {
+  const root = mkdtempSync(join(tmpdir(), 'qoder-wasm-'))
+  tempRoots.push(root)
+  const pkg = join(root, 'pkg')
+  mkdirSync(join(pkg, 'lib'), { recursive: true })
+  mkdirSync(join(pkg, 'src', 'host', 'channels', 'qoder'), { recursive: true })
+  mkdirSync(join(pkg, 'assets', 'qoder'), { recursive: true })
+  mkdirSync(join(root, 'assets', 'qoder'), { recursive: true })
+  const pkgAsset = join(pkg, 'assets', 'qoder', 'qoder-auth-wasm.wasm')
+  copyFileSync(REAL_WASM, pkgAsset)
+  const parentAsset = join(root, 'assets', 'qoder', 'qoder-auth-wasm.wasm')
+  writeFileSync(parentAsset, Buffer.from('evil wasm from package parent'))
+  return { root, pkg, pkgAsset, parentAsset }
+}
 
 describe('QoderSigner：无凭据边界（先于任何 WASM 工作）', () => {
   it.each([
@@ -136,40 +183,99 @@ describe('QoderSigner：真实 WASM 签名', () => {
     expect(after.stringsFreed - before.stringsFreed).toBe(6)
   })
 
-  it('签名阶段内部失败时仍释放已创建的上下文，不留下在飞泄漏', async () => {
+  it('签名阶段失败（最后一个输入写入失败）时释放上下文与未接管输入', async () => {
     const before = __testing.wasmStats()
     const signer = new QoderSigner()
     try {
-      // Symbol 无法被 TextEncoder 编码：失败发生在上下文创建之后、返回值读取之前。
+      // 第 10 次 writeString（request body）在分配后失败：auth/context 已交给 Rust，
+      // request 的 4 个已写输入尚未被接管，必须清理。
+      __testing.failNextInputWrite(9)
       const error = await signer
-        .prepare(HOST, QODER_SEARCH_PATH, Symbol('boom') as unknown as string, CREDENTIAL, freshSignal())
+        .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
         .catch(caught => caught)
 
       expect(error).toBeInstanceOf(QoderSearchProtocolError)
       expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
       expect(signer.inflight).toBe(0)
     } finally {
+      __testing.resetInputWriteFault()
       signer.dispose()
     }
     const after = __testing.wasmStats()
     expect(after.contextsCreated - before.contextsCreated).toBe(1)
     expect(after.contextsFreed - before.contextsFreed).toBe(1)
+    expect(after.resultsCreated - before.resultsCreated).toBe(0)
+    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(10)
+    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(5)
   })
 
-  it('预热后连续签名不增长 WASM 堆（无每次调用的泄漏）', async () => {
+  it('预热后 5000 次成功签名不呈每次调用线性增长（精确计数）', async () => {
     const signer = new QoderSigner()
     try {
-      for (let index = 0; index < 25; index += 1) {
+      for (let index = 0; index < 100; index += 1) {
         await signer.prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
       }
-      const before = await __testing.wasmHeapBytes()
-      for (let index = 0; index < 150; index += 1) {
+      const heapBefore = await __testing.wasmHeapBytes()
+      const statsBefore = __testing.wasmStats()
+      const iterations = 5_000
+      for (let index = 0; index < iterations; index += 1) {
         await signer.prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
       }
-      const after = await __testing.wasmHeapBytes()
-      // 每次泄漏约 url+body 长度（约 300 B）；150 次会超过 40 KB。
-      expect(after - before).toBeLessThan(16_384)
+      const heapAfter = await __testing.wasmHeapBytes()
+      const statsAfter = __testing.wasmStats()
+
+      // 每次泄漏约 260B 输入串时，5000 次会增长约 1.3MB，远超一页。
+      expect(heapAfter - heapBefore).toBeLessThan(65_536)
+      expect(statsAfter.contextsCreated - statsBefore.contextsCreated).toBe(iterations)
+      expect(statsAfter.contextsFreed - statsBefore.contextsFreed).toBe(iterations)
+      expect(statsAfter.resultsCreated - statsBefore.resultsCreated).toBe(iterations)
+      expect(statsAfter.resultsFreed - statsBefore.resultsFreed).toBe(iterations)
+      expect(statsAfter.stringsFreed - statsBefore.stringsFreed).toBe(iterations * 3)
+      expect(statsAfter.inputStringsAllocated - statsBefore.inputStringsAllocated).toBe(iterations * 10)
+      // 成功路径输入所有权交给 Rust；本层不 free（参考实现证明手工 free 会 trap）。
+      expect(statsAfter.inputStringsFreed - statsBefore.inputStringsFreed).toBe(0)
     } finally {
+      signer.dispose()
+    }
+  })
+
+  it('2000 次失败签名循环：输入清理精确且不呈线性增长', async () => {
+    const signer = new QoderSigner()
+    const failAtBody = 9
+    const iterations = 2_000
+    try {
+      for (let index = 0; index < 100; index += 1) {
+        __testing.failNextInputWrite(failAtBody)
+        await signer
+          .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+          .catch(() => undefined)
+      }
+      const heapBefore = await __testing.wasmHeapBytes()
+      const statsBefore = __testing.wasmStats()
+      for (let index = 0; index < iterations; index += 1) {
+        __testing.failNextInputWrite(failAtBody)
+        const error = await signer
+          .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+          .catch(caught => caught)
+        expect(error).toBeInstanceOf(QoderSearchProtocolError)
+      }
+      const heapAfter = await __testing.wasmHeapBytes()
+      const statsAfter = __testing.wasmStats()
+
+      expect(heapAfter - heapBefore).toBeLessThan(65_536)
+      expect(statsAfter.inputStringsAllocated - statsBefore.inputStringsAllocated)
+        .toBe(iterations * 10)
+      // 每次失败：4 个已写请求输入 + 失败的那个 body 输入 = 5 个被本层清理；
+      // auth 1 + context 4 = 5 个已交给 Rust。
+      expect(statsAfter.inputStringsFreed - statsBefore.inputStringsFreed)
+        .toBe(iterations * 5)
+      expect(statsAfter.contextsCreated - statsBefore.contextsCreated).toBe(iterations)
+      expect(statsAfter.contextsFreed - statsBefore.contextsFreed).toBe(iterations)
+      expect(statsAfter.resultsCreated - statsBefore.resultsCreated).toBe(0)
+      // 失败前 auth 字段已成功，其返回串仍被释放。
+      expect(statsAfter.stringsFreed - statsBefore.stringsFreed).toBe(iterations)
+    } finally {
+      __testing.resetInputWriteFault()
       signer.dispose()
     }
   })
@@ -298,6 +404,190 @@ describe('QoderSigner：R3 生命周期边界', () => {
     await expect(pending).resolves.toMatchObject({ url: SIGNED_URL })
     expect(signer.inflight).toBe(0)
     expect(__testing.wasmStats().signerRefs).toBe(before.signerRefs)
+  })
+})
+
+describe('QoderSigner：输入字符串异常清理（I1）', () => {
+  it('body 非 string 在任何 WASM 分配前被拒绝', async () => {
+    const before = __testing.wasmStats()
+    const signer = new QoderSigner()
+    try {
+      const error = await signer
+        .prepare(HOST, QODER_SEARCH_PATH, Symbol('boom') as unknown as string, CREDENTIAL, freshSignal())
+        .catch(caught => caught)
+      expect(error).toBeInstanceOf(QoderSearchProtocolError)
+      expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
+      expect(signer.inflight).toBe(0)
+    } finally {
+      signer.dispose()
+    }
+    const after = __testing.wasmStats()
+    expect(after.inputStringsAllocated).toBe(before.inputStringsAllocated)
+    expect(after.contextsCreated).toBe(before.contextsCreated)
+  })
+
+  it('成功签名精确分配 10 个输入串（Rust 接管），返回串释放 3 个', async () => {
+    const before = __testing.wasmStats()
+    const signer = new QoderSigner()
+    try {
+      await signer.prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+    } finally {
+      signer.dispose()
+    }
+    const after = __testing.wasmStats()
+    // 1 个 auth 字段输入 + 4 个 context 输入 + 5 个请求输入。
+    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(10)
+    // 成功路径的输入所有权交给 Rust，本层不得手工 free（会 double-free trap）。
+    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(0)
+    expect(after.contextsCreated - before.contextsCreated).toBe(1)
+    expect(after.contextsFreed - before.contextsFreed).toBe(1)
+    expect(after.resultsCreated - before.resultsCreated).toBe(1)
+    expect(after.resultsFreed - before.resultsFreed).toBe(1)
+    expect(after.stringsFreed - before.stringsFreed).toBe(3)
+  })
+
+  it.each([
+    ['auth 字段写入失败', 0, 1, 1, 0],
+    ['context 第 1 个输入失败', 1, 2, 1, 0],
+    ['context 第 4 个输入失败', 4, 5, 4, 0],
+    ['prepareRequest 第 1 个输入失败', 5, 6, 1, 1],
+    ['prepareRequest 第 4 个输入失败', 8, 9, 4, 1],
+  ])('%s：清理所有尚未被 Rust 接管的输入分配', async (
+    _label,
+    failAt,
+    expectedAllocated,
+    expectedFreed,
+    expectedContexts,
+  ) => {
+    const before = __testing.wasmStats()
+    const signer = new QoderSigner()
+    try {
+      __testing.failNextInputWrite(failAt)
+      const error = await signer
+        .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+        .catch(caught => caught)
+      expect(error).toBeInstanceOf(QoderSearchProtocolError)
+      expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
+      expect(signer.inflight).toBe(0)
+    } finally {
+      __testing.resetInputWriteFault()
+      signer.dispose()
+    }
+    const after = __testing.wasmStats()
+    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(expectedAllocated)
+    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(expectedFreed)
+    expect(after.contextsCreated - before.contextsCreated).toBe(expectedContexts)
+    expect(after.contextsFreed - before.contextsFreed).toBe(expectedContexts)
+    expect(after.resultsCreated - before.resultsCreated).toBe(0)
+  })
+})
+
+describe('QoderSigner：返回值读取重新获取 DataView（I2）', () => {
+  it('invoke 触发内存增长（旧 buffer detach）时仍读取返回值并释放返回串', () => {
+    let current = new ArrayBuffer(64)
+    const stale = current
+    const freed: Array<{ ptr: number; len: number }> = []
+    const glue = {
+      exports: {
+        __wbindgen_add_to_stack_pointer: (_delta: number) => 0,
+      },
+      view: () => new DataView(current),
+      readString: (ptr: number, len: number) => `ptr=${ptr};len=${len}`,
+      freeString: (ptr: number, len: number) => { freed.push({ ptr, len }) },
+    }
+
+    const invoke = (stack: number, result: number): void => {
+      expect(result).toBe(7)
+      // 模拟 memory.grow：旧 ArrayBuffer 被 detach，glue.view() 之后返回新 buffer。
+      structuredClone(stale, { transfer: [stale] })
+      current = new ArrayBuffer(64)
+      const data = new DataView(current)
+      data.setInt32(stack + 0, 1234, true)
+      data.setInt32(stack + 4, 9, true)
+    }
+
+    const value = __testing.readRequestResultString(glue as never, 7, invoke)
+    expect(value).toBe('ptr=1234;len=9')
+    expect(freed).toEqual([{ ptr: 1234, len: 9 }])
+  })
+
+  it('大尺寸真实签名触发堆增长时仍成功读取 URL/body', async () => {
+    const signer = new QoderSigner()
+    try {
+      let grew = false
+      for (const size of [1_000_000, 2_000_000, 4_000_000]) {
+        const body = JSON.stringify({
+          payload: JSON.stringify({ query: 'x'.repeat(size) }),
+          encodeVersion: '1',
+        })
+        const before = await __testing.wasmHeapBytes()
+        const prepared = await signer.prepare(HOST, QODER_SEARCH_PATH, body, CREDENTIAL, freshSignal())
+        const after = await __testing.wasmHeapBytes()
+        expect(prepared.url).toBe(SIGNED_URL)
+        expect(prepared.body.length).toBeGreaterThan(size)
+        if (after > before) grew = true
+      }
+      expect(grew).toBe(true)
+    } finally {
+      signer.dispose()
+    }
+  })
+})
+
+describe('QoderSigner：包内批准资产（C1）', () => {
+  it('lib 布局只解析包内 assets，不回退到包外同名文件', () => {
+    const { pkg, pkgAsset, parentAsset } = makeTempPackage()
+    const resolved = resolveQoderWasmAssetPath(
+      pathToFileURL(join(pkg, 'lib', 'index.js')).href,
+    )
+    expect(resolved).toBe(pkgAsset)
+    expect(resolved).not.toBe(parentAsset)
+    expect(resolved.startsWith(pkg)).toBe(true)
+  })
+
+  it('源码布局只解析包内 assets，不回退到包外同名文件', () => {
+    const { pkg, pkgAsset, parentAsset } = makeTempPackage()
+    const resolved = resolveQoderWasmAssetPath(
+      pathToFileURL(join(pkg, 'src', 'host', 'channels', 'qoder', 'signer.ts')).href,
+    )
+    expect(resolved).toBe(pkgAsset)
+    expect(resolved).not.toBe(parentAsset)
+  })
+
+  it('包内资产缺失时不会回退到包外同名文件', () => {
+    const { pkg, pkgAsset, parentAsset } = makeTempPackage()
+    rmSync(pkgAsset)
+    const resolved = resolveQoderWasmAssetPath(
+      pathToFileURL(join(pkg, 'lib', 'index.js')).href,
+    )
+    expect(resolved).toBe(pkgAsset)
+    expect(readFileSync(parentAsset).byteLength).toBeGreaterThan(0)
+    expect(() => readApprovedQoderWasm(resolved)).toThrow(QoderSearchProtocolError)
+  })
+
+  it('运行时 SHA256 不匹配 fail-closed（包外与包内被篡改都不接受）', () => {
+    const { pkgAsset, parentAsset } = makeTempPackage()
+    expect(() => readApprovedQoderWasm(parentAsset)).toThrow(QoderSearchProtocolError)
+
+    const tampered = readFileSync(pkgAsset)
+    tampered[0] = (tampered[0] ?? 0) ^ 0xff
+    writeFileSync(pkgAsset, tampered)
+    expect(() => readApprovedQoderWasm(pkgAsset)).toThrow(QoderSearchProtocolError)
+  })
+
+  it('真实仓库的 lib 布局解析到包内 assets', () => {
+    const resolved = resolveQoderWasmAssetPath(
+      pathToFileURL(resolve(ROOT, 'lib', 'index.js')).href,
+    )
+    expect(resolved).toBe(REAL_WASM)
+    expect(resolved.startsWith(ROOT)).toBe(true)
+  })
+
+  it('批准资产被接受，且大小/SHA256 与批准基线一致', async () => {
+    const { createHash } = await import('node:crypto')
+    const bytes = readApprovedQoderWasm(REAL_WASM)
+    expect(bytes.byteLength).toBe(298606)
+    expect(createHash('sha256').update(bytes).digest('hex').toUpperCase()).toBe(APPROVED_WASM_SHA256)
   })
 })
 

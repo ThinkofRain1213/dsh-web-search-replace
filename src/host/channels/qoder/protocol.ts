@@ -17,7 +17,6 @@ import type { ChannelId } from '../../../shared/channels.ts'
 import type { MockSearchSource } from '../../drivers/mock-driver.ts'
 import {
   ChannelSearchError,
-  normalizeChannelSearchError,
   type ChannelSearchErrorCode,
 } from '../../search/errors.ts'
 
@@ -114,12 +113,22 @@ export class QoderSearchProtocolError extends Error {
   }
 }
 
-/** 把共享协议失败绑定到渠道；其他错误走既有 normalize 边界。 */
+/**
+ * 把共享协议失败绑定到渠道。
+ *
+ * ⚠️ R16：Qoder 边界**不透传**底层异常原文或 raw cause —— 上游响应体、
+ * transport/解析器错误都可能回显 token / machineId / `Authorization: Bearer COSY`。
+ * 这里只保留本层结构化 code 与固定安全消息；未知错误统一为固定的
+ * `SEARCH_FAILED` 文本。
+ */
 export function toQoderChannelSearchError(error: unknown, channel: ChannelId): ChannelSearchError {
-  if (error instanceof QoderSearchProtocolError) {
-    return new ChannelSearchError(error.code, channel, error.message, error)
+  if (error instanceof ChannelSearchError) {
+    return new ChannelSearchError(error.code, channel, error.message)
   }
-  return normalizeChannelSearchError(error, channel)
+  if (error instanceof QoderSearchProtocolError) {
+    return new ChannelSearchError(error.code, channel, error.message)
+  }
+  return new ChannelSearchError('SEARCH_FAILED', channel, 'qoder search failed')
 }
 
 /**
@@ -177,13 +186,13 @@ export async function postQoderSearch(
     )
   } catch (error) {
     if (error instanceof QoderSearchProtocolError) throw error
-    throw new QoderSearchProtocolError(
-      'SEARCH_FAILED',
-      `qoder signing failed: ${errorMessage(error)}`,
-      undefined,
-      error,
-    )
+    // R16：不把底层异常原文/cause 透出（可能含 token/machineId/签名头）。
+    throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder signing failed')
   }
+
+  // C1：WASM 返回的 URL 必须精确落在注入 host 的 `/algo${path}?Encode=1` 上；
+  // 任何不符都在 fetch 之前 fail-closed，避免把签名头/密文 body 发往其他目标。
+  assertQoderSignedUrl(prepared.url, request.host, request.path)
 
   let response: Response
   try {
@@ -193,14 +202,52 @@ export async function postQoderSearch(
       headers: { ...prepared.headers, 'X-Session-ID': randomUUID() },
       body: prepared.body,
       signal: composed,
+      // 不跟随重定向：307/308 可能把签名头与密文 body 重发到其他 host。
+      redirect: 'error',
     })
-  } catch (error) {
-    throw transportFailure(error, timeout, composed)
+  } catch {
+    throw transportFailure(timeout, composed)
   }
 
-  if (!response.ok) throw await httpFailure(response, request.path)
+  if (!response.ok) throw httpFailure(response, request.path)
   const json = await readJson(response, timeout, composed)
   return projectQoderSearchResponse(json)
+}
+
+/**
+ * 校验 WASM 返回的签名 URL 精确指向注入目标。
+ *
+ * 期望：`https://${host}/algo${path}?Encode=1`。origin/path 不匹配、缺少
+ * `Encode=1` 或根本不是 URL，都必须在 fetch 前失败。
+ */
+function assertQoderSignedUrl(url: string, host: string, path: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'qoder signer returned an invalid request URL',
+    )
+  }
+  if (parsed.origin !== `https://${host}`) {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'qoder signer returned a request URL for an unexpected origin',
+    )
+  }
+  if (parsed.pathname !== `/algo${path}`) {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'qoder signer returned a request URL with an unexpected path',
+    )
+  }
+  if (parsed.searchParams.get('Encode') !== '1') {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'qoder signer returned a request URL without Encode=1',
+    )
+  }
 }
 
 /** 调用前已 abort：绝不发请求；超时原因按超时归因，其余按取消归因。 */
@@ -219,9 +266,11 @@ function abortFailure(signal: AbortSignal): QoderSearchProtocolError {
  *
  * 只有本层 `AbortSignal.timeout` 触发时才声称「我们的 20s 预算」；外层 deadline
  * 到期归为宿主预算超时；普通取消归为 SEARCH_FAILED，不能误报成 TIMEOUT。
+ *
+ * ⚠️ R16：不拼接底层异常原文、不附带 raw cause —— transport/代理错误可能回显
+ * `Authorization`、token 或 machineId。只保留固定阶段消息与结构化 code。
  */
 function transportFailure(
-  error: unknown,
   timeout: AbortSignal,
   composed: AbortSignal,
 ): QoderSearchProtocolError {
@@ -230,30 +279,19 @@ function transportFailure(
       return new QoderSearchProtocolError(
         'TIMEOUT',
         `qoder search timed out after ${QODER_SEARCH_TIMEOUT_MS}ms`,
-        undefined,
-        error,
       )
     }
     if (isTimeoutReason(composed.reason)) {
       return new QoderSearchProtocolError(
         'TIMEOUT',
         'qoder search timed out before this search returned (the host tool budget elapsed)',
-        undefined,
-        error,
       )
     }
-    return new QoderSearchProtocolError(
-      'SEARCH_FAILED',
-      'qoder search aborted by the caller',
-      undefined,
-      error,
-    )
+    return new QoderSearchProtocolError('SEARCH_FAILED', 'qoder search aborted by the caller')
   }
   return new QoderSearchProtocolError(
     'SEARCH_FAILED',
-    `qoder search request failed: ${errorMessage(error)}`,
-    undefined,
-    error,
+    'qoder search request failed before a response was received',
   )
 }
 
@@ -265,26 +303,25 @@ function isTimeoutReason(reason: unknown): boolean {
     || record?.code === 'TOOL_TIMEOUT'
 }
 
-/** HTTP 非 2xx 的可路由分类；响应体只截取一段可读说明，不包含请求头。 */
-async function httpFailure(response: Response, path: string): Promise<QoderSearchProtocolError> {
-  const detail = await readErrorDetail(response)
-  const message = `qoder search request failed (HTTP ${response.status}) for ${path}${detail}`
+/**
+ * HTTP 非 2xx 的可路由分类。
+ *
+ * ⚠️ R16：**不读取**响应体 —— 上游/代理可能回显 token、machineId 或
+ * `Authorization: Bearer COSY`。只保留状态码与固定 path 诊断。
+ */
+function httpFailure(response: Response, path: string): QoderSearchProtocolError {
+  const message = `qoder search request failed (HTTP ${response.status}) for ${path}`
   if (response.status === 401) {
-    return new QoderSearchProtocolError('UNAUTHORIZED', message, 401)
+    return new QoderSearchProtocolError(
+      'UNAUTHORIZED',
+      `${message}; the account may need to sign in again`,
+      401,
+    )
   }
   if (response.status === 429) {
-    return new QoderSearchProtocolError('RATE_LIMITED', message, 429)
+    return new QoderSearchProtocolError('RATE_LIMITED', `${message}; retry later`, 429)
   }
   return new QoderSearchProtocolError('SEARCH_FAILED', message, response.status)
-}
-
-async function readErrorDetail(response: Response): Promise<string> {
-  try {
-    const text = (await response.text()).trim().slice(0, 300)
-    return text.length > 0 ? `: ${text}` : ''
-  } catch {
-    return ''
-  }
 }
 
 async function readJson(
@@ -294,13 +331,11 @@ async function readJson(
 ): Promise<unknown> {
   try {
     return await response.json()
-  } catch (error) {
-    if (composed.aborted) throw transportFailure(error, timeout, composed)
+  } catch {
+    if (composed.aborted) throw transportFailure(timeout, composed)
     throw new QoderSearchProtocolError(
       'BAD_RESPONSE',
       'qoder search returned a non-JSON response',
-      undefined,
-      error,
     )
   }
 }
@@ -355,8 +390,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

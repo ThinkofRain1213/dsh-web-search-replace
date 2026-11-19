@@ -37,8 +37,9 @@
  * ⚠️ 只释放「对象」与「返回值字符串」，**绝不碰输入字符串**：`qodercontext_new`
  * 的输入由 Rust 侧持有，手工释放会当场 trap `unreachable`。
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { basename, dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -52,6 +53,12 @@ import {
 
 /** wasm-bindgen 生成的 import 对象名；WASM 里 embed 了这个路径，必须完全一致。 */
 const IMPORT_MODULE = './qoder_auth_wasm_bg.js'
+
+/** 包内批准资产相对路径。 */
+const WASM_ASSET_RELATIVE = 'assets/qoder/qoder-auth-wasm.wasm'
+
+/** 批准基线的 SHA256（大写十六进制）；运行时加载后、编译前必须精确匹配。 */
+export const QODER_WASM_SHA256 = '6419471EFFA631519DEF7797D76D7EDE38B9FCFA9A83C2148C8EF5D43355B43D'
 
 /** `generate_runtime_auth_fields` 的产物。 */
 interface QoderRuntimeAuthFields {
@@ -85,7 +92,15 @@ interface Glue {
   callPointer(invoke: (stack: number) => void): number
   freePointer(name: WasmFreeExport, ptr: number): void
   freeString(ptr: number, len: number): void
+  /** 释放「尚未被 Rust 接管」的输入字符串；失败时静默，保留首错。 */
+  releaseInputString(ptr: number, len: number): void
   memoryBytes(): number
+}
+
+/** 已写入 wasm 内存的输入串；在 Rust 接管前失败时必须逐个释放。 */
+interface WrittenInput {
+  readonly ptr: number
+  readonly len: number
 }
 
 /** 测试可观察的生命周期计数；生产路径只写不读。 */
@@ -99,6 +114,10 @@ interface WasmStats {
   resultsCreated: number
   resultsFreed: number
   stringsFreed: number
+  /** 经 `writeString` 写入 wasm 内存的输入串总数。 */
+  inputStringsAllocated: number
+  /** 本层在 Rust 接管前主动释放的输入串数（成功路径应为 0）。 */
+  inputStringsFreed: number
 }
 
 const wasmStats: WasmStats = {
@@ -109,7 +128,19 @@ const wasmStats: WasmStats = {
   resultsCreated: 0,
   resultsFreed: 0,
   stringsFreed: 0,
+  inputStringsAllocated: 0,
+  inputStringsFreed: 0,
 }
+
+/**
+ * 测试专用故障注入：在第 N 次 `writeString` 分配后、写入前抛错。
+ *
+ * 生产路径恒为 `-1`（关闭）；用于证明「Rust 接管前失败」时已写输入会被清理。
+ * 不改变 WASM 所有权语义，也不 mock 签名。
+ */
+let inputWriteFaultAt = -1
+/** 故障注入抛出的错误文本；仅测试使用，生产恒为默认安全文本。 */
+let inputWriteFaultMessage = 'injected input write failure'
 
 /** 进程级共享 WASM；Task 15 才负责在在飞归零后最终释放。 */
 let gluePromise: Promise<Glue> | null = null
@@ -126,34 +157,64 @@ function getGlue(): Promise<Glue> {
 }
 
 /**
- * 解析 WASM 资产路径。
+ * 解析包内批准资产路径。
  *
- * 源码布局（vitest）与构建产物布局（`lib/index.js`）相对位置不同，按顺序探测：
- * - `src/host/channels/qoder/signer.ts` → `../../../../assets/qoder/...`
- * - `lib/index.js` → `../assets/qoder/...`
+ * 只认**包内** `assets/qoder/qoder-auth-wasm.wasm`，绝不按「同名文件优先」探测
+ * 包外路径：
+ * - 构建产物：`lib/index.js` → 包根 = `lib/..`；
+ * - 源码布局：`src/host/channels/qoder/signer.ts` → 包根 = 上四级。
+ *
+ * 路径解析结果必须仍在包根内；包内资产缺失时由 {@link readApprovedQoderWasm}
+ * fail-closed，**不会**回退到包外同名文件。
+ *
+ * @param moduleUrl - 当前模块 URL；测试可注入临时包布局。
  */
-function resolveWasmPath(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  const candidates = [
-    resolve(here, '../../../../assets/qoder/qoder-auth-wasm.wasm'),
-    resolve(here, '../assets/qoder/qoder-auth-wasm.wasm'),
-  ]
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
+export function resolveQoderWasmAssetPath(moduleUrl: string = import.meta.url): string {
+  const here = dirname(fileURLToPath(moduleUrl))
+  const packageRoot = basename(here) === 'lib' ? resolve(here, '..') : resolve(here, '../../../..')
+  const assetPath = resolve(packageRoot, WASM_ASSET_RELATIVE)
+  if (!assetPath.startsWith(`${packageRoot}${sep}`)) {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'Qoder signing asset resolved outside the plugin package',
+    )
   }
-  throw new QoderSearchProtocolError(
-    'SEARCH_FAILED',
-    'Qoder signing asset is missing: assets/qoder/qoder-auth-wasm.wasm',
-  )
+  return assetPath
+}
+
+/**
+ * 读取并校验批准 WASM。
+ *
+ * 运行时在 `WebAssembly.compile` 之前重新计算 SHA256；任何缺失/篡改/包外文件
+ * 都 fail-closed。错误消息固定，不包含绝对路径或文件内容。
+ */
+export function readApprovedQoderWasm(assetPath: string): Uint8Array<ArrayBuffer> {
+  let raw: Buffer
+  try {
+    raw = readFileSync(assetPath)
+  } catch {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'Qoder signing asset is missing from the plugin package',
+    )
+  }
+  const digest = createHash('sha256').update(raw).digest('hex').toUpperCase()
+  if (digest !== QODER_WASM_SHA256) {
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'Qoder signing asset failed the approved SHA256 check',
+    )
+  }
+  // 显式复制到 ArrayBuffer 支撑的 Uint8Array，避免 Buffer 的 ArrayBufferLike
+  // 泛型与 WebAssembly.compile 的 BufferSource 类型不兼容。
+  const bytes = new Uint8Array(raw.byteLength)
+  bytes.set(raw)
+  return bytes
 }
 
 /** 真正实例化 WASM 并接好 import。 */
 async function createGlue(): Promise<Glue> {
-  const wasmBytes = readFileSync(resolveWasmPath())
-  // 显式复制到 ArrayBuffer 支撑的 Uint8Array，避免 Buffer 的 ArrayBufferLike
-  // 泛型与 WebAssembly.compile 的 BufferSource 类型不兼容。
-  const bytes = new Uint8Array(wasmBytes.byteLength)
-  bytes.set(wasmBytes)
+  const bytes = readApprovedQoderWasm(resolveQoderWasmAssetPath())
   const module = await WebAssembly.compile(bytes)
 
   let exports: WasmExports = { memory: { buffer: new ArrayBuffer(0) } } as unknown as WasmExports
@@ -205,10 +266,44 @@ async function createGlue(): Promise<Glue> {
   }
 
   let lastLength = 0
+
+  /**
+   * 释放「尚未被 Rust 接管」的输入字符串。
+   *
+   * 与 {@link freeString} 的区别：这里发生在 WASM 调用**之前**（Rust 还没拿到
+   * 所有权），释放是安全的；一旦调用发生，所有权转移给 Rust，**绝不能**再
+   * 手工 free（会 double-free trap）。释放失败静默，避免覆盖首错。
+   */
+  const releaseInputString = (ptr: number, len: number): void => {
+    if (ptr === 0) return
+    try {
+      exports.__wbindgen_export4!(ptr, len, 1)
+    } catch {
+      return
+    }
+    wasmStats.inputStringsFreed += 1
+  }
+
   const writeString = (text: string): number => {
     const encoded = encoder.encode(text)
     const ptr = exports.__wbindgen_export2!(encoded.length, 1) >>> 0
-    heap().subarray(ptr, ptr + encoded.length).set(encoded)
+    wasmStats.inputStringsAllocated += 1
+    // 测试专用故障：分配后、写入前失败，验证 writeString 自清 + 调用方清理。
+    if (inputWriteFaultAt >= 0) {
+      if (inputWriteFaultAt === 0) {
+        inputWriteFaultAt = -1
+        releaseInputString(ptr, encoded.length)
+        throw new Error(inputWriteFaultMessage)
+      }
+      inputWriteFaultAt -= 1
+    }
+    try {
+      heap().subarray(ptr, ptr + encoded.length).set(encoded)
+    } catch (error) {
+      // 分配成功但写入失败：指针尚未交给调用方/Rust，必须自清。
+      releaseInputString(ptr, encoded.length)
+      throw error
+    }
     lastLength = encoded.length
     return ptr
   }
@@ -378,6 +473,7 @@ async function createGlue(): Promise<Glue> {
     callPointer,
     freePointer,
     freeString,
+    releaseInputString,
     memoryBytes: () => exports.memory.buffer.byteLength,
   }
 }
@@ -398,6 +494,17 @@ function describeWasmFailure(error: unknown): unknown {
   )
 }
 
+/** 写入一个输入串并记录 ptr/len；失败时由调用方按记录清理。 */
+function writeInput(glue: Glue, written: WrittenInput[], text: string): void {
+  const ptr = glue.writeString(text)
+  written.push({ ptr, len: glue.lastLength() })
+}
+
+/** 释放所有尚未被 Rust 接管的输入串（WASM 调用之前失败时）。 */
+function releaseWrittenInputs(glue: Glue, written: readonly WrittenInput[]): void {
+  for (const input of written) glue.releaseInputString(input.ptr, input.len)
+}
+
 /** 生成运行时鉴权字段（`encrypt_user_info` / `key`）。 */
 function generateRuntimeAuthFields(
   glue: Glue,
@@ -410,10 +517,20 @@ function generateRuntimeAuthFields(
     organization_tags: [],
     data_policy_agreed: false,
   })
-  const raw = glue.callString((stack) => {
-    const ptr = glue.writeString(payload)
-    glue.exports.generate_runtime_auth_fields!(stack, ptr, glue.lastLength())
-  })
+  const ptr = glue.writeString(payload)
+  const len = glue.lastLength()
+  let invoked = false
+  let raw: string
+  try {
+    raw = glue.callString((stack) => {
+      // 标记「Rust 即将接管输入」；之后无论成败都不得再手工 free。
+      invoked = true
+      glue.exports.generate_runtime_auth_fields!(stack, ptr, len)
+    })
+  } catch (error) {
+    if (!invoked) glue.releaseInputString(ptr, len)
+    throw error
+  }
   try {
     return JSON.parse(raw) as QoderRuntimeAuthFields
   } catch {
@@ -428,26 +545,32 @@ function generateRuntimeAuthFields(
 /** 创建本次签名独占的 `QoderContext`；调用方必须在 finally 中释放。 */
 function createContext(glue: Glue, machineId: string, userInfoJson: string): number {
   const metadataJson = JSON.stringify(QODER_CLIENT_METADATA)
-  const context = glue.callPointer((stack) => {
-    const machine = glue.writeString(machineId)
-    const machineLen = glue.lastLength()
-    const version = glue.writeString(QODER_COSY_VERSION)
-    const versionLen = glue.lastLength()
-    const info = glue.writeString(userInfoJson)
-    const infoLen = glue.lastLength()
-    const metadata = glue.writeString(metadataJson)
-    const metadataLen = glue.lastLength()
-    // 参数顺序：(sp, machineId, len, version, len, userInfo, len, clientMeta, len)
-    glue.exports.qodercontext_new!(
-      stack,
-      machine, machineLen,
-      version, versionLen,
-      info, infoLen,
-      metadata, metadataLen,
-    )
-  })
-  if (context !== 0) wasmStats.contextsCreated += 1
-  return context
+  const written: WrittenInput[] = []
+  let invoked = false
+  try {
+    writeInput(glue, written, machineId)
+    writeInput(glue, written, QODER_COSY_VERSION)
+    writeInput(glue, written, userInfoJson)
+    writeInput(glue, written, metadataJson)
+    const context = glue.callPointer((stack) => {
+      // 参数顺序：(sp, machineId, len, version, len, userInfo, len, clientMeta, len)
+      invoked = true
+      glue.exports.qodercontext_new!(
+        stack,
+        written[0]!.ptr, written[0]!.len,
+        written[1]!.ptr, written[1]!.len,
+        written[2]!.ptr, written[2]!.len,
+        written[3]!.ptr, written[3]!.len,
+      )
+    })
+    if (context !== 0) wasmStats.contextsCreated += 1
+    return context
+  } catch (error) {
+    // 调用前失败：输入仍归本层所有，必须清理；调用后（含 trap）所有权已转移，
+    // 不得再 free，避免 double-free。
+    if (!invoked) releaseWrittenInputs(glue, written)
+    throw error
+  }
 }
 
 /** 用 `qodercontext_prepareRequest` 生成签名 URL / 头 / 密文 body。 */
@@ -458,29 +581,34 @@ function prepareSignedRequest(
   path: string,
   body: string,
 ): PreparedRequest {
-  const result = glue.callPointer((stack) => {
-    const endpointPtr = glue.writeString(endpoint)
-    const endpointLen = glue.lastLength()
-    const pathPtr = glue.writeString(path)
-    const pathLen = glue.lastLength()
-    const methodPtr = glue.writeString('POST')
-    const methodLen = glue.lastLength()
-    const modePtr = glue.writeString('auth')
-    const modeLen = glue.lastLength()
-    const bodyPtr = glue.writeString(body)
-    const bodyLen = glue.lastLength()
-    // 可选 headers 缺席传 0（glue 的 `MX(r) ? 0 : ...` 语义），不能传空串指针。
-    glue.exports.qodercontext_prepareRequest!(
-      stack,
-      context,
-      endpointPtr, endpointLen,
-      pathPtr, pathLen,
-      methodPtr, methodLen,
-      modePtr, modeLen,
-      bodyPtr, bodyLen,
-      0, 0,
-    )
-  })
+  const written: WrittenInput[] = []
+  let invoked = false
+  let result = 0
+  try {
+    writeInput(glue, written, endpoint)
+    writeInput(glue, written, path)
+    writeInput(glue, written, 'POST')
+    writeInput(glue, written, 'auth')
+    writeInput(glue, written, body)
+    result = glue.callPointer((stack) => {
+      // 可选 headers 缺席传 0（glue 的 `MX(r) ? 0 : ...` 语义），不能传空串指针。
+      invoked = true
+      glue.exports.qodercontext_prepareRequest!(
+        stack,
+        context,
+        written[0]!.ptr, written[0]!.len,
+        written[1]!.ptr, written[1]!.len,
+        written[2]!.ptr, written[2]!.len,
+        written[3]!.ptr, written[3]!.len,
+        written[4]!.ptr, written[4]!.len,
+        0, 0,
+      )
+    })
+  } catch (error) {
+    // 调用前失败：清理已写但尚未被 Rust 接管的输入串。
+    if (!invoked) releaseWrittenInputs(glue, written)
+    throw error
+  }
   if (result !== 0) wasmStats.resultsCreated += 1
 
   // url / headers / body 全部拷进 JS 后即可释放 result；用 try/finally 覆盖
@@ -492,35 +620,59 @@ function prepareSignedRequest(
       for (const [key, value] of headerMap) headers[String(key)] = String(value)
     }
 
-    const readResultString = (invoke: (stack: number, ptr: number) => void): string => {
-      let out = ''
-      let outPtr = 0
-      let outLen = 0
-      const data = glue.view()
-      const stack = glue.exports.__wbindgen_add_to_stack_pointer!(-16)
-      try {
-        invoke(stack, result)
-        outPtr = data.getInt32(stack + 0, true)
-        outLen = data.getInt32(stack + 4, true)
-        out = outPtr ? glue.readString(outPtr, outLen) : ''
-      } finally {
-        glue.exports.__wbindgen_add_to_stack_pointer!(16)
-        // requestresult_url / requestresult_body 返回的是 Rust 新分配的 String，
-        // 所有权已交给 JS，必须释放（否则每次泄漏 ≈ url+body 长度）。
-        glue.freeString(outPtr, outLen)
-      }
-      return out
-    }
-
     return {
       // ⚠️ 参数顺序：(栈指针, ptr) —— 与直觉相反。
-      url: readResultString((stack, ptr) => glue.exports.requestresult_url!(stack, ptr)),
+      url: readRequestResultString(
+        glue,
+        result,
+        (stack, ptr) => glue.exports.requestresult_url!(stack, ptr),
+      ),
       headers,
-      body: readResultString((stack, ptr) => glue.exports.requestresult_body!(stack, ptr)),
+      body: readRequestResultString(
+        glue,
+        result,
+        (stack, ptr) => glue.exports.requestresult_body!(stack, ptr),
+      ),
     }
   } finally {
     glue.freePointer('__wbg_requestresult_free', result)
   }
+}
+
+/**
+ * 读取 `requestresult_url` / `requestresult_body` 的返回串。
+ *
+ * ⚠️ **必须在 invoke 之后重新取 `view()`**：`requestresult_*` 可能触发
+ * `memory.grow`，调用前捕获的 DataView 会指向已 detach 的旧 buffer；此时
+ * `getInt32` 抛错、`outPtr` 仍为 0，Rust 刚分配的返回串就泄漏了。
+ *
+ * 异常路径仍用已读到的 ptr/len 释放返回串（读不到时 ptr=0，跳过）。
+ */
+function readRequestResultString(
+  glue: Glue,
+  result: number,
+  invoke: (stack: number, ptr: number) => void,
+): string {
+  let out = ''
+  let outPtr = 0
+  let outLen = 0
+  const stack = glue.exports.__wbindgen_add_to_stack_pointer!(-16)
+  try {
+    invoke(stack, result)
+    // invoke 之后重新取 view；不能在 invoke 之前缓存。
+    const data = glue.view()
+    outPtr = data.getInt32(stack + 0, true)
+    outLen = data.getInt32(stack + 4, true)
+    out = outPtr ? glue.readString(outPtr, outLen) : ''
+  } catch (error) {
+    throw describeWasmFailure(error)
+  } finally {
+    glue.exports.__wbindgen_add_to_stack_pointer!(16)
+    // requestresult_url / requestresult_body 返回的是 Rust 新分配的 String，
+    // 所有权已交给 JS，必须释放（否则每次泄漏 ≈ url+body 长度）。
+    glue.freeString(outPtr, outLen)
+  }
+  return out
 }
 
 /** 一次签名：auth 字段 → 独占上下文 → 签名请求，上下文在 finally 释放。 */
@@ -609,10 +761,6 @@ function isTimeoutReason(reason: unknown): boolean {
     || record?.code === 'TOOL_TIMEOUT'
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * 一次搜索签名句柄。
  *
@@ -654,6 +802,12 @@ export class QoderSigner implements QoderRequestSigner {
     const usable = requireSigningCredential(credential)
     const endpoint = normalizeEndpoint(host)
     assertSigningPath(path)
+    if (typeof body !== 'string') {
+      throw new QoderSearchProtocolError(
+        'SEARCH_FAILED',
+        'qoder signer requires a string request body',
+      )
+    }
     throwIfAborted(signal)
 
     this.inflightCount += 1
@@ -662,15 +816,11 @@ export class QoderSigner implements QoderRequestSigner {
       throwIfAborted(signal)
       return signOnce(glue, endpoint, path, body, usable)
     } catch (error) {
-      // 内部异常（编码失败、WASM trap、JSON 结构异常）统一归到可路由类别；
-      // 消息只带底层错误文本，绝不拼接 token / machineId / 签名头。
+      // 内部异常（编码失败、WASM trap、JSON 结构异常）统一归到可路由类别。
+      // R16：不拼接底层 error.message、不附带 raw cause —— 它们可能含 token /
+      // machineId / 签名头；只保留固定阶段消息。
       if (error instanceof QoderSearchProtocolError) throw error
-      throw new QoderSearchProtocolError(
-        'SEARCH_FAILED',
-        `qoder signing failed: ${errorMessage(error)}`,
-        undefined,
-        error,
-      )
+      throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder signing failed')
     } finally {
       this.finishOperation()
     }
@@ -706,5 +856,31 @@ export const __testing = {
   async wasmHeapBytes(): Promise<number> {
     const glue = await getGlue()
     return glue.memoryBytes()
+  },
+  /** I2 回归用：直接驱动返回值读取逻辑（含 view 重新获取与返回串释放）。 */
+  readRequestResultString(
+    glue: Parameters<typeof readRequestResultString>[0],
+    result: number,
+    invoke: (stack: number, ptr: number) => void,
+  ): string {
+    return readRequestResultString(glue, result, invoke)
+  },
+  /**
+   * 测试专用故障注入：让第 N 次（0-based）`writeString` 在分配后失败。
+   *
+   * 用于证明「Rust 接管前失败」的输入串清理；生产路径不会调用。
+   */
+  failNextInputWrite(
+    writesBeforeFailure: number,
+    message = 'injected input write failure',
+  ): void {
+    inputWriteFaultAt = Number.isInteger(writesBeforeFailure) && writesBeforeFailure >= 0
+      ? writesBeforeFailure
+      : -1
+    inputWriteFaultMessage = message
+  },
+  resetInputWriteFault(): void {
+    inputWriteFaultAt = -1
+    inputWriteFaultMessage = 'injected input write failure'
   },
 }

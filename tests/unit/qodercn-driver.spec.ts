@@ -23,7 +23,15 @@ import {
   QODERCN_SEARCH_HOST,
   QODERCN_SEARCH_PATH,
 } from '../../src/host/channels/qodercn/driver.ts'
-import type { QoderSigningCredential } from '../../src/host/channels/qoder/protocol.ts'
+import type {
+  QoderRequestSigner,
+  QoderSigningCredential,
+} from '../../src/host/channels/qoder/protocol.ts'
+import {
+  postQoderSearch,
+  QODER_SEARCH_PATH,
+  QoderSearchProtocolError,
+} from '../../src/host/channels/qoder/protocol.ts'
 import { QoderSigner, __testing } from '../../src/host/channels/qoder/signer.ts'
 import { ChannelSearchError } from '../../src/host/search/errors.ts'
 import type { SearchDriver } from '../../src/host/drivers/mock-driver.ts'
@@ -90,6 +98,16 @@ function hangingHandler(): (init?: RequestInit) => Promise<Response> {
   })
 }
 
+/** 返回固定 URL 的协议测试签名器（只测 URL 目标钉死，不参与真实签名）。 */
+function fakeSigner(url: string): QoderRequestSigner {
+  return {
+    async prepare() {
+      return { url, headers: { Authorization: 'Bearer COSY.fake' }, body: 'cipher-body' }
+    },
+    dispose() {},
+  }
+}
+
 function errorTextOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -97,6 +115,7 @@ function errorTextOf(error: unknown): string {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  __testing.resetInputWriteFault()
 })
 
 describe('Qoder CN 驱动：无可用账号（先于 fetch/WASM）', () => {
@@ -208,6 +227,8 @@ describe('Qoder CN 驱动：固定端点与真实 WASM 签名', () => {
 
     const init = calls[0]!.init
     expect(init.method).toBe('POST')
+    // C1：不得跟随重定向把签名头/密文 body 重发到其他 host。
+    expect(init.redirect).toBe('error')
     const headers = new Headers(init.headers)
     expect(headers.get('Authorization')).toMatch(/^Bearer COSY\./)
     expect(headers.get('X-Session-ID')).toMatch(/^[0-9a-f-]{36}$/i)
@@ -227,6 +248,60 @@ describe('Qoder CN 驱动：固定端点与真实 WASM 签名', () => {
 
     expect(calls.every(call => call.url.startsWith('https://gateway.qoder.com.cn/'))).toBe(true)
     expect(calls.some(call => call.url.includes('qoder.sh'))).toBe(false)
+  })
+})
+
+describe('Qoder 协议：签名 URL 目标钉死（C1）', () => {
+  async function runWithSignedUrl(url: string): Promise<{
+    error: unknown
+    value: unknown
+    calls: FetchCall[]
+  }> {
+    const calls: FetchCall[] = []
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} })
+      return jsonResponse({ pageItems: [] })
+    })
+    let error: unknown
+    let value: unknown
+    try {
+      value = await postQoderSearch({
+        host: QODERCN_SEARCH_HOST,
+        path: QODER_SEARCH_PATH,
+        query: 'q',
+        credential: makeCredential(),
+        signer: fakeSigner(url),
+        signal: new AbortController().signal,
+        fetcher: fetcher as unknown as typeof fetch,
+      })
+    } catch (caught) {
+      error = caught
+    }
+    return { error, value, calls }
+  }
+
+  it.each([
+    ['evil origin', 'https://evil.example/algo/api/v1/webSearch/oneSearch?Encode=1'],
+    ['http 明文 origin', 'http://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch?Encode=1'],
+    ['wrong path', 'https://gateway.qoder.com.cn/algo/api/v1/other?Encode=1'],
+    ['missing Encode', 'https://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch'],
+    ['Encode=0', 'https://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch?Encode=0'],
+    ['invalid URL', 'not a url'],
+  ])('%s → SEARCH_FAILED 且 fetch 0 次', async (_label, url) => {
+    const { error, calls } = await runWithSignedUrl(url)
+    expect(error).toBeInstanceOf(QoderSearchProtocolError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('合法真实 WASM URL 通过，并强制 redirect:error', async () => {
+    const { error, value, calls } = await runWithSignedUrl(
+      'https://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch?Encode=1',
+    )
+    expect(error).toBeUndefined()
+    expect(value).toEqual([])
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.init.redirect).toBe('error')
   })
 })
 
@@ -480,6 +555,107 @@ describe('Qoder CN 驱动：签名器生命周期（成功与失败都 dispose�
       { sources: [{ url: 'https://a.test/' }], truncated: false },
       { sources: [{ url: 'https://a.test/' }], truncated: false },
     ])
+  })
+})
+
+/** 断言错误文本、日志与 cause 链都不含假秘密/签名头。 */
+function expectNoSecrets(error: unknown, logs: string): void {
+  for (const secret of SECRET_VALUES) {
+    expect(errorTextOf(error)).not.toContain(secret)
+    expect(logs).not.toContain(secret)
+  }
+  expect(errorTextOf(error)).not.toContain('COSY')
+  expect(logs).not.toContain('COSY')
+  expect((error as { cause?: unknown }).cause).toBeUndefined()
+}
+
+function captureConsole(): { readonly text: () => string; readonly restore: () => void } {
+  const spies = (['log', 'info', 'warn', 'error', 'debug'] as const)
+    .map(method => vi.spyOn(console, method).mockImplementation(() => {}))
+  return {
+    text: () => spies
+      .flatMap(spy => spy.mock.calls.flat())
+      .map(value => (typeof value === 'string' ? value : JSON.stringify(value)))
+      .join(' '),
+    restore: () => { spies.forEach(spy => spy.mockRestore()) },
+  }
+}
+
+describe('Qoder CN 驱动：错误边界脱敏（I3）', () => {
+  it.each([401, 429, 500])('HTTP %i 响应体回显秘密时错误不含秘密/cause', async (status) => {
+    const consoleCapture = captureConsole()
+    const leakedBody = `{"error":"token ${CREDENTIAL.securityOauthToken} machine ${CREDENTIAL.machineId} Authorization: Bearer COSY.leak"}`
+    const { driver } = makeDriver({
+      handler: () => new Response(leakedBody, { status }),
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    const logs = consoleCapture.text()
+    consoleCapture.restore()
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(errorTextOf(error)).toContain(String(status))
+    expectNoSecrets(error, logs)
+  })
+
+  it('transport 底层异常回显秘密时错误不含秘密/cause', async () => {
+    const consoleCapture = captureConsole()
+    const { driver } = makeDriver({
+      handler: () => {
+        throw new Error(
+          `proxy saw token ${CREDENTIAL.securityOauthToken} machine ${CREDENTIAL.machineId} `
+          + 'Authorization: Bearer COSY.leak',
+        )
+      },
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    const logs = consoleCapture.text()
+    consoleCapture.restore()
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expectNoSecrets(error, logs)
+  })
+
+  it('credential resolver 异常回显秘密时错误不含秘密/cause', async () => {
+    const consoleCapture = captureConsole()
+    const fetcher = vi.fn(async () => jsonResponse({ pageItems: [] }))
+    const driver = createQoderCnDriver({
+      resolveCredential: async () => {
+        throw new Error(
+          `credential store echoed ${CREDENTIAL.securityOauthToken} / ${CREDENTIAL.machineId}`,
+        )
+      },
+      fetcher: fetcher as unknown as typeof fetch,
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    const logs = consoleCapture.text()
+    consoleCapture.restore()
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(fetcher).not.toHaveBeenCalled()
+    expectNoSecrets(error, logs)
+  })
+
+  it('signing 阶段异常回显秘密时错误不含秘密/cause', async () => {
+    const consoleCapture = captureConsole()
+    const { driver } = makeDriver({ handler: () => jsonResponse({ pageItems: [] }) })
+    __testing.failNextInputWrite(
+      9,
+      `injected signing leak ${CREDENTIAL.securityOauthToken} ${CREDENTIAL.machineId} Bearer COSY.leak`,
+    )
+    let error: unknown
+    try {
+      error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    } finally {
+      __testing.resetInputWriteFault()
+    }
+    const logs = consoleCapture.text()
+    consoleCapture.restore()
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expectNoSecrets(error, logs)
   })
 })
 
