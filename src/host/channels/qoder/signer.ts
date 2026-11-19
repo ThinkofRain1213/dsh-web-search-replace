@@ -132,16 +132,6 @@ const wasmStats: WasmStats = {
   inputStringsFreed: 0,
 }
 
-/**
- * 测试专用故障注入：在第 N 次 `writeString` 分配后、写入前抛错。
- *
- * 生产路径恒为 `-1`（关闭）；用于证明「Rust 接管前失败」时已写输入会被清理。
- * 不改变 WASM 所有权语义，也不 mock 签名。
- */
-let inputWriteFaultAt = -1
-/** 故障注入抛出的错误文本；仅测试使用，生产恒为默认安全文本。 */
-let inputWriteFaultMessage = 'injected input write failure'
-
 /** 进程级共享 WASM；Task 15 才负责在在飞归零后最终释放。 */
 let gluePromise: Promise<Glue> | null = null
 
@@ -288,15 +278,6 @@ async function createGlue(): Promise<Glue> {
     const encoded = encoder.encode(text)
     const ptr = exports.__wbindgen_export2!(encoded.length, 1) >>> 0
     wasmStats.inputStringsAllocated += 1
-    // 测试专用故障：分配后、写入前失败，验证 writeString 自清 + 调用方清理。
-    if (inputWriteFaultAt >= 0) {
-      if (inputWriteFaultAt === 0) {
-        inputWriteFaultAt = -1
-        releaseInputString(ptr, encoded.length)
-        throw new Error(inputWriteFaultMessage)
-      }
-      inputWriteFaultAt -= 1
-    }
     try {
       heap().subarray(ptr, ptr + encoded.length).set(encoded)
     } catch (error) {
@@ -864,23 +845,5 @@ export const __testing = {
     invoke: (stack: number, ptr: number) => void,
   ): string {
     return readRequestResultString(glue, result, invoke)
-  },
-  /**
-   * 测试专用故障注入：让第 N 次（0-based）`writeString` 在分配后失败。
-   *
-   * 用于证明「Rust 接管前失败」的输入串清理；生产路径不会调用。
-   */
-  failNextInputWrite(
-    writesBeforeFailure: number,
-    message = 'injected input write failure',
-  ): void {
-    inputWriteFaultAt = Number.isInteger(writesBeforeFailure) && writesBeforeFailure >= 0
-      ? writesBeforeFailure
-      : -1
-    inputWriteFaultMessage = message
-  },
-  resetInputWriteFault(): void {
-    inputWriteFaultAt = -1
-    inputWriteFaultMessage = 'injected input write failure'
   },
 }

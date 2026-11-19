@@ -35,6 +35,7 @@ import {
 import { QoderSigner, __testing } from '../../src/host/channels/qoder/signer.ts'
 import { ChannelSearchError } from '../../src/host/search/errors.ts'
 import type { SearchDriver } from '../../src/host/drivers/mock-driver.ts'
+import { installTextEncoderFault } from './support/text-encoder-fault.ts'
 
 interface FetchCall {
   readonly url: string
@@ -115,7 +116,6 @@ function errorTextOf(error: unknown): string {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
-  __testing.resetInputWriteFault()
 })
 
 describe('Qoder CN 驱动：无可用账号（先于 fetch/WASM）', () => {
@@ -641,15 +641,17 @@ describe('Qoder CN 驱动：错误边界脱敏（I3）', () => {
   it('signing 阶段异常回显秘密时错误不含秘密/cause', async () => {
     const consoleCapture = captureConsole()
     const { driver } = makeDriver({ handler: () => jsonResponse({ pageItems: [] }) })
-    __testing.failNextInputWrite(
-      9,
-      `injected signing leak ${CREDENTIAL.securityOauthToken} ${CREDENTIAL.machineId} Bearer COSY.leak`,
-    )
+    const faultQuery = 'I3_SIGNING_FAULT_QUERY'
+    const restore = installTextEncoderFault({
+      match: input => input.includes(faultQuery),
+      mode: 'before-allocation',
+      message: `injected signing leak ${CREDENTIAL.securityOauthToken} ${CREDENTIAL.machineId} Bearer COSY.leak`,
+    })
     let error: unknown
     try {
-      error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+      error = await driver.searchOnce(faultQuery, 10, new AbortController().signal).catch(caught => caught)
     } finally {
-      __testing.resetInputWriteFault()
+      restore()
     }
     const logs = consoleCapture.text()
     consoleCapture.restore()

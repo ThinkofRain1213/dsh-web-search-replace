@@ -25,12 +25,8 @@ import {
   QoderSearchProtocolError,
   type QoderSigningCredential,
 } from '../../src/host/channels/qoder/protocol.ts'
-import {
-  QoderSigner,
-  __testing,
-  readApprovedQoderWasm,
-  resolveQoderWasmAssetPath,
-} from '../../src/host/channels/qoder/signer.ts'
+import { QoderSigner, __testing, readApprovedQoderWasm, resolveQoderWasmAssetPath } from '../../src/host/channels/qoder/signer.ts'
+import { installTextEncoderFault } from './support/text-encoder-fault.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const REAL_WASM = resolve(ROOT, 'assets/qoder/qoder-auth-wasm.wasm')
@@ -39,6 +35,13 @@ const APPROVED_WASM_SHA256 = '6419471EFFA631519DEF7797D76D7EDE38B9FCFA9A83C2148C
 const HOST = 'gateway.qoder.com.cn'
 const SIGNED_URL = 'https://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch?Encode=1'
 const BODY = JSON.stringify({ payload: JSON.stringify({ query: '天气' }), encodeVersion: '1' })
+/** 唯一 body 标记：测试侧故障只匹配它，避免误伤其他 encode 调用。 */
+const FAULT_BODY = JSON.stringify({
+  payload: JSON.stringify({ query: 'I1_FAULT_BODY_MARKER' }),
+  encodeVersion: '1',
+})
+/** 唯一 machineId 标记：用于定位 context 的第 1 个输入写入。 */
+const FAULT_MACHINE_ID = 'TEST_MACHINE_ID_I1_FAULT'
 
 const CREDENTIAL: QoderSigningCredential = {
   uid: 'TEST_UID_4d2e',
@@ -64,7 +67,6 @@ function logText(spies: readonly { mock: { calls: readonly unknown[][] } }[]): s
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
-  __testing.resetInputWriteFault()
   while (tempRoots.length > 0) {
     rmSync(tempRoots.pop()!, { recursive: true, force: true })
   }
@@ -183,32 +185,6 @@ describe('QoderSigner：真实 WASM 签名', () => {
     expect(after.stringsFreed - before.stringsFreed).toBe(6)
   })
 
-  it('签名阶段失败（最后一个输入写入失败）时释放上下文与未接管输入', async () => {
-    const before = __testing.wasmStats()
-    const signer = new QoderSigner()
-    try {
-      // 第 10 次 writeString（request body）在分配后失败：auth/context 已交给 Rust，
-      // request 的 4 个已写输入尚未被接管，必须清理。
-      __testing.failNextInputWrite(9)
-      const error = await signer
-        .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
-        .catch(caught => caught)
-
-      expect(error).toBeInstanceOf(QoderSearchProtocolError)
-      expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
-      expect(signer.inflight).toBe(0)
-    } finally {
-      __testing.resetInputWriteFault()
-      signer.dispose()
-    }
-    const after = __testing.wasmStats()
-    expect(after.contextsCreated - before.contextsCreated).toBe(1)
-    expect(after.contextsFreed - before.contextsFreed).toBe(1)
-    expect(after.resultsCreated - before.resultsCreated).toBe(0)
-    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(10)
-    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(5)
-  })
-
   it('预热后 5000 次成功签名不呈每次调用线性增长（精确计数）', async () => {
     const signer = new QoderSigner()
     try {
@@ -241,21 +217,23 @@ describe('QoderSigner：真实 WASM 签名', () => {
 
   it('2000 次失败签名循环：输入清理精确且不呈线性增长', async () => {
     const signer = new QoderSigner()
-    const failAtBody = 9
     const iterations = 2_000
+    // 测试侧故障：body 在 writeString 分配后、写入时失败（不涉及生产开关）。
+    const restore = installTextEncoderFault({
+      match: input => input === FAULT_BODY,
+      mode: 'during-write',
+    })
     try {
       for (let index = 0; index < 100; index += 1) {
-        __testing.failNextInputWrite(failAtBody)
         await signer
-          .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+          .prepare(HOST, QODER_SEARCH_PATH, FAULT_BODY, CREDENTIAL, freshSignal())
           .catch(() => undefined)
       }
       const heapBefore = await __testing.wasmHeapBytes()
       const statsBefore = __testing.wasmStats()
       for (let index = 0; index < iterations; index += 1) {
-        __testing.failNextInputWrite(failAtBody)
         const error = await signer
-          .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+          .prepare(HOST, QODER_SEARCH_PATH, FAULT_BODY, CREDENTIAL, freshSignal())
           .catch(caught => caught)
         expect(error).toBeInstanceOf(QoderSearchProtocolError)
       }
@@ -275,7 +253,7 @@ describe('QoderSigner：真实 WASM 签名', () => {
       // 失败前 auth 字段已成功，其返回串仍被释放。
       expect(statsAfter.stringsFreed - statsBefore.stringsFreed).toBe(iterations)
     } finally {
-      __testing.resetInputWriteFault()
+      restore()
       signer.dispose()
     }
   })
@@ -446,23 +424,14 @@ describe('QoderSigner：输入字符串异常清理（I1）', () => {
     expect(after.stringsFreed - before.stringsFreed).toBe(3)
   })
 
-  it.each([
-    ['auth 字段写入失败', 0, 1, 1, 0],
-    ['context 第 1 个输入失败', 1, 2, 1, 0],
-    ['context 第 4 个输入失败', 4, 5, 4, 0],
-    ['prepareRequest 第 1 个输入失败', 5, 6, 1, 1],
-    ['prepareRequest 第 4 个输入失败', 8, 9, 4, 1],
-  ])('%s：清理所有尚未被 Rust 接管的输入分配', async (
-    _label,
-    failAt,
-    expectedAllocated,
-    expectedFreed,
-    expectedContexts,
-  ) => {
+  it('auth 写入在分配前失败：不产生输入分配', async () => {
     const before = __testing.wasmStats()
     const signer = new QoderSigner()
+    const restore = installTextEncoderFault({
+      match: input => input.includes('security_oauth_token'),
+      mode: 'before-allocation',
+    })
     try {
-      __testing.failNextInputWrite(failAt)
       const error = await signer
         .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
         .catch(caught => caught)
@@ -470,14 +439,133 @@ describe('QoderSigner：输入字符串异常清理（I1）', () => {
       expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
       expect(signer.inflight).toBe(0)
     } finally {
-      __testing.resetInputWriteFault()
+      restore()
       signer.dispose()
     }
     const after = __testing.wasmStats()
-    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(expectedAllocated)
-    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(expectedFreed)
-    expect(after.contextsCreated - before.contextsCreated).toBe(expectedContexts)
-    expect(after.contextsFreed - before.contextsFreed).toBe(expectedContexts)
+    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(0)
+    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(0)
+    expect(after.contextsCreated - before.contextsCreated).toBe(0)
+  })
+
+  it('auth 写入在分配后失败：writeString 自清已分配指针', async () => {
+    const before = __testing.wasmStats()
+    const signer = new QoderSigner()
+    const restore = installTextEncoderFault({
+      match: input => input.includes('security_oauth_token'),
+      mode: 'during-write',
+    })
+    try {
+      const error = await signer
+        .prepare(HOST, QODER_SEARCH_PATH, BODY, CREDENTIAL, freshSignal())
+        .catch(caught => caught)
+      expect(error).toBeInstanceOf(QoderSearchProtocolError)
+      expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
+    } finally {
+      restore()
+      signer.dispose()
+    }
+    const after = __testing.wasmStats()
+    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(1)
+    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(1)
+    expect(after.contextsCreated - before.contextsCreated).toBe(0)
+  })
+
+  const beforeAllocationCases: ReadonlyArray<{
+    readonly label: string
+    readonly match: (input: string) => boolean
+    readonly allocated: number
+    readonly freed: number
+    readonly contexts: number
+  }> = [
+    {
+      label: 'context 第 1 个输入（machineId）',
+      match: input => input === FAULT_MACHINE_ID,
+      allocated: 1,
+      freed: 0,
+      contexts: 0,
+    },
+    {
+      label: 'context 第 3 个输入（userInfo）',
+      match: input => input.includes('encrypt_user_info'),
+      allocated: 3,
+      freed: 2,
+      contexts: 0,
+    },
+    {
+      label: 'request 第 1 个输入（endpoint）',
+      match: input => input === `https://${HOST}`,
+      allocated: 5,
+      freed: 0,
+      contexts: 1,
+    },
+    {
+      label: 'request body',
+      match: input => input === FAULT_BODY,
+      allocated: 9,
+      freed: 4,
+      contexts: 1,
+    },
+  ]
+
+  it.each(beforeAllocationCases)(
+    '$label 在分配前失败：清理所有已写未接管输入',
+    async (testCase) => {
+      const before = __testing.wasmStats()
+      const signer = new QoderSigner()
+      const restore = installTextEncoderFault({
+        match: testCase.match,
+        mode: 'before-allocation',
+      })
+      try {
+        const error = await signer
+          .prepare(
+            HOST,
+            QODER_SEARCH_PATH,
+            FAULT_BODY,
+            { ...CREDENTIAL, machineId: FAULT_MACHINE_ID },
+            freshSignal(),
+          )
+          .catch(caught => caught)
+        expect(error).toBeInstanceOf(QoderSearchProtocolError)
+        expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
+        expect(signer.inflight).toBe(0)
+      } finally {
+        restore()
+        signer.dispose()
+      }
+      const after = __testing.wasmStats()
+      expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(testCase.allocated)
+      expect(after.inputStringsFreed - before.inputStringsFreed).toBe(testCase.freed)
+      expect(after.contextsCreated - before.contextsCreated).toBe(testCase.contexts)
+      expect(after.contextsFreed - before.contextsFreed).toBe(testCase.contexts)
+      expect(after.resultsCreated - before.resultsCreated).toBe(0)
+    },
+  )
+
+  it('request body 在分配后失败：writeString 自清 + 调用方清理先前输入', async () => {
+    const before = __testing.wasmStats()
+    const signer = new QoderSigner()
+    const restore = installTextEncoderFault({
+      match: input => input === FAULT_BODY,
+      mode: 'during-write',
+    })
+    try {
+      const error = await signer
+        .prepare(HOST, QODER_SEARCH_PATH, FAULT_BODY, CREDENTIAL, freshSignal())
+        .catch(caught => caught)
+      expect(error).toBeInstanceOf(QoderSearchProtocolError)
+      expect(error).toMatchObject({ code: 'SEARCH_FAILED' })
+      expect(signer.inflight).toBe(0)
+    } finally {
+      restore()
+      signer.dispose()
+    }
+    const after = __testing.wasmStats()
+    expect(after.inputStringsAllocated - before.inputStringsAllocated).toBe(10)
+    expect(after.inputStringsFreed - before.inputStringsFreed).toBe(5)
+    expect(after.contextsCreated - before.contextsCreated).toBe(1)
+    expect(after.contextsFreed - before.contextsFreed).toBe(1)
     expect(after.resultsCreated - before.resultsCreated).toBe(0)
   })
 })
