@@ -238,6 +238,37 @@ describe('Qoder 国际版驱动：固定端点', () => {
   })
 })
 
+describe('Qoder 国际版驱动：可信 HTTP 状态透传', () => {
+  it('实际 HTTP 401 透传 httpStatus=401（供同账号刷新重试判定）', async () => {
+    const { driver, calls } = makeHarness({
+      preference: 'center',
+      handler: () => new Response('denied', { status: 401 }),
+    })
+
+    const error = await driver.searchOnce(QUERY, 10, signal()).catch(caught => caught)
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({
+      code: 'UNAUTHORIZED',
+      channel: QODER_CHANNEL,
+      httpStatus: 401,
+    })
+    expect(calls.map(call => hostOf(call.url))).toEqual([CENTER])
+  })
+
+  it('实际 HTTP 403 透传 httpStatus=403，不得伪造成 401', async () => {
+    const { driver } = makeHarness({
+      preference: 'center',
+      handler: () => new Response('forbidden', { status: 403 }),
+    })
+
+    const error = await driver.searchOnce(QUERY, 10, signal()).catch(caught => caught)
+
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', channel: QODER_CHANNEL, httpStatus: 403 })
+  })
+})
+
 describe('Qoder 国际版驱动：自动模式限定切换', () => {
   it('auto 初始只请求 center.qoder.sh', async () => {
     const { driver, calls, observations } = makeHarness()

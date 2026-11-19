@@ -1676,7 +1676,8 @@ describe('WorkBuddy 授权 RPC 分派与通用错误边界', () => {
   it('拒绝未知键、非法 accountId 与未知渠道', () => {
     expect(() => assertAuthRpcPayload('auth.start', { channel: 'workbuddy' })).not.toThrow()
     expect(() => assertAuthRpcPayload('auth.start', { channel: 'buddy' })).not.toThrow()
-    expect(() => assertAuthRpcPayload('auth.start', { channel: 'qoder' })).toThrow(
+    expect(() => assertAuthRpcPayload('auth.start', { channel: 'qoder' })).not.toThrow()
+    expect(() => assertAuthRpcPayload('auth.start', { channel: 'qodercn' })).toThrow(
       AuthRpcValidationError,
     )
     expect(() => assertAuthRpcPayload('auth.start', {

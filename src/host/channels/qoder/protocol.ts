@@ -158,15 +158,18 @@ export class QoderSearchProtocolError extends Error {
  *
  * ⚠️ R16：Qoder 边界**不透传**底层异常原文或 raw cause —— 上游响应体、
  * transport/解析器错误都可能回显 token / machineId / `Authorization: Bearer COSY`。
- * 这里只保留本层结构化 code 与固定安全消息；未知错误统一为固定的
- * `SEARCH_FAILED` 文本。
+ * 这里只保留本层结构化 code、固定安全消息与**可信 HTTP 状态**（收到响应时），
+ * 未知错误统一为固定的 `SEARCH_FAILED` 文本。
+ *
+ * `httpStatus` 只来自真实 HTTP 响应；调用方（授权流程）据此判断是否允许刷新
+ * 重试，绝不能从业务 code 伪造。
  */
 export function toQoderChannelSearchError(error: unknown, channel: ChannelId): ChannelSearchError {
   if (error instanceof ChannelSearchError) {
-    return new ChannelSearchError(error.code, channel, error.message)
+    return new ChannelSearchError(error.code, channel, error.message, undefined, error.httpStatus)
   }
   if (error instanceof QoderSearchProtocolError) {
-    return new ChannelSearchError(error.code, channel, error.message)
+    return new ChannelSearchError(error.code, channel, error.message, undefined, error.status)
   }
   return new ChannelSearchError('SEARCH_FAILED', channel, 'qoder search failed')
 }

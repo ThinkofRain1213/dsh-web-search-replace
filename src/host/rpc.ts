@@ -33,14 +33,14 @@ import { SearchSettingsValidationError } from '../shared/contracts.ts'
 import { AccountError } from './accounts/errors.ts'
 import { dispatchAccountRpc } from './accounts/rpc-methods.ts'
 import type { AccountService } from './accounts/service.ts'
-import { dispatchTencentAuthRpc } from './channels/tencent/auth-rpc.ts'
+import { dispatchChannelAuthRpc } from './channels/auth-rpc.ts'
 import type { SettingsService } from './settings/service.ts'
 
 /**
  * 按渠道注册的授权流程。
  *
- * Host 只按 payload.channel 精确选择对应 flow；Buddy/WorkBuddy 绝不共享实例、
- * 账号或运行时状态。未注册的渠道返回 `bad-request`，不会回退到另一渠道。
+ * Host 只按 payload.channel 精确选择对应 flow；Buddy/WorkBuddy/Qoder 绝不共享
+ * 实例、账号或运行时状态。未注册的渠道返回 `bad-request`，不会回退到另一渠道。
  */
 export type AuthFlowRegistry = Partial<Record<AuthChannel, AuthFlowPort>>
 
@@ -188,7 +188,7 @@ async function dispatch(
       ? authFlows[payload.channel]
       : undefined
     if (flow === undefined) throw new UnknownManagementMethodError(method)
-    return dispatchTencentAuthRpc(
+    return dispatchChannelAuthRpc(
       flow,
       payload.channel,
       method,
