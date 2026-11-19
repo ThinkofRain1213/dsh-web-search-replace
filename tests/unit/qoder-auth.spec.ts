@@ -2285,3 +2285,103 @@ describe('Qoder machine_id 的 Client 边界', () => {
     expect(secondRecordText).not.toContain('machine-first')
   })
 })
+
+describe('Qoder 刷新 CAS 的取消提交边界', () => {
+  /** 让 modifyRecord 在独占提交前阻塞，直到 dispose 后释放 gate。 */
+  function gateModify(fixture: QoderAuthFixture) {
+    const originalModify = fixture.credentials.modifyRecord.bind(fixture.credentials)
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    fixture.credentials.modifyRecord = async (key, mutate) => {
+      entered.resolve()
+      await release.promise
+      return await originalModify(key, mutate)
+    }
+    return { entered, release }
+  }
+
+  it('dispose 落在刷新成功 CAS 提交前：等待 settle 且不写新凭据', async () => {
+    const fixture = createQoderAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher } = createScriptedFetcher([refreshRoute(() => okRefresh())])
+    const flow = fixture.createFlow(fetcher)
+    const { entered, release } = gateModify(fixture)
+
+    const refreshing = flow.refresh(account.accountId).catch((error: unknown) => error)
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    const error = await refreshing
+
+    expect(error).toMatchObject({ code: 'auth/disposed' })
+    const stored = await fixture.store.readEntry('qoder', account.accountId)
+    expect(stored?.account?.secret).toMatchObject({
+      securityOauthToken: 'ACCESS_1',
+      refreshToken: 'REFRESH_1',
+    })
+    expect(stored?.account?.status).toBe('ready')
+  })
+
+  it('dispose 落在 reauth_required 状态 CAS 提交前：等待 settle 且不写状态', async () => {
+    const fixture = createQoderAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher } = createScriptedFetcher([
+      refreshRoute(() => jsonResponse({ message: 'expired' }, 401)),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const { entered, release } = gateModify(fixture)
+
+    const refreshing = flow.refresh(account.accountId).catch((error: unknown) => error)
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    const error = await refreshing
+
+    expect(error).toMatchObject({ code: 'auth/disposed' })
+    const stored = await fixture.store.readEntry('qoder', account.accountId)
+    expect(stored?.account?.status).toBe('ready')
+    expect(stored?.account?.secret).toMatchObject({
+      securityOauthToken: 'ACCESS_1',
+      refreshToken: 'REFRESH_1',
+    })
+  })
+
+  it('dispose 落在 temporarily_unavailable 状态 CAS 提交前：等待 settle 且不写状态', async () => {
+    const fixture = createQoderAuthFixture()
+    const account = await seedAccount(fixture)
+    const { fetcher } = createScriptedFetcher([
+      refreshRoute(() => jsonResponse({ message: 'upstream down' }, 502)),
+    ])
+    const flow = fixture.createFlow(fetcher)
+    const { entered, release } = gateModify(fixture)
+
+    const refreshing = flow.refresh(account.accountId).catch((error: unknown) => error)
+    await entered.promise
+    let disposed = false
+    const disposing = flow.dispose().then(() => { disposed = true })
+    await flush()
+    expect(disposed).toBe(false)
+
+    release.resolve()
+    await disposing
+    const error = await refreshing
+
+    expect(error).toMatchObject({ code: 'auth/disposed' })
+    const stored = await fixture.store.readEntry('qoder', account.accountId)
+    expect(stored?.account?.status).toBe('ready')
+    expect(stored?.account?.secret).toMatchObject({
+      securityOauthToken: 'ACCESS_1',
+      refreshToken: 'REFRESH_1',
+    })
+  })
+})

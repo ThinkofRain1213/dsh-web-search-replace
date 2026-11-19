@@ -117,6 +117,11 @@ export interface RotateAccountSecretInput {
   readonly secret?: Readonly<Record<string, unknown>>
   /** 省略时保留当前状态。 */
   readonly status?: PersistedAccountStatus
+  /**
+   * 可选取消信号；在 `modifyRecord` 的独占回调内、生成/返回新 payload 前再次
+   * 检查。取消早于实际提交时抛 `accounts/cancelled`，不写记录。
+   */
+  readonly signal?: AbortSignal
 }
 
 /** 账号库依赖。 */
@@ -237,6 +242,7 @@ export class AccountStore {
    * @throws {AccountError} 输入非法或存储失败时。
    */
   async rotateSecret(input: RotateAccountSecretInput): Promise<StoredAccountRecord | undefined> {
+    if (input.signal?.aborted) throw accountCancelled()
     const channel = requireChannel(input.channel)
     const accountId = requireAccountId(input.accountId)
     if (typeof input.expectedRefreshToken !== 'string') throw accountInvalid()
@@ -249,10 +255,14 @@ export class AccountStore {
 
     let saved: StoredAccountRecord | undefined
     await this.modifyRaw(key, async (current) => {
+      // 取消必须在独占提交回调内、生成新 payload 前再次生效：Provider 可能在
+      // 调用本回调前阻塞很久，调用方期间的 dispose/abort 不得变成迟到写入。
+      if (input.signal?.aborted) throw accountCancelled()
       const parsed = parseRecord(current, channel, accountId)
       if (parsed.kind !== 'valid') return undefined
       const currentRefreshToken = readSecretString(parsed.record.secret, 'refreshToken') ?? ''
       if (currentRefreshToken !== expectedRefreshToken) return undefined
+      if (input.signal?.aborted) throw accountCancelled()
       const record: StoredAccountRecord = Object.freeze({
         ...parsed.record,
         secret: nextSecret ?? parsed.record.secret,

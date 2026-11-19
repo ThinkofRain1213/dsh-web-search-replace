@@ -488,6 +488,169 @@ describe('并发写入与写失败', () => {
   })
 })
 
+describe('刷新轮换 CAS 的取消提交边界', () => {
+  /** 保存一个带 refreshToken 的 Qoder 账号，供 CAS 测试使用。 */
+  async function saveRotatable(
+    store: AccountStore,
+    channel: 'qoder' | 'qodercn' = 'qoder',
+  ) {
+    return await store.saveAccount({
+      channel,
+      vendorAccountId: 'rotate@example.test',
+      secret: {
+        securityOauthToken: TOKEN_SENTINEL,
+        machineId: 'MACHINE_SENTINEL_5f1c',
+        refreshToken: REFRESH_SENTINEL,
+      },
+    })
+  }
+
+  /** 断言原秘密与状态未被迟到写入覆盖。 */
+  async function expectUnchanged(
+    store: AccountStore,
+    accountId: string,
+    channel: 'qoder' | 'qodercn' = 'qoder',
+  ): Promise<void> {
+    const entry = await store.readEntry(channel, accountId)
+    expect(entry?.account?.secret).toMatchObject({
+      securityOauthToken: TOKEN_SENTINEL,
+      refreshToken: REFRESH_SENTINEL,
+      machineId: 'MACHINE_SENTINEL_5f1c',
+    })
+    expect(entry?.account?.status).toBe('ready')
+  }
+
+  it('已取消的 signal 在进入 store 前拒绝轮换，且不写记录', async () => {
+    const { store } = createStore()
+    const account = await saveRotatable(store)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(store.rotateSecret({
+      channel: 'qoder',
+      accountId: account.accountId,
+      expectedRefreshToken: REFRESH_SENTINEL,
+      secret: {
+        securityOauthToken: 'NEW_TOKEN',
+        machineId: 'MACHINE_SENTINEL_5f1c',
+        refreshToken: 'NEW_REFRESH',
+      },
+      signal: controller.signal,
+    })).rejects.toMatchObject({ code: 'accounts/cancelled' })
+
+    await expectUnchanged(store, account.accountId)
+  })
+
+  it('等待 modifyRecord 独占回调期间 abort：回调内不写，抛 accounts/cancelled', async () => {
+    const { store, credentials } = createStore()
+    const account = await saveRotatable(store)
+    const controller = new AbortController()
+    const originalModify = credentials.modifyRecord.bind(credentials)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    credentials.modifyRecord = async (key, mutate) => {
+      await gate
+      return await originalModify(key, mutate)
+    }
+
+    const rotating = store.rotateSecret({
+      channel: 'qoder',
+      accountId: account.accountId,
+      expectedRefreshToken: REFRESH_SENTINEL,
+      secret: {
+        securityOauthToken: 'NEW_TOKEN',
+        machineId: 'MACHINE_SENTINEL_5f1c',
+        refreshToken: 'NEW_REFRESH',
+      },
+      signal: controller.signal,
+    }).catch((error: unknown) => error)
+    controller.abort()
+    release()
+
+    expect(await rotating).toMatchObject({ code: 'accounts/cancelled' })
+    await expectUnchanged(store, account.accountId)
+  })
+
+  it('Provider 在调用独占回调前 abort：回调检查阻止写入', async () => {
+    const { store, credentials } = createStore()
+    const account = await saveRotatable(store)
+    const controller = new AbortController()
+    const originalModify = credentials.modifyRecord.bind(credentials)
+    credentials.modifyRecord = async (key, mutate) => {
+      controller.abort()
+      return await originalModify(key, mutate)
+    }
+
+    await expect(store.rotateSecret({
+      channel: 'qoder',
+      accountId: account.accountId,
+      expectedRefreshToken: REFRESH_SENTINEL,
+      secret: {
+        securityOauthToken: 'NEW_TOKEN',
+        machineId: 'MACHINE_SENTINEL_5f1c',
+        refreshToken: 'NEW_REFRESH',
+      },
+      signal: controller.signal,
+    })).rejects.toMatchObject({ code: 'accounts/cancelled' })
+
+    await expectUnchanged(store, account.accountId)
+  })
+
+  it('未取消的 signal 仍原子轮换 secret 与状态', async () => {
+    const { store } = createStore()
+    const account = await saveRotatable(store)
+    const controller = new AbortController()
+
+    const updated = await store.rotateSecret({
+      channel: 'qoder',
+      accountId: account.accountId,
+      expectedRefreshToken: REFRESH_SENTINEL,
+      secret: {
+        securityOauthToken: 'NEW_TOKEN',
+        machineId: 'MACHINE_SENTINEL_5f1c',
+        refreshToken: 'NEW_REFRESH',
+      },
+      status: 'reauth_required',
+      signal: controller.signal,
+    })
+
+    expect(updated?.secret).toMatchObject({
+      securityOauthToken: 'NEW_TOKEN',
+      refreshToken: 'NEW_REFRESH',
+      machineId: 'MACHINE_SENTINEL_5f1c',
+    })
+    expect(updated?.status).toBe('reauth_required')
+    const entry = await store.readEntry('qoder', account.accountId)
+    expect(entry?.account?.secret).toMatchObject({
+      securityOauthToken: 'NEW_TOKEN',
+      refreshToken: 'NEW_REFRESH',
+    })
+    expect(entry?.account?.status).toBe('reauth_required')
+  })
+
+  it('未取消但 CAS token 不匹配时仍不覆盖', async () => {
+    const { store } = createStore()
+    const account = await saveRotatable(store)
+    const controller = new AbortController()
+
+    const updated = await store.rotateSecret({
+      channel: 'qoder',
+      accountId: account.accountId,
+      expectedRefreshToken: 'STALE_REFRESH',
+      secret: {
+        securityOauthToken: 'NEW_TOKEN',
+        machineId: 'MACHINE_SENTINEL_5f1c',
+        refreshToken: 'NEW_REFRESH',
+      },
+      status: 'reauth_required',
+      signal: controller.signal,
+    })
+
+    expect(updated).toBeUndefined()
+    await expectUnchanged(store, account.accountId)
+  })
+})
+
 describe('删除与清理', () => {
   it('删除只作用于精确渠道与账号，返回是否真的删除', async () => {
     const { store, credentials } = createStore()

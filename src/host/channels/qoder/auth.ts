@@ -668,7 +668,7 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
     const refreshToken = readSecretString(secret, 'refreshToken') ?? ''
 
     if (refreshToken.length === 0) {
-      await this.updateAccountState(accountId, refreshToken, 'reauth_required')
+      await this.updateAccountState(accountId, refreshToken, 'reauth_required', signal)
       throw this.error('auth/reauth-required')
     }
 
@@ -678,10 +678,10 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
     } catch (error) {
       if (this.disposed || signal.aborted) throw this.error('auth/disposed')
       if (error instanceof QoderDeviceTokenError && error.code === 'reauth-required') {
-        await this.updateAccountState(accountId, refreshToken, 'reauth_required')
+        await this.updateAccountState(accountId, refreshToken, 'reauth_required', signal)
         throw this.error('auth/reauth-required')
       }
-      await this.updateAccountState(accountId, refreshToken, 'temporarily_unavailable')
+      await this.updateAccountState(accountId, refreshToken, 'temporarily_unavailable', signal)
       throw this.error('auth/refresh-failed')
     }
 
@@ -695,8 +695,14 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
         expectedRefreshToken: refreshToken,
         secret: mergeRefreshedSecret(secret, token),
         status: 'ready',
+        signal,
       })
-    } catch {
+    } catch (error) {
+      // 取消发生在实际提交回调内时，账号库抛 accounts/cancelled；必须保持
+      // dispose 语义，不能被无条件改写成 auth/refresh-failed。
+      if (this.disposed || signal.aborted || isAccountCancelled(error)) {
+        throw this.error('auth/disposed')
+      }
       throw this.error('auth/refresh-failed')
     }
     if (this.disposed || signal.aborted) throw this.error('auth/disposed')
@@ -715,22 +721,32 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
     return toSummary(current.account)
   }
 
-  /** 刷新失败状态标记；仅当 refresh token 仍匹配时写，失败不掩盖原错误。 */
+  /**
+   * 刷新失败状态标记；仅当 refresh token 仍匹配时写，失败不掩盖原错误。
+   *
+   * 状态写入同样经过带 signal 的 CAS 提交边界：dispose/取消在独占回调内生效时
+   * 抛 `auth/disposed`，不得变成迟到状态写入；其他状态写入失败仍是尽力而为。
+   */
   private async updateAccountState(
     accountId: string,
     expectedRefreshToken: string,
     status: 'reauth_required' | 'temporarily_unavailable',
+    signal: AbortSignal,
   ): Promise<void> {
-    if (this.disposed) return
+    if (this.disposed || signal.aborted) throw this.error('auth/disposed')
     try {
       await this.store.rotateSecret({
         channel: this.channel,
         accountId,
         expectedRefreshToken,
         status,
+        signal,
       })
-    } catch {
-      /* 状态标记是尽力而为；凭据错误仍是主结果。 */
+    } catch (error) {
+      if (this.disposed || signal.aborted || isAccountCancelled(error)) {
+        throw this.error('auth/disposed')
+      }
+      /* 其他状态标记失败是尽力而为；凭据错误仍是主结果。 */
     }
   }
 
@@ -879,6 +895,11 @@ function isQoderUnauthorized(error: unknown, channel: AuthChannel): boolean {
     && error.code === 'UNAUTHORIZED'
     && error.channel === channel
     && error.httpStatus === 401
+}
+
+/** 账号库取消错误；刷新实际提交边界取消时映射为 auth/disposed。 */
+function isAccountCancelled(error: unknown): boolean {
+  return error instanceof AccountError && error.code === 'accounts/cancelled'
 }
 
 /** 能力探测抛出的超时类错误；只用于固定错误映射，不读取原文。 */
