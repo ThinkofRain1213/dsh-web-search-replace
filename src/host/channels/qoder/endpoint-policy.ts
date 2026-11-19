@@ -203,7 +203,11 @@ export class QoderEndpointPolicy {
   async execute<T>(input: QoderEndpointExecuteInput<T>): Promise<T> {
     const preference = requirePreference(input.preference)
     const accountKey = requireAccountKey(input.accountKey)
-    const stickyKey = `${accountKey}\u0000${requireNetworkExitKey(this.deps)}`
+    // 网络出口键只服务于 auto 粘性：固定模式没有粘性语义，绝不能读取该依赖，
+    // 否则一个与固定端点无关的 resolver 故障会阻断搜索（修复轮 1 / I1）。
+    const stickyKey = preference === 'auto'
+      ? `${accountKey}\u0000${requireNetworkExitKey(this.deps)}`
+      : ''
     const hosts = this.hostsFor(preference, stickyKey)
     const attempts: QoderEndpointAttempt[] = []
 

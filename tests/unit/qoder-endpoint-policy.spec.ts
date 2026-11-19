@@ -16,7 +16,7 @@
  *
  * 全部使用注入 operation 的确定性桩，没有任何真实网络。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   QODER_INTERNATIONAL_HOSTS,
@@ -369,6 +369,56 @@ describe('自动模式：粘性按账号与网络出口隔离', () => {
     const fixedApi2 = recordingOperation(() => 'ok')
     await execute(policy, 'api2', fixedApi2.operation)
     expect(fixedApi2.hosts).toEqual([API2])
+  })
+})
+
+describe('Qoder 国际版端点策略：固定模式不依赖 networkExitKey', () => {
+  /**
+   * 网络出口键只服务于 auto 粘性。固定 center/api2 没有粘性语义，因此不得读取
+   * 该依赖——否则一个与固定端点无关的 resolver 故障会阻断搜索（修复轮 1 / I1）。
+   */
+  const EXIT_KEY_FAILURES: readonly (readonly [string, () => string])[] = [
+    ['resolver 抛错', () => { throw new Error('exit probe offline') }],
+    ['返回空串', () => ''],
+    ['返回空白串', () => '   '],
+    ['返回非字符串', () => 42 as unknown as string],
+  ]
+
+  it.each(EXIT_KEY_FAILURES)('固定 center + %s：不解析出口键，仍只走 center 且成功', async (
+    _label,
+    exitKey,
+  ) => {
+    const exitResolver = vi.fn(exitKey)
+    const { policy } = makePolicy({ exitKey: exitResolver })
+    const recorder = recordingOperation(() => 'ok')
+
+    await expect(execute(policy, 'center', recorder.operation)).resolves.toBe('ok')
+    expect(recorder.hosts).toEqual([CENTER])
+    expect(exitResolver).not.toHaveBeenCalled()
+  })
+
+  it.each(EXIT_KEY_FAILURES)('固定 api2 + %s：不解析出口键，仍只走 api2 且成功', async (
+    _label,
+    exitKey,
+  ) => {
+    const exitResolver = vi.fn(exitKey)
+    const { policy } = makePolicy({ exitKey: exitResolver })
+    const recorder = recordingOperation(() => 'ok')
+
+    await expect(execute(policy, 'api2', recorder.operation)).resolves.toBe('ok')
+    expect(recorder.hosts).toEqual([API2])
+    expect(exitResolver).not.toHaveBeenCalled()
+  })
+
+  it('固定 center 在出口键不可用且连接失败时仍只走 center，不切换也不解析出口键', async () => {
+    const exitResolver = vi.fn((): string => { throw new Error('exit probe offline') })
+    const { policy } = makePolicy({ exitKey: exitResolver })
+    const recorder = recordingOperation(() => { throw protocolError('connection') })
+
+    const error = await execute(policy, 'center', recorder.operation).catch(caught => caught)
+    expect(error).toBeInstanceOf(QoderSearchProtocolError)
+    expect(recorder.hosts).toEqual([CENTER])
+    expect(exitResolver).not.toHaveBeenCalled()
   })
 })
 
