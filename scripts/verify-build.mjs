@@ -7,7 +7,8 @@
  * 3. `lib/client.js` 没有 Harness Client 包的值导入；
  * 4. `lib/client.js` 没有打包第二份 React/ReactDOM，只保留 external 的 `require("react")`；
  * 5. CSS Modules 类名确实按「包名 + 相对路径 + 类名」哈希，且样式表标识包含包名；
- * 6. 安装所需的展示资源存在。
+ * 6. 安装所需的展示资源存在；
+ * 7. Qoder 真实签名 WASM 进入 package files，且二进制 SHA256 未被改写。
  *
  * 任何一项失败都以非零码退出，并打印全部失败项。
  */
@@ -84,6 +85,20 @@ const checks = [
     assert(typeof en.meta?.title === 'string' && en.meta.title !== '', 'en.json 缺少 meta.title')
     assert(typeof zh.meta?.description === 'string' && zh.meta.description !== '', 'zh.json 缺少 meta.description')
     assert(typeof en.meta?.description === 'string' && en.meta.description !== '', 'en.json 缺少 meta.description')
+  }],
+  ['Qoder 签名 WASM 已打包且未被改写', async () => {
+    const asset = 'assets/qoder/qoder-auth-wasm.wasm'
+    assert(
+      Array.isArray(manifest.files) && manifest.files.includes(asset),
+      `package.json files 缺少 ${asset}`,
+    )
+    const bytes = await readFile(path.join(ROOT, asset))
+    assert(bytes.byteLength > 0, `${asset} 为空`)
+    const hash = createHash('sha256').update(bytes).digest('hex').toUpperCase()
+    assert(
+      hash === '6419471EFFA631519DEF7797D76D7EDE38B9FCFA9A83C2148C8EF5D43355B43D',
+      `${asset} SHA256 与批准基线不一致：${hash}`,
+    )
   }],
 ]
 

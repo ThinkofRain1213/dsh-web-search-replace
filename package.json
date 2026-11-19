@@ -14,6 +14,7 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "assets/qoder/qoder-auth-wasm.wasm",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
