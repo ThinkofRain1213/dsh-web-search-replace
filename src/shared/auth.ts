@@ -1,26 +1,41 @@
 /**
- * CodeBuddy 授权流程的共享 RPC 契约。
+ * 腾讯系授权流程（CodeBuddy / WorkBuddy）的共享 RPC 契约。
  *
- * 本文件只定义 Client 可见的非秘密投影与严格 payload 校验：
+ * 本文件只定义 Client 可见的非秘密投影、严格 payload 校验与通用错误边界：
  *
- * - 四个方法 `auth.start/cancel/status/refresh` 都只接受 `channel: 'buddy'`；
+ * - 四个方法 `auth.start/cancel/status/refresh` 都只接受
+ *   `channel: 'buddy' | 'workbuddy'`；每个产品 flow 仍只处理自己的渠道；
  * - 每个方法只接受自己声明的字段，未知键、缺失键和错误类型一律拒绝；
  * - 状态结果只含 flowId、状态、授权 URL、固定展示说明与 AccountSummary，
  *   绝不包含 accessToken、refreshToken、secret、上游响应正文或异常原文；
- * - Host 与 Client 共用同一个 `assertAuthRpcPayload`，不复制第二套校验。
+ * - Host 与 Client 共用同一个 `assertAuthRpcPayload`，不复制第二套校验；
+ * - `AuthFlowError` 是产品错误的通用基类，Host 根 RPC 只依赖它，不 import
+ *   任何 Buddy/WorkBuddy 产品错误类。
  *
- * Task 10 的 WorkBuddy 授权必须扩展自己的方法/渠道，不得复用本文件的
- * `channel: 'buddy'` 字面量。
+ * 渠道隔离：共享的是契约与底层协议形状，不是账号、当前账号、flowId 状态或
+ * 运行时刷新 map；那些必须由每个产品 flow 实例独立持有。
  */
 import { isChannelId } from './channels.ts'
 import { ACCOUNT_STATUSES, type AccountSummary } from './accounts.ts'
 import { isStableChannelAccountId } from './contracts.ts'
 
-/** 本任务唯一允许的授权渠道；CodeBuddy 与 WorkBuddy 绝不共享。 */
+/** CodeBuddy 授权渠道；CodeBuddy 与 WorkBuddy 绝不共享账号状态。 */
 export const BUDDY_AUTH_CHANNEL = 'buddy' as const
 
+/** WorkBuddy 国际版授权渠道。 */
+export const WORKBUDDY_AUTH_CHANNEL = 'workbuddy' as const
+
+/** 共享授权契约允许的两个渠道。 */
+export const AUTH_CHANNELS = [BUDDY_AUTH_CHANNEL, WORKBUDDY_AUTH_CHANNEL] as const
+
 /** 授权渠道字面量类型。 */
+export type AuthChannel = (typeof AUTH_CHANNELS)[number]
+
+/** CodeBuddy 渠道字面量类型（保留 Task 9 的公开别名）。 */
 export type BuddyAuthChannel = typeof BUDDY_AUTH_CHANNEL
+
+/** WorkBuddy 渠道字面量类型。 */
+export type WorkbuddyAuthChannel = typeof WORKBUDDY_AUTH_CHANNEL
 
 /** 授权流程状态；`pending` 之外都是终态。 */
 export const AUTH_FLOW_STATES = [
@@ -57,14 +72,55 @@ export const AUTH_FLOW_ERROR_CODES = [
 export type AuthFlowErrorCode = (typeof AUTH_FLOW_ERROR_CODES)[number]
 
 /**
+ * 产品授权错误的通用基类。
+ *
+ * 只承载固定 code 与固定 message；子类（BuddyAuthError / WorkbuddyAuthError）
+ * 可提供产品文案，但绝不设置 `cause`，避免秘密沿错误链泄漏。Host 根 RPC
+ * 只捕获本基类，因此新增渠道不需要再改通用 dispatcher 的产品 import。
+ */
+export class AuthFlowError extends Error {
+  override readonly name: string = 'AuthFlowError'
+
+  constructor(
+    readonly code: AuthFlowErrorCode,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+/** 判断授权域错误；不接受仅形状相似的任意对象。 */
+export function isAuthFlowError(value: unknown): value is AuthFlowError {
+  return value instanceof AuthFlowError
+}
+
+/** 授权流程 `start` 的共享选项；提供 accountId 表示重新登录。 */
+export interface AuthFlowStartOptions {
+  readonly accountId?: string
+}
+
+/**
+ * Host 授权 dispatcher 需要的最小 flow 端口。
+ *
+ * 产品 flow 的实例状态（账号、flowId、刷新单飞、取消、dispose）彼此独立；
+ * 本接口只描述 RPC 分派需要的方法，不提供任何共享状态。
+ */
+export interface AuthFlowPort {
+  start(options?: AuthFlowStartOptions): Promise<AuthFlowStatus>
+  cancel(flowId: string): Promise<AuthFlowStatus>
+  status(flowId: string): Promise<AuthFlowStatus>
+  refresh(accountId: string): Promise<AccountSummary>
+}
+
+/**
  * Client 可见的授权流程状态。
  *
- * `authUrl` 是服务端下发的 external-link 登录地址（已校验为 https）；
- * `account` 只在成功后出现；`errorCode` 是固定码，不携带上游原文。
+ * `authUrl` 是服务端下发的 external-link 登录地址（已校验为 https 与精确
+ * host）；`account` 只在成功后出现；`errorCode` 是固定码，不携带上游原文。
  */
 export interface AuthFlowStatus {
   readonly flowId: string
-  readonly channel: BuddyAuthChannel
+  readonly channel: AuthChannel
   readonly status: AuthFlowState
   readonly authUrl: string | null
   readonly displayHint: string
@@ -86,20 +142,20 @@ export type AuthRpcMethod = (typeof AUTH_RPC_METHODS)[number]
 /** 每个授权 RPC 方法接受的内部 payload。 */
 export interface AuthRpcPayloads {
   'auth.start': {
-    readonly channel: BuddyAuthChannel
+    readonly channel: AuthChannel
     /** 提供时表示对既有账号重新登录，而不是新增账号。 */
     readonly accountId?: string
   }
   'auth.cancel': {
-    readonly channel: BuddyAuthChannel
+    readonly channel: AuthChannel
     readonly flowId: string
   }
   'auth.status': {
-    readonly channel: BuddyAuthChannel
+    readonly channel: AuthChannel
     readonly flowId: string
   }
   'auth.refresh': {
-    readonly channel: BuddyAuthChannel
+    readonly channel: AuthChannel
     readonly accountId: string
   }
 }
@@ -127,6 +183,11 @@ export function isAuthRpcMethod(value: unknown): value is AuthRpcMethod {
   return typeof value === 'string' && (AUTH_RPC_METHODS as readonly string[]).includes(value)
 }
 
+/** 精确校验共享授权渠道。 */
+export function isAuthChannel(value: unknown): value is AuthChannel {
+  return typeof value === 'string' && (AUTH_CHANNELS as readonly string[]).includes(value)
+}
+
 /** 稳定 flowId 语法：小写字母/数字开头，只含小写字母、数字和连字符。 */
 export function isAuthFlowId(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value)
@@ -135,6 +196,12 @@ export function isAuthFlowId(value: unknown): value is string {
 /** 判断普通数据对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 判断对象是否恰好只有给定键；用于结果自检，防止秘密字段夹带。 */
+function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(record)
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(record, key))
 }
 
 /** 拒绝未声明的 payload 键。 */
@@ -150,10 +217,10 @@ function rejectUnknownKeys(
   }
 }
 
-/** 只接受 CodeBuddy 渠道，绝不静默忽略其他渠道。 */
-function requireBuddyChannel(record: Record<string, unknown>, context: string): void {
-  if (!Object.hasOwn(record, 'channel') || record.channel !== BUDDY_AUTH_CHANNEL) {
-    throw new AuthRpcValidationError(`${context} 只接受 channel=buddy`)
+/** 只接受 buddy|workbuddy 渠道，绝不静默忽略其他渠道。 */
+function requireAuthChannel(record: Record<string, unknown>, context: string): void {
+  if (!Object.hasOwn(record, 'channel') || !isAuthChannel(record.channel)) {
+    throw new AuthRpcValidationError(`${context} 只接受 channel=buddy 或 channel=workbuddy`)
   }
 }
 
@@ -188,7 +255,7 @@ export function assertAuthRpcPayload<M extends AuthRpcMethod>(
   switch (method) {
     case 'auth.start':
       rejectUnknownKeys(payload, ['channel', 'accountId'], method)
-      requireBuddyChannel(payload, method)
+      requireAuthChannel(payload, method)
       if (Object.hasOwn(payload, 'accountId')) {
         requireAccountId(payload.accountId, method)
       }
@@ -196,7 +263,7 @@ export function assertAuthRpcPayload<M extends AuthRpcMethod>(
     case 'auth.cancel':
     case 'auth.status':
       rejectUnknownKeys(payload, ['channel', 'flowId'], method)
-      requireBuddyChannel(payload, method)
+      requireAuthChannel(payload, method)
       if (!Object.hasOwn(payload, 'flowId')) {
         throw new AuthRpcValidationError(`${method} 缺少 flowId`)
       }
@@ -204,7 +271,7 @@ export function assertAuthRpcPayload<M extends AuthRpcMethod>(
       return
     case 'auth.refresh':
       rejectUnknownKeys(payload, ['channel', 'accountId'], method)
-      requireBuddyChannel(payload, method)
+      requireAuthChannel(payload, method)
       if (!Object.hasOwn(payload, 'accountId')) {
         throw new AuthRpcValidationError('auth.refresh 缺少 accountId')
       }
@@ -215,9 +282,17 @@ export function assertAuthRpcPayload<M extends AuthRpcMethod>(
   }
 }
 
-/** 判断 AccountSummary 的最小安全形状（结果自检用）。 */
+/** 判断 AccountSummary 的最小安全形状（结果自检用；拒绝额外键）。 */
 export function isAccountSummary(value: unknown): value is AccountSummary {
   if (!isRecord(value)) return false
+  if (!hasExactKeys(value, [
+    'id',
+    'displayName',
+    'channelId',
+    'endpointLabel',
+    'status',
+    'maskedIdentifier',
+  ])) return false
   return isStableChannelAccountId(value.id)
     && typeof value.displayName === 'string'
     && isChannelId(value.channelId)
@@ -227,22 +302,46 @@ export function isAccountSummary(value: unknown): value is AccountSummary {
     && typeof value.maskedIdentifier === 'string'
 }
 
-/** 判断授权流程状态结果的最小安全形状（结果自检用）。 */
+/** 判断授权流程状态结果的最小安全形状（结果自检用；拒绝额外键）。 */
 export function isAuthFlowStatus(value: unknown): value is AuthFlowStatus {
   if (!isRecord(value)) return false
+  if (!hasExactKeys(value, [
+    'flowId',
+    'channel',
+    'status',
+    'authUrl',
+    'displayHint',
+    'account',
+    'errorCode',
+  ])) return false
   return isAuthFlowId(value.flowId)
-    && value.channel === BUDDY_AUTH_CHANNEL
+    && isAuthChannel(value.channel)
     && typeof value.status === 'string'
     && (AUTH_FLOW_STATES as readonly string[]).includes(value.status)
     && (value.authUrl === null || typeof value.authUrl === 'string')
     && typeof value.displayHint === 'string'
     && (
       value.account === null
-      || (isAccountSummary(value.account) && value.account.channelId === BUDDY_AUTH_CHANNEL)
+      || (isAccountSummary(value.account) && value.account.channelId === value.channel)
     )
     && (
       value.errorCode === null
       || (typeof value.errorCode === 'string'
         && (AUTH_FLOW_ERROR_CODES as readonly string[]).includes(value.errorCode))
     )
+}
+
+/**
+ * 判断授权流程状态是否属于指定渠道。
+ *
+ * Host 分派与产品 dispatcher 都用它做最后一道结果自检：即使某个 flow 被错误
+ * 接线，返回了另一渠道的状态/账号，也不会被当作成功结果交给 Client。
+ */
+export function isAuthFlowStatusForChannel(
+  value: unknown,
+  channel: AuthChannel,
+): value is AuthFlowStatus {
+  return isAuthFlowStatus(value)
+    && value.channel === channel
+    && (value.account === null || value.account.channelId === channel)
 }

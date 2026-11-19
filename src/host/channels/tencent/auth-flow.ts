@@ -203,7 +203,7 @@ export class TencentExternalLinkClient {
       throw new TencentExternalLinkError('invalid-response', MESSAGE_INVALID)
     }
     const state = normalizeState(data.state)
-    const authUrl = normalizeAuthUrl(data.authUrl, this.product.authUrlHosts)
+    const authUrl = normalizeTencentAuthUrl(data.authUrl, this.product.authUrlHosts)
     if (state === undefined || authUrl === undefined) {
       throw new TencentExternalLinkError('invalid-response', MESSAGE_INVALID)
     }
@@ -546,8 +546,14 @@ function normalizeState(value: unknown): string | undefined {
 /**
  * authUrl 只接受产品显式允许的精确 host、https、无 userinfo、无自定义端口、
  * 无 fragment 的绝对 URL；不做后缀匹配。
+ *
+ * 导出给产品 flow 在追加登录 session 参数后做一次防御性复检；不允许因为
+ * 装饰器实现错误而把 URL 指向其他 host。
  */
-function normalizeAuthUrl(value: unknown, allowedHosts: readonly string[]): string | undefined {
+export function normalizeTencentAuthUrl(
+  value: unknown,
+  allowedHosts: readonly string[],
+): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   if (trimmed.length === 0 || trimmed.length > 2048) return undefined

@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { BuddyAuthFlow } from '../../src/host/channels/buddy/auth.ts'
+import { WorkbuddyAuthFlow } from '../../src/host/channels/workbuddy/auth.ts'
 import { registerManagementRpc } from '../../src/host/rpc.ts'
 import { DEFAULT_SEARCH_SETTINGS, type SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import {
@@ -21,6 +22,7 @@ import {
   AuthRpcValidationError,
   isAccountSummary,
   isAuthFlowStatus,
+  type AuthChannel,
   type AuthFlowStatus,
 } from '../../src/shared/auth.ts'
 import {
@@ -41,6 +43,12 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
+/** 一个授权流程与它收到的请求 URL；用于证明 Host 按 channel 精确分派。 */
+interface RpcAuthFlowFixture {
+  readonly flow: BuddyAuthFlow | WorkbuddyAuthFlow
+  readonly calls: string[]
+}
+
 /**
  * 用真实 AccountStore/AccountService 构造一个 CodeBuddy 授权流程。
  *
@@ -49,12 +57,14 @@ function json(body: unknown, status = 200): Response {
 function createBuddyAuthForRpc(
   fixture: AccountFixture,
   options: { readonly tokenReady?: boolean } = {},
-): BuddyAuthFlow {
+): RpcAuthFlowFixture {
   let now = 1_000_000
   let flowSequence = 0
   let accountSequence = 0
+  const calls: string[] = []
   const fetcher = (async (input: RequestInfo | URL) => {
     const url = String(input)
+    calls.push(url)
     if (url.includes('/v2/plugin/auth/state')) {
       return json({
         code: 0,
@@ -103,7 +113,7 @@ function createBuddyAuthForRpc(
     }
     return new Response('not found', { status: 404 })
   }) as typeof fetch
-  return new BuddyAuthFlow({
+  const flow = new BuddyAuthFlow({
     store: fixture.store,
     accounts: fixture.service,
     fetcher,
@@ -114,11 +124,93 @@ function createBuddyAuthForRpc(
     timeoutSignal: () => new AbortController().signal,
     verifyCapability: async () => { /* RPC 契约测试不执行真实能力探测 */ },
   })
+  return { flow, calls }
+}
+
+/**
+ * 用真实 AccountStore/AccountService 构造一个 WorkBuddy 授权流程。
+ *
+ * tokenReady=false 时 token 轮询永远返回 11217，用于 cancel 测试。
+ */
+function createWorkbuddyAuthForRpc(
+  fixture: AccountFixture,
+  options: { readonly tokenReady?: boolean } = {},
+): RpcAuthFlowFixture {
+  let now = 2_000_000
+  let flowSequence = 0
+  let sessionSequence = 0
+  let accountSequence = 0
+  const calls: string[] = []
+  const fetcher = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    calls.push(url)
+    if (url.includes('/v2/plugin/auth/state')) {
+      return json({
+        code: 0,
+        data: {
+          state: 'rpc-wb-state',
+          authUrl: 'https://www.workbuddy.ai/login/?platform=workbuddy-ai&state=rpc-wb-state',
+        },
+      })
+    }
+    if (url.includes('/v2/plugin/auth/token/refresh')) {
+      return json({
+        code: 0,
+        data: {
+          accessToken: 'WB_RPC_ACCESS_2',
+          refreshToken: 'WB_RPC_REFRESH_2',
+          expiresIn: 3600,
+          tokenType: 'Bearer',
+          domain: 'www.workbuddy.ai',
+        },
+      })
+    }
+    if (url.includes('/v2/plugin/auth/token')) {
+      if (options.tokenReady === false) return json({ code: 11217 }, 400)
+      accountSequence += 1
+      return json({
+        code: 0,
+        data: {
+          accessToken: `WB_RPC_ACCESS_${accountSequence}`,
+          refreshToken: `WB_RPC_REFRESH_${accountSequence}`,
+          expiresIn: 3600,
+          tokenType: 'Bearer',
+          domain: 'www.workbuddy.ai',
+        },
+      })
+    }
+    if (url.includes('/v2/plugin/login/account')) {
+      return json({
+        code: 0,
+        data: {
+          uid: 'rpc-wb-user',
+          nickname: 'RPC WorkBuddy',
+          enterpriseId: '',
+          type: 'personal',
+        },
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }) as typeof fetch
+  const flow = new WorkbuddyAuthFlow({
+    store: fixture.store,
+    accounts: fixture.service,
+    fetcher,
+    clock: { now: () => now, sleep: async (ms) => { now += Math.max(1, ms) } },
+    randomId: () => `rpc-wb-flow-${++flowSequence}`,
+    randomSessionId: () => `rpc-wb-session-${++sessionSequence}`,
+    pollIntervalMs: 10,
+    authTimeoutMs: 60_000,
+    timeoutSignal: () => new AbortController().signal,
+    verifyCapability: async () => { /* RPC 契约测试不执行真实能力探测 */ },
+  })
+  return { flow, calls }
 }
 
 /** 一个最小但真实的 connection 双端：注册路由 + 用 rpc.call 发信封。 */
 function createRpcHarness(options: {
   readonly withBuddyAuth?: boolean
+  readonly withWorkbuddyAuth?: boolean
   readonly tokenReady?: boolean
 } = {}) {
   const fixture = createAccountFixture()
@@ -155,10 +247,17 @@ function createRpcHarness(options: {
       },
     },
   }
-  const buddyAuth = options.withBuddyAuth === true
+  const buddyFixture = options.withBuddyAuth === true
     ? createBuddyAuthForRpc(fixture, { tokenReady: options.tokenReady })
     : undefined
-  const dispose = registerManagementRpc(connection, settings, fixture.service, buddyAuth)
+  const workbuddyFixture = options.withWorkbuddyAuth === true
+    ? createWorkbuddyAuthForRpc(fixture, { tokenReady: options.tokenReady })
+    : undefined
+  const authFlows = {
+    ...buddyFixture === undefined ? {} : { buddy: buddyFixture.flow },
+    ...workbuddyFixture === undefined ? {} : { workbuddy: workbuddyFixture.flow },
+  }
+  const dispose = registerManagementRpc(connection, settings, fixture.service, authFlows)
   return {
     connection,
     settings,
@@ -167,18 +266,22 @@ function createRpcHarness(options: {
     dispose,
     store: fixture.store,
     service: fixture.service,
-    buddyAuth,
+    buddyAuth: buddyFixture?.flow,
+    workbuddyAuth: workbuddyFixture?.flow,
+    buddyCalls: buddyFixture?.calls ?? [],
+    workbuddyCalls: workbuddyFixture?.calls ?? [],
   }
 }
 
 /** 轮询 RPC 授权状态直到终态。 */
 async function waitForRpcAuthStatus(
   connection: ManagementRpcConnection,
+  channel: AuthChannel,
   flowId: string,
 ): Promise<AuthFlowStatus> {
   for (let attempt = 0; attempt < 500; attempt++) {
     const result = await callManagementRpc(connection, 'auth.status', {
-      channel: 'buddy',
+      channel,
       flowId,
     })
     if (!result.ok) throw new Error(`auth.status failed: ${result.error.code}`)
@@ -644,7 +747,7 @@ describe('auth.* 共享 Client 契约', () => {
     expect(pending.authUrl).toContain('www.codebuddy.cn')
     expect(pending.account).toBeNull()
 
-    const completed = await waitForRpcAuthStatus(harness.connection, pending.flowId)
+    const completed = await waitForRpcAuthStatus(harness.connection, 'buddy', pending.flowId)
     expect(completed.status).toBe('completed')
     expect(isAuthFlowStatus(completed)).toBe(true)
     const summary: AccountSummary | null = completed.account
@@ -715,7 +818,11 @@ describe('auth.* 共享 Client 契约', () => {
     const first = await callManagementRpc(harness.connection, 'auth.start', { channel: 'buddy' })
     expect(first.ok).toBe(true)
     if (!first.ok) return
-    const firstCompleted = await waitForRpcAuthStatus(harness.connection, first.value.flowId)
+    const firstCompleted = await waitForRpcAuthStatus(
+      harness.connection,
+      'buddy',
+      first.value.flowId,
+    )
     const accountId = firstCompleted.account!.id
 
     const reauth = await callManagementRpc(harness.connection, 'auth.start', {
@@ -724,7 +831,11 @@ describe('auth.* 共享 Client 契约', () => {
     })
     expect(reauth.ok).toBe(true)
     if (!reauth.ok) return
-    const reauthCompleted = await waitForRpcAuthStatus(harness.connection, reauth.value.flowId)
+    const reauthCompleted = await waitForRpcAuthStatus(
+      harness.connection,
+      'buddy',
+      reauth.value.flowId,
+    )
 
     expect(reauthCompleted.status).toBe('completed')
     expect(reauthCompleted.account?.id).toBe(accountId)
@@ -742,13 +853,16 @@ describe('auth.* 共享 Client 契约', () => {
 
     const invalidCalls = [
       ['auth.start', {}],
-      ['auth.start', { channel: 'workbuddy' }],
+      ['auth.start', { channel: 'qoder' }],
       ['auth.start', { channel: 'buddy', extra: true }],
+      ['auth.start', { channel: 'workbuddy', extra: true }],
       ['auth.cancel', { channel: 'buddy' }],
       ['auth.cancel', { channel: 'buddy', flowId: 'Bad_ID' }],
+      ['auth.cancel', { channel: 'workbuddy', flowId: 'Bad_ID' }],
       ['auth.status', { channel: 'buddy', flowId: 'flow-1', extra: true }],
       ['auth.refresh', { channel: 'buddy' }],
       ['auth.refresh', { channel: 'buddy', accountId: 'Bad_ID' }],
+      ['auth.refresh', { channel: 'workbuddy', accountId: 'Bad_ID' }],
     ] as const
 
     for (const [method, payload] of invalidCalls) {
@@ -761,11 +875,12 @@ describe('auth.* 共享 Client 契约', () => {
     expect(requestCount).toBe(0)
   })
 
-  it('Host 拒绝伪造 channel 与未知键，且不写账号', async () => {
-    const harness = createRpcHarness({ withBuddyAuth: true })
+  it('Host 拒绝未知渠道与未知键，且不写账号', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true, withWorkbuddyAuth: true })
     for (const payload of [
-      { channel: 'workbuddy' },
+      { channel: 'qoder' },
       { channel: 'buddy', extra: true },
+      { channel: 'workbuddy', extra: true },
     ]) {
       const response = await rawCall(harness, {
         type: 'client-request',
@@ -781,19 +896,153 @@ describe('auth.* 共享 Client 契约', () => {
       expect(typeof body.result.error?.details).toBe('object')
     }
     expect(await harness.store.listEntries('buddy')).toHaveLength(0)
+    expect(await harness.store.listEntries('workbuddy')).toHaveLength(0)
+    expect(harness.buddyCalls).toHaveLength(0)
+    expect(harness.workbuddyCalls).toHaveLength(0)
   })
 
-  it('未提供 buddyAuth 时 auth.* 返回 bad-request', async () => {
+  it('未提供授权流程时 auth.* 返回 bad-request', async () => {
     const harness = createRpcHarness()
-    const response = await rawCall(harness, {
+    for (const channel of ['buddy', 'workbuddy'] as const) {
+      const response = await rawCall(harness, {
+        type: 'client-request',
+        rpcId: 'raw-auth-unwired',
+        method: MANAGEMENT_RPC_ENDPOINT,
+        payload: { method: 'auth.start', payload: { channel } },
+      })
+      const body = await response.json() as { result: { ok: boolean; error?: { code: string } } }
+      expect(body.result.ok).toBe(false)
+      expect(body.result.error?.code).toBe('bad-request')
+    }
+  })
+
+  it('Host 按 channel 精确分派：workbuddy 只调用 WorkBuddy flow', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true, withWorkbuddyAuth: true })
+
+    const started = await callManagementRpc(harness.connection, 'auth.start', {
+      channel: 'workbuddy',
+    })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    expect(started.value.channel).toBe('workbuddy')
+    expect(started.value.authUrl).toContain('www.workbuddy.ai')
+
+    const completed = await waitForRpcAuthStatus(
+      harness.connection,
+      'workbuddy',
+      started.value.flowId,
+    )
+    expect(completed.status).toBe('completed')
+    expect(completed.account?.channelId).toBe('workbuddy')
+    expect(harness.double.getState().workbuddy.currentAccountId).toBe(completed.account?.id)
+    expect(harness.double.getState().buddy.currentAccountId).toBeNull()
+    expect(await harness.store.listEntries('buddy')).toHaveLength(0)
+    expect(harness.buddyCalls).toHaveLength(0)
+    expect(harness.workbuddyCalls.length).toBeGreaterThan(0)
+    expect(harness.workbuddyCalls.some((url) => url.includes('platform=workbuddy-ai'))).toBe(true)
+    expect(harness.workbuddyCalls.some((url) => url.includes('copilot.tencent.com'))).toBe(false)
+  })
+
+  it('Host 按 channel 精确分派：buddy 只调用 Buddy flow', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true, withWorkbuddyAuth: true })
+
+    const started = await callManagementRpc(harness.connection, 'auth.start', {
+      channel: 'buddy',
+    })
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+    expect(started.value.channel).toBe('buddy')
+    expect(started.value.authUrl).toContain('www.codebuddy.cn')
+
+    const completed = await waitForRpcAuthStatus(
+      harness.connection,
+      'buddy',
+      started.value.flowId,
+    )
+    expect(completed.status).toBe('completed')
+    expect(completed.account?.channelId).toBe('buddy')
+    expect(harness.double.getState().buddy.currentAccountId).toBe(completed.account?.id)
+    expect(harness.double.getState().workbuddy.currentAccountId).toBeNull()
+    expect(await harness.store.listEntries('workbuddy')).toHaveLength(0)
+    expect(harness.workbuddyCalls).toHaveLength(0)
+    expect(harness.buddyCalls.some((url) => url.includes('platform=ide'))).toBe(true)
+  })
+
+  it('对应 channel 未注册时在调用任何 flow 前返回 bad-request', async () => {
+    const buddyOnly = createRpcHarness({ withBuddyAuth: true })
+    const workbuddyResponse = await rawCall(buddyOnly, {
       type: 'client-request',
-      rpcId: 'raw-auth-unwired',
+      rpcId: 'raw-auth-cross-1',
+      method: MANAGEMENT_RPC_ENDPOINT,
+      payload: { method: 'auth.start', payload: { channel: 'workbuddy' } },
+    })
+    const workbuddyBody = await workbuddyResponse.json() as {
+      result: { ok: boolean; error?: { code: string } }
+    }
+    expect(workbuddyBody.result.ok).toBe(false)
+    expect(workbuddyBody.result.error?.code).toBe('bad-request')
+    expect(buddyOnly.buddyCalls).toHaveLength(0)
+    expect(await buddyOnly.store.listEntries('buddy')).toHaveLength(0)
+    expect(await buddyOnly.store.listEntries('workbuddy')).toHaveLength(0)
+
+    const workbuddyOnly = createRpcHarness({ withWorkbuddyAuth: true })
+    const buddyResponse = await rawCall(workbuddyOnly, {
+      type: 'client-request',
+      rpcId: 'raw-auth-cross-2',
       method: MANAGEMENT_RPC_ENDPOINT,
       payload: { method: 'auth.start', payload: { channel: 'buddy' } },
     })
-    const body = await response.json() as { result: { ok: boolean; error?: { code: string } } }
-    expect(body.result.ok).toBe(false)
-    expect(body.result.error?.code).toBe('bad-request')
+    const buddyBody = await buddyResponse.json() as {
+      result: { ok: boolean; error?: { code: string } }
+    }
+    expect(buddyBody.result.ok).toBe(false)
+    expect(buddyBody.result.error?.code).toBe('bad-request')
+    expect(workbuddyOnly.workbuddyCalls).toHaveLength(0)
+    expect(await workbuddyOnly.store.listEntries('buddy')).toHaveLength(0)
+    expect(await workbuddyOnly.store.listEntries('workbuddy')).toHaveLength(0)
+  })
+
+  it('auth.refresh 按 channel 读取对应账号，不触碰另一渠道', async () => {
+    const harness = createRpcHarness({ withBuddyAuth: true, withWorkbuddyAuth: true })
+    const buddy = await harness.store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'rpc-shared-user',
+      secret: { accessToken: 'RPC_ACCESS_1', refreshToken: 'RPC_REFRESH_1' },
+    })
+    const workbuddy = await harness.store.saveAccount({
+      channel: 'workbuddy',
+      vendorAccountId: 'rpc-shared-user',
+      secret: { accessToken: 'WB_RPC_ACCESS_1', refreshToken: 'WB_RPC_REFRESH_1' },
+    })
+
+    const workbuddyResult = await callManagementRpc(harness.connection, 'auth.refresh', {
+      channel: 'workbuddy',
+      accountId: workbuddy.accountId,
+    })
+    expect(workbuddyResult.ok).toBe(true)
+    if (workbuddyResult.ok) expect(workbuddyResult.value.channelId).toBe('workbuddy')
+
+    const workbuddyStored = await harness.store.readEntry('workbuddy', workbuddy.accountId)
+    expect(workbuddyStored?.account?.secret).toMatchObject({
+      accessToken: 'WB_RPC_ACCESS_2',
+      refreshToken: 'WB_RPC_REFRESH_2',
+    })
+    const buddyUntouched = await harness.store.readEntry('buddy', buddy.accountId)
+    expect(buddyUntouched?.account?.secret).toMatchObject({
+      accessToken: 'RPC_ACCESS_1',
+      refreshToken: 'RPC_REFRESH_1',
+    })
+
+    const buddyResult = await callManagementRpc(harness.connection, 'auth.refresh', {
+      channel: 'buddy',
+      accountId: buddy.accountId,
+    })
+    expect(buddyResult.ok).toBe(true)
+    const buddyStored = await harness.store.readEntry('buddy', buddy.accountId)
+    expect(buddyStored?.account?.secret).toMatchObject({
+      accessToken: 'RPC_ACCESS_2',
+      refreshToken: 'RPC_REFRESH_2',
+    })
   })
 
   it('auth.refresh 不读取 WorkBuddy 账号', async () => {

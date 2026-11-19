@@ -21,15 +21,28 @@ import {
   AccountRpcValidationError,
   isAccountRpcMethod,
 } from '../shared/accounts.ts'
-import { AuthRpcValidationError, isAuthRpcMethod } from '../shared/auth.ts'
+import {
+  assertAuthRpcPayload,
+  AuthFlowError,
+  AuthRpcValidationError,
+  isAuthRpcMethod,
+  type AuthChannel,
+  type AuthFlowPort,
+} from '../shared/auth.ts'
 import { SearchSettingsValidationError } from '../shared/contracts.ts'
 import { AccountError } from './accounts/errors.ts'
 import { dispatchAccountRpc } from './accounts/rpc-methods.ts'
 import type { AccountService } from './accounts/service.ts'
-import { BuddyAuthError } from './channels/buddy/auth.ts'
-import type { BuddyAuthFlow } from './channels/buddy/auth.ts'
-import { dispatchBuddyAuthRpc } from './channels/buddy/auth-rpc.ts'
+import { dispatchTencentAuthRpc } from './channels/tencent/auth-rpc.ts'
 import type { SettingsService } from './settings/service.ts'
+
+/**
+ * 按渠道注册的授权流程。
+ *
+ * Host 只按 payload.channel 精确选择对应 flow；Buddy/WorkBuddy 绝不共享实例、
+ * 账号或运行时状态。未注册的渠道返回 `bad-request`，不会回退到另一渠道。
+ */
+export type AuthFlowRegistry = Partial<Record<AuthChannel, AuthFlowPort>>
 
 /** 未知管理方法；映射为 RPC 的 `bad-request`。 */
 class UnknownManagementMethodError extends Error {
@@ -48,21 +61,21 @@ class UnknownManagementMethodError extends Error {
  * @param settings 普通设置服务。
  * @param accounts 账号服务；Task 15 的 Host 根组合负责提供，未提供时账号方法
  *   返回 `bad-request`，普通设置方法不受影响。
- * @param buddyAuth CodeBuddy 授权流程；未提供时 auth.* 返回 `bad-request`。
- *   根组合仍由 Task 15 负责。
+ * @param authFlows 按 channel 注册的授权流程；未提供对应渠道时 auth.* 返回
+ *   `bad-request`，绝不回退到另一渠道。根组合仍由 Task 15 负责。
  * @returns 异步 disposer；调用方应把它登记到插件生命周期。
  */
 export function registerManagementRpc(
   connection: ManagementRpcConnection,
   settings: SettingsService,
   accounts?: AccountService,
-  buddyAuth?: BuddyAuthFlow,
+  authFlows?: AuthFlowRegistry,
 ): () => Promise<void> {
   return connection.fetch.register({
     path: MANAGEMENT_RPC_PATH,
     methods: ['POST'],
     requestBody: 'buffered',
-    fetch: (request) => handleManagementRpcRequest(settings, request, accounts, buddyAuth),
+    fetch: (request) => handleManagementRpcRequest(settings, request, accounts, authFlows),
   })
 }
 
@@ -76,7 +89,7 @@ export async function handleManagementRpcRequest(
   settings: SettingsService,
   request: Request,
   accounts?: AccountService,
-  buddyAuth?: BuddyAuthFlow,
+  authFlows?: AuthFlowRegistry,
 ): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response('method not allowed', { status: 405 })
@@ -100,7 +113,7 @@ export async function handleManagementRpcRequest(
     const value = await dispatch(
       settings,
       accounts,
-      buddyAuth,
+      authFlows,
       envelope.call.method,
       envelope.call.payload,
     )
@@ -155,11 +168,11 @@ function parseEnvelope(body: unknown): ParsedEnvelope {
   return { rpcId, call: { method: call.method, payload: call.payload } }
 }
 
-/** 按 method 分派到设置、账号或 CodeBuddy 授权服务。 */
+/** 按 method 分派到设置、账号或对应渠道的授权服务。 */
 async function dispatch(
   settings: SettingsService,
   accounts: AccountService | undefined,
-  buddyAuth: BuddyAuthFlow | undefined,
+  authFlows: AuthFlowRegistry | undefined,
   method: string,
   payload: unknown,
 ): Promise<unknown> {
@@ -168,8 +181,20 @@ async function dispatch(
     return dispatchAccountRpc(accounts, method, payload)
   }
   if (isAuthRpcMethod(method)) {
-    if (buddyAuth === undefined) throw new UnknownManagementMethodError(method)
-    return dispatchBuddyAuthRpc(buddyAuth, method, payload)
+    // 先校验共享 payload 才能安全读取 channel；随后只查该渠道的 flow。
+    // 产品 dispatcher 会再次校验（防御性），但校验实现只有 shared/auth.ts 一份。
+    assertAuthRpcPayload(method, payload)
+    const flow = authFlows !== undefined && Object.hasOwn(authFlows, payload.channel)
+      ? authFlows[payload.channel]
+      : undefined
+    if (flow === undefined) throw new UnknownManagementMethodError(method)
+    return dispatchTencentAuthRpc(
+      flow,
+      payload.channel,
+      method,
+      payload,
+      genericAuthInternalError,
+    )
   }
   switch (method) {
     case 'settings.get':
@@ -184,6 +209,11 @@ async function dispatch(
     default:
       throw new UnknownManagementMethodError(method)
   }
+}
+
+/** 通用授权结果自检失败；Host 根分派不依赖任何产品错误类。 */
+function genericAuthInternalError(): AuthFlowError {
+  return new AuthFlowError('auth/internal', '授权内部错误')
 }
 
 /** 把任意错误映射为稳定的 RPC 失败；不泄露秘密或依赖原文。 */
@@ -216,7 +246,7 @@ function toFailure(error: unknown): RpcErrorPayload {
       details: {},
     }
   }
-  if (error instanceof BuddyAuthError) {
+  if (error instanceof AuthFlowError) {
     return {
       code: error.code,
       message: error.message,
