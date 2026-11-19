@@ -167,6 +167,7 @@ export function resolveQoderWasmAssetPath(moduleUrl: string = import.meta.url): 
     throw new QoderSearchProtocolError(
       'SEARCH_FAILED',
       'Qoder signing asset resolved outside the plugin package',
+      'config',
     )
   }
   return assetPath
@@ -186,6 +187,7 @@ export function readApprovedQoderWasm(assetPath: string): Uint8Array<ArrayBuffer
     throw new QoderSearchProtocolError(
       'SEARCH_FAILED',
       'Qoder signing asset is missing from the plugin package',
+      'config',
     )
   }
   const digest = createHash('sha256').update(raw).digest('hex').toUpperCase()
@@ -193,6 +195,7 @@ export function readApprovedQoderWasm(assetPath: string): Uint8Array<ArrayBuffer
     throw new QoderSearchProtocolError(
       'SEARCH_FAILED',
       'Qoder signing asset failed the approved SHA256 check',
+      'config',
     )
   }
   // 显式复制到 ArrayBuffer 支撑的 Uint8Array，避免 Buffer 的 ArrayBufferLike
@@ -519,6 +522,7 @@ function generateRuntimeAuthFields(
     throw new QoderSearchProtocolError(
       'SEARCH_FAILED',
       'qoder signing failed: malformed auth fields returned by the bundled WASM',
+      'signing',
     )
   }
 }
@@ -691,6 +695,7 @@ function normalizeEndpoint(host: string): string {
     throw new QoderSearchProtocolError(
       'SEARCH_FAILED',
       'qoder signer requires a bare host name (for example gateway.qoder.com.cn)',
+      'config',
     )
   }
   return `https://${trimmed}`
@@ -699,7 +704,11 @@ function normalizeEndpoint(host: string): string {
 /** 签名输入 path 必须是以 `/` 开头的绝对路径。 */
 function assertSigningPath(path: string): void {
   if (typeof path !== 'string' || !path.startsWith('/') || /[\s?#]/.test(path)) {
-    throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder signer requires an absolute request path')
+    throw new QoderSearchProtocolError(
+      'SEARCH_FAILED',
+      'qoder signer requires an absolute request path',
+      'config',
+    )
   }
 }
 
@@ -720,6 +729,7 @@ function noAccount(): QoderSearchProtocolError {
   return new QoderSearchProtocolError(
     'NO_ACCOUNT',
     'Qoder search has no usable account; sign in to a Qoder account first',
+    'no_account',
   )
 }
 
@@ -730,9 +740,14 @@ function throwIfAborted(signal: AbortSignal): void {
     throw new QoderSearchProtocolError(
       'TIMEOUT',
       'qoder search timed out before signing (the host tool budget elapsed)',
+      'timeout',
     )
   }
-  throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder search aborted by the caller')
+  throw new QoderSearchProtocolError(
+    'SEARCH_FAILED',
+    'qoder search aborted by the caller',
+    'aborted',
+  )
 }
 
 function isTimeoutReason(reason: unknown): boolean {
@@ -777,7 +792,11 @@ export class QoderSigner implements QoderRequestSigner {
     signal: AbortSignal,
   ): Promise<PreparedRequest> {
     if (this.disposed) {
-      throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder signer has been disposed')
+      throw new QoderSearchProtocolError(
+        'SEARCH_FAILED',
+        'qoder signer has been disposed',
+        'config',
+      )
     }
     // 顺序很重要：凭据 → 输入 → 取消，全部先于 WASM/网络工作。
     const usable = requireSigningCredential(credential)
@@ -787,6 +806,7 @@ export class QoderSigner implements QoderRequestSigner {
       throw new QoderSearchProtocolError(
         'SEARCH_FAILED',
         'qoder signer requires a string request body',
+        'config',
       )
     }
     throwIfAborted(signal)
@@ -801,7 +821,7 @@ export class QoderSigner implements QoderRequestSigner {
       // R16：不拼接底层 error.message、不附带 raw cause —— 它们可能含 token /
       // machineId / 签名头；只保留固定阶段消息。
       if (error instanceof QoderSearchProtocolError) throw error
-      throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder signing failed')
+      throw new QoderSearchProtocolError('SEARCH_FAILED', 'qoder signing failed', 'signing')
     } finally {
       this.finishOperation()
     }

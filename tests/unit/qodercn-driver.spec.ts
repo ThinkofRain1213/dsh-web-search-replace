@@ -682,3 +682,74 @@ describe('Qoder CN 驱动：秘密卫生', () => {
     expect(output).not.toContain('Bearer COSY')
   })
 })
+
+describe('Qoder CN 驱动：共享协议分类扩展不改变渠道可见行为', () => {
+  /**
+   * Task 7 给共享 `QoderSearchProtocolError` 增加了结构化 `kind`，供国际版双域策略
+   * 判定是否允许换域。中国版没有跨域策略，因此该字段必须保持**内部**：渠道可见的
+   * code、消息模板、固定端点与秘密边界都不能改变，也不能把分类挂到错误对象上。
+   */
+  const INTERNAL_FAILURE_TOKENS = ['http_status', 'bad_response', 'no_account', 'connection'] as const
+
+  /** 渠道可见错误只暴露既有字段；内部 kind/status 不得外泄。 */
+  function expectChannelVisibleFailure(error: unknown): void {
+    expect(error).toBeInstanceOf(ChannelSearchError)
+    expect(error).not.toHaveProperty('kind')
+    expect(error).not.toHaveProperty('status')
+    expect((error as { cause?: unknown }).cause).toBeUndefined()
+    const text = errorTextOf(error)
+    for (const token of INTERNAL_FAILURE_TOKENS) expect(text).not.toContain(token)
+  }
+
+  it.each([
+    [401, 'UNAUTHORIZED'],
+    [429, 'RATE_LIMITED'],
+    [500, 'SEARCH_FAILED'],
+    [503, 'SEARCH_FAILED'],
+  ])('HTTP %i 仍归为 %s，消息不泄露内部失败阶段', async (status, code) => {
+    const { driver, calls } = makeDriver({
+      handler: () => new Response('upstream rejected', { status }),
+    })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toMatchObject({ code, channel: 'qodercn' })
+    expectChannelVisibleFailure(error)
+    expect(errorTextOf(error)).toContain(`HTTP ${status}`)
+    expect(errorTextOf(error)).toContain('/api/v1/webSearch/oneSearch')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url.startsWith('https://gateway.qoder.com.cn/')).toBe(true)
+  })
+
+  it('传输失败仍只映射为 SEARCH_FAILED，且不泄露内部失败阶段', async () => {
+    const { driver } = makeDriver({ handler: () => { throw new Error('ECONNRESET') } })
+
+    const error = await driver.searchOnce('q', 10, new AbortController().signal).catch(caught => caught)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', channel: 'qodercn' })
+    expectChannelVisibleFailure(error)
+  })
+
+  it('无账号与签名失败仍是固定类别，且不泄露内部失败阶段', async () => {
+    const missing = makeDriver({ credential: undefined })
+    const noAccountError = await missing.driver
+      .searchOnce('q', 10, new AbortController().signal)
+      .catch(caught => caught)
+    expect(noAccountError).toMatchObject({ code: 'NO_ACCOUNT', channel: 'qodercn' })
+    expectChannelVisibleFailure(noAccountError)
+
+    const signingFaultQuery = 'CN_KIND_REGRESSION_SIGNING_FAULT'
+    const restore = installTextEncoderFault({
+      match: input => input.includes(signingFaultQuery),
+      mode: 'before-allocation',
+    })
+    try {
+      const signing = makeDriver({ handler: () => jsonResponse({ pageItems: [] }) })
+      const signingError = await signing.driver
+        .searchOnce(signingFaultQuery, 10, new AbortController().signal)
+        .catch(caught => caught)
+      expect(signingError).toMatchObject({ code: 'SEARCH_FAILED', channel: 'qodercn' })
+      expectChannelVisibleFailure(signingError)
+    } finally {
+      restore()
+    }
+  })
+})
