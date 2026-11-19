@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  DSH_TEST_EXPECTED_VERSION,
   runDshFixture,
   type DshFixtureObservation,
   type FixtureMode,
@@ -26,14 +27,14 @@ const MAGPIE_MODEL_ROUTES = [
 
 function expectCurrentHost(observation: DshFixtureObservation): void {
   expect(observation.source).toMatchObject({
-    desktop: '0.2.2-rc.3',
+    desktop: DSH_TEST_EXPECTED_VERSION,
     '@deepseek-ai/cordis': '4.1.0',
-    '@deepseek-ai/dsh-web': '0.2.2-rc.3',
-    '@deepseek-ai/dsh-tools': '0.2.2-rc.3',
-    '@deepseek-ai/dsh-tool-web': '0.2.2-rc.3',
-    '@deepseek-ai/dsh-tool-executor-native': '0.2.2-rc.3',
-    '@deepseek-ai/dsh-tool-executor-ptc': '0.2.2-rc.3',
-    '@deepseek-ai/dsh-tool-call-timeout-policy': '0.2.2-rc.3',
+    '@deepseek-ai/dsh-web': DSH_TEST_EXPECTED_VERSION,
+    '@deepseek-ai/dsh-tools': DSH_TEST_EXPECTED_VERSION,
+    '@deepseek-ai/dsh-tool-web': DSH_TEST_EXPECTED_VERSION,
+    '@deepseek-ai/dsh-tool-executor-native': DSH_TEST_EXPECTED_VERSION,
+    '@deepseek-ai/dsh-tool-executor-ptc': DSH_TEST_EXPECTED_VERSION,
+    '@deepseek-ai/dsh-tool-call-timeout-policy': DSH_TEST_EXPECTED_VERSION,
   })
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  DSH_TEST_EXPECTED_VERSION,
   runDshFixture,
   type FixtureDriver,
   type FixtureMode,
@@ -23,7 +24,7 @@ describe.each(MODES)('%s 官方 web_search output 差分', (mode) => {
       lifecycle: true,
     })
 
-    expect(observation.source['@deepseek-ai/dsh-tool-web']).toBe('0.2.2-rc.3')
+    expect(observation.source['@deepseek-ai/dsh-tool-web']).toBe(DSH_TEST_EXPECTED_VERSION)
     expect(observation.officialSearchCalls).toBe(0)
     expect(observation.driverCalls).toEqual([
       { query: 'alpha', maxResults: 10 },

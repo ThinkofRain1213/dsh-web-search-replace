@@ -15,6 +15,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const FIXTURE_PATH = fileURLToPath(import.meta.url)
 const PROJECT_ROOT = path.resolve(FIXTURE_PATH, '../../..')
 
+/**
+ * 测试期望的 DSH 运行时版本。
+ *
+ * 默认严格固定为项目声明支持的 0.2.2-rc.3；只有显式设置
+ * DSH_TEST_EXPECTED_VERSION 时才切换为兼容验证版本（例如当前安装的
+ * 0.2.2-rc.5）。这不是支持声明，也不改变最终 rc.3 验收目标。
+ */
+export const DSH_TEST_EXPECTED_VERSION = process.env.DSH_TEST_EXPECTED_VERSION ?? '0.2.2-rc.3'
+
 export type FixtureMode = 'native' | 'ptc'
 export type FixtureDriver = 'normal' | 'missing' | 'throw' | 'delay'
   | 'contract' | 'unauthorized' | 'rate-limit' | 'bad-response'
@@ -296,6 +305,9 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
         id: 'task-3-fixture-session',
         // PTC SDK binding 的官方日志边界；本 fixture 不需要持久化，但必须完整提供。
         append: () => 0,
+        // rc.5 官方 web_search 会读取会话路由来选择 Provider；与真实 Session
+        // 及 rc.5 官方 tool-web 测试一致，返回本场景已解析的 provider/model。
+        requestContext: () => ({ provider, model }),
       },
       ctx,
     }
