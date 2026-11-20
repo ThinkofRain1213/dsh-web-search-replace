@@ -108,7 +108,7 @@
 | Switch | 原生 `button type=button`，`role=switch` / `aria-checked` / 必填 `aria-label`；轨道 36 × 20、`padding: 2px`、thumb 16、`translateX(16px)`、`transform 120ms ease`、disabled `opacity: .5`、focus-visible ring、`prefers-reduced-motion` 关闭动画 |
 | Dropdown 锚点 | height 34px / padding `0 12px` / border `0.5px solid border-l4` / radius-md / bg-layer-3；disabled 只改 `label-tertiary` 与 cursor |
 | Menu | `padding: 4px`；item `min-height: 34px`、`padding: 6px 8px`、`gap: 6px`、13px/20px；portal 到 `document.body`、autoFocus、minWidthFromAnchor |
-| Dropdown 键盘 | Enter/Space/ArrowDown 打开并聚焦首项，ArrowUp 打开并聚焦末项；ArrowUp/ArrowDown 循环，Home/End 定位；Escape 与 Shift+Tab 关闭并把焦点还给 trigger；选择后焦点回 trigger；outside pointerdown 只关闭菜单 |
+| Dropdown 键盘 | Enter/Space/ArrowDown 打开并聚焦首项，ArrowUp 打开并聚焦末项；ArrowUp/ArrowDown 循环，Home/End 定位；Escape 与 Shift+Tab 关闭并把焦点还给 trigger；普通 Tab 在当前菜单项上选择、关闭并回 trigger（相同 onSelect/RPC），菜单外 Tab 保持浏览器 traversal；选择后焦点回 trigger；outside pointerdown 只关闭菜单 |
 
 ## 6. 证据边界
 

@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 /**
  * Task 13 搜索设置区：同一 search.channel 真源、OFF 灰化保值、ON 无账号状态、
- * 保存失败回滚、busy 锁、自有 Switch/Dropdown 的 portal/键盘/焦点。
+ * 保存失败保持旧值、busy 锁、自有 Switch/Dropdown 的 portal/键盘/焦点。
  *
  * 这里挂载真实 `SettingsCard`，只把 Host 边界（configForms 与 Connection RPC）
  * 换成可控替身；断言全部读取真实 React DOM。
  */
 import { createElement } from 'react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
@@ -170,9 +170,12 @@ describe('SearchSection（真实 DOM）', () => {
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await click(toggle)
 
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(toggle.disabled).toBe(true)
     expect(trigger.disabled).toBe(true)
+    expect(trigger.textContent).toContain('CodeBuddy')
+    expect(query(container, '[data-row="channel"]').getAttribute('data-gated')).toBe('true')
+    expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
     expect(calls).toHaveLength(1)
     expect(calls[0]).toEqual({ method: 'settings.update', payload: { patch: { enabled: true } } })
 
@@ -188,14 +191,14 @@ describe('SearchSection（真实 DOM）', () => {
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
   })
 
-  it('开关保存失败时回滚到旧值并显示未被灰化选择器覆盖的错误红字', async () => {
+  it('开关保存失败时保持旧值并显示未被灰化选择器覆盖的错误红字', async () => {
     const before = makeSnapshot({ enabled: false, channel: 'buddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
     const { container } = renderCard({ snapshot: before, responder: () => response.promise })
 
     const toggle = query<HTMLButtonElement>(container, '[role="switch"]')
     await click(toggle)
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
 
     response.resolve(failure)
     await settle()
@@ -237,13 +240,14 @@ describe('SearchSection（真实 DOM）', () => {
     expect(document.activeElement).toBe(trigger)
     expect(calls).toHaveLength(1)
     expect(calls[0]).toEqual({ method: 'settings.update', payload: { patch: { channel: 'qoder' } } })
-    expect(trigger.textContent).toContain(t('channel.qoder.name'))
+    expect(trigger.textContent).toContain(t('channel.buddy.name'))
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
     expect(trigger.disabled).toBe(true)
 
     response.resolve({ ok: true, value: after })
     await settle()
 
+    expect(trigger.textContent).toContain(t('channel.qoder.name'))
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('qoder')
     expect(container.querySelectorAll('[data-channel-config-host]')).toHaveLength(1)
     expect(query(container, '[data-channel-config-host]').querySelector('[data-qoder-endpoint-slot]')).toBeTruthy()
@@ -251,7 +255,7 @@ describe('SearchSection（真实 DOM）', () => {
     expect(trigger.disabled).toBe(false)
   })
 
-  it('渠道保存失败时回滚显示值并保持旧配置区', async () => {
+  it('渠道保存失败时保持旧值并保持旧配置区', async () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
     const { container, t } = renderCard({ snapshot: before, responder: () => response.promise })
@@ -261,7 +265,7 @@ describe('SearchSection（真实 DOM）', () => {
     const menu = query<HTMLElement>(document, '[data-dropdown-menu]')
     await click(buttonByText(menu, t('channel.workbuddy.name')))
 
-    expect(trigger.textContent).toContain(t('channel.workbuddy.name'))
+    expect(trigger.textContent).toContain(t('channel.buddy.name'))
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
 
     response.resolve(failure)
@@ -311,6 +315,86 @@ describe('SearchSection（真实 DOM）', () => {
 
     await pointerdown(document.body)
     expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
+  })
+
+  it('普通 Tab 在菜单项上复用选择路径，并保持 pending 旧值与相同 RPC', async () => {
+    const before = makeSnapshot({ enabled: true, channel: 'buddy' })
+    const after = makeSnapshot({ enabled: true, channel: 'workbuddy' })
+    const response = deferred<RpcResult<SearchSettingsSnapshot>>()
+    const { container, calls, t } = renderCard({ snapshot: before, responder: () => response.promise })
+
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    await keydown(trigger, 'Enter')
+    await keydown(document.activeElement as Element, 'ArrowDown')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe(t('channel.workbuddy.name'))
+
+    const tab = await keydown(document.activeElement as Element, 'Tab')
+    expect(tab.defaultPrevented).toBe(true)
+    expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toEqual({ method: 'settings.update', payload: { patch: { channel: 'workbuddy' } } })
+
+    expect(trigger.textContent).toContain(t('channel.buddy.name'))
+    expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
+    expect(query(container, '[role="switch"]').getAttribute('aria-checked')).toBe('true')
+    expect(trigger.disabled).toBe(true)
+
+    response.resolve({ ok: true, value: after })
+    await settle()
+
+    expect(trigger.textContent).toContain(t('channel.workbuddy.name'))
+    expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('workbuddy')
+    expect(trigger.disabled).toBe(false)
+  })
+
+  it('普通 Tab 在菜单外不被本菜单拦截', async () => {
+    const { container, calls } = renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+    })
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    await keydown(trigger, 'Enter')
+    expect(document.querySelector('[data-dropdown-menu]')).not.toBeNull()
+
+    trigger.focus()
+    const tab = await keydown(trigger, 'Tab')
+    expect(tab.defaultPrevented).toBe(false)
+    expect(calls).toHaveLength(0)
+    expect(document.querySelector('[data-dropdown-menu]')).not.toBeNull()
+  })
+
+  it('菜单打开时卸载会清理 document 监听器', async () => {
+    const { container, unmount } = renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+    })
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    try {
+      const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+      await keydown(trigger, 'Enter')
+      expect(document.querySelector('[data-dropdown-menu]')).not.toBeNull()
+
+      const addedKeydown = addSpy.mock.calls.find(([type]) => type === 'keydown')?.[1]
+      const addedPointerdown = addSpy.mock.calls.find(([type]) => type === 'pointerdown')?.[1]
+      expect(addedKeydown).toBeDefined()
+      expect(addedPointerdown).toBeDefined()
+
+      unmount()
+      expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
+      expect(removeSpy.mock.calls.some(([type, listener]) => (
+        type === 'keydown' && listener === addedKeydown
+      ))).toBe(true)
+      expect(removeSpy.mock.calls.some(([type, listener]) => (
+        type === 'pointerdown' && listener === addedPointerdown
+      ))).toBe(true)
+      expect(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        document.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      }).not.toThrow()
+    } finally {
+      addSpy.mockRestore()
+      removeSpy.mockRestore()
+    }
   })
 
   it('门户定位使用锚点几何，minWidthFromAnchor 取锚点宽度', async () => {

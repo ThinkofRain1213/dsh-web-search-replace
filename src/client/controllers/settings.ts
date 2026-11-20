@@ -2,8 +2,9 @@
  * 设置卡控制器：读取 `configForms` 的单一设置快照，经共享 `settings.update`
  * RPC 写入。
  *
- * 视图只认一个真源：`search.channel`。下拉值和开关使用乐观草稿，保存失败
- * 回滚到 Host 最近一次成功快照；配置区 `viewChannel` 只在写入成功后才切换。
+ * 视图只认一个真源：`search.channel`。写入在飞时只发布 busy 和旧值；成功后
+ * 以 Host 返回快照原子更新 committed、下拉值和 `viewChannel`，失败只设置
+ * 错误并保持旧值/旧视图，不做乐观预切换。
  */
 import {
   isChannelId,
@@ -160,8 +161,7 @@ export class SettingsController {
    * @returns 本次写入完成或被视为重复/锁定而跳过。
    */
   async setEnabled(next: boolean): Promise<void> {
-    if (!this.canWrite() || next === this.draft.enabled) return
-    this.draft = { ...this.draft, enabled: next }
+    if (!this.canWrite() || next === this.committed?.search.enabled) return
     await this.write({ enabled: next })
   }
 
@@ -171,8 +171,7 @@ export class SettingsController {
    * @returns 本次写入完成或被视为重复/锁定而跳过。
    */
   async selectChannel(next: ChannelId): Promise<void> {
-    if (!this.canWrite() || next === this.draft.channel) return
-    this.draft = { ...this.draft, channel: next }
+    if (!this.canWrite() || next === this.committed?.search.channel) return
     await this.write({ channel: next })
   }
 
@@ -232,7 +231,7 @@ export class SettingsController {
   }
 
   /**
-   * 执行一次设置写入，并在失败时回滚乐观草稿。
+   * 执行一次设置写入；pending 只发布 busy，成功后原子切换，失败只设置错误。
    * @param patch - 平铺设置补丁。
    */
   private async write(patch: SearchSettingsPatch): Promise<void> {
@@ -252,9 +251,6 @@ export class SettingsController {
       this.error = null
     } catch {
       if (this.disposed) return
-      this.draft = this.committed === null
-        ? { enabled: false, channel: 'buddy' }
-        : { ...this.committed.search }
       this.error = 'settings.saveFailed'
     } finally {
       if (!this.disposed) {

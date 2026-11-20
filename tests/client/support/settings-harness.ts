@@ -238,11 +238,14 @@ export function mount(element: ReactElement): MountedRoot {
   document.body.append(container)
   const root = createRoot(container)
   act(() => { root.render(element) })
+  let active = true
   return {
     container,
     root,
     rerender: async (next) => { await act(async () => { root.render(next) }) },
     unmount: () => {
+      if (!active) return
+      active = false
       act(() => { root.unmount() })
       container.remove()
     },
@@ -278,15 +281,17 @@ export async function keydown(
   element: Element,
   key: string,
   options: KeyboardEventInit = {},
-): Promise<void> {
-  await act(async () => {
-    element.dispatchEvent(new KeyboardEvent('keydown', {
-      key,
-      bubbles: true,
-      cancelable: true,
-      ...options,
-    }))
+): Promise<KeyboardEvent> {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...options,
   })
+  await act(async () => {
+    element.dispatchEvent(event)
+  })
+  return event
 }
 
 /**

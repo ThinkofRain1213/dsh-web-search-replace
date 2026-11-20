@@ -3,7 +3,8 @@
  *
  * 锚点 34px / `0 12px`，Menu 4px padding / item 34px / `6px 8px` / gap 6 /
  * 13px·20px。列表 portal 到 document.body，打开时自动聚焦首项，方向键巡回，
- * Escape 与 Shift+Tab 关闭并把焦点还给 trigger，外部 pointerdown 只关闭菜单。
+ * Escape 与 Shift+Tab 关闭并把焦点还给 trigger；普通 Tab 在当前菜单项上复用
+ * 选择路径（选择、关闭、回 trigger），菜单外的 Tab 不拦截；外部 pointerdown 只关闭菜单。
  * 不导入任何 Harness Client 控件；portal 样式在同名 CSS Modules 产物里。
  */
 import * as React from 'react'
@@ -133,6 +134,18 @@ export function Dropdown({
       if (event.key === 'Tab' && event.shiftKey) {
         event.preventDefault()
         closeMenu(true)
+        return
+      }
+      // rc3 Menu 的普通 Tab：焦点在菜单项上时提交当前项，复用同一 select 路径。
+      // 焦点不在本菜单项上时不拦截，保留浏览器 traversal。
+      if (event.key === 'Tab') {
+        const active = document.activeElement
+        if (active instanceof HTMLElement
+          && active.getAttribute('role') === 'menuitem'
+          && menuRef.current?.contains(active) === true) {
+          event.preventDefault()
+          active.click()
+        }
         return
       }
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return

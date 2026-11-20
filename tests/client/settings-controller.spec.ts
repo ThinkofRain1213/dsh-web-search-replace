@@ -1,6 +1,6 @@
 /**
  * Task 13 设置控制器：读取 configForms 快照、经 Task 2 settings RPC 写入、
- * 成功后才切换配置视图，失败回滚并锁住在飞写入。
+ * 成功后才切换配置视图，失败保持旧值并锁住在飞写入。
  */
 import { describe, expect, it } from 'vitest'
 
@@ -52,14 +52,25 @@ describe('SettingsController', () => {
     controller.dispose()
   })
 
-  it('渠道写入成功后才以 Host 返回快照切换 viewChannel', async () => {
+  it('渠道写入成功后才以 Host 返回快照原子切换下拉值与 viewChannel', async () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'qoder' })
     const { configForms } = createConfigFormsDouble(before)
-    const { connection, calls } = createConnectionDouble(() => ({ ok: true, value: after }))
+    const response = deferred<{ ok: true; value: typeof after }>()
+    const { connection, calls } = createConnectionDouble(() => response.promise)
     const controller = new SettingsController({ configForms, connection })
 
-    await controller.selectChannel('qoder')
+    const pending = controller.selectChannel('qoder')
+    expect(controller.getSnapshot()).toMatchObject({
+      enabled: true,
+      channel: 'buddy',
+      viewChannel: 'buddy',
+      busy: true,
+      error: null,
+    })
+
+    response.resolve({ ok: true, value: after })
+    await pending
 
     expect(calls).toEqual([{
       method: 'settings.update',
@@ -75,7 +86,7 @@ describe('SettingsController', () => {
     expect(controller.getSnapshot().settings).toEqual(after)
   })
 
-  it('开关保存失败时回滚乐观状态并显示错误', async () => {
+  it('开关保存失败时保持旧值并显示错误', async () => {
     const before = makeSnapshot({ enabled: false, channel: 'buddy' })
     const { configForms } = createConfigFormsDouble(before)
     const response = deferred<{ ok: false; error: typeof failure.error }>()
@@ -84,7 +95,7 @@ describe('SettingsController', () => {
 
     const pending = controller.setEnabled(true)
     expect(controller.getSnapshot()).toMatchObject({
-      enabled: true,
+      enabled: false,
       channel: 'buddy',
       viewChannel: 'buddy',
       busy: true,
@@ -114,7 +125,12 @@ describe('SettingsController', () => {
     const first = controller.setEnabled(true)
     const second = controller.setEnabled(false)
     expect(calls).toHaveLength(1)
-    expect(controller.getSnapshot().busy).toBe(true)
+    expect(controller.getSnapshot()).toMatchObject({
+      enabled: false,
+      channel: 'buddy',
+      viewChannel: 'buddy',
+      busy: true,
+    })
 
     response.resolve({ ok: true, value: after })
     await Promise.all([first, second])
@@ -123,7 +139,7 @@ describe('SettingsController', () => {
     expect(controller.getSnapshot()).toMatchObject({ enabled: true, busy: false })
   })
 
-  it('渠道保存失败时值回滚且配置视图不提前切换', async () => {
+  it('渠道保存失败时保持旧值且配置视图不切换', async () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const { configForms } = createConfigFormsDouble(before)
     const response = deferred<{ ok: false; error: typeof failure.error }>()
@@ -132,9 +148,10 @@ describe('SettingsController', () => {
 
     const pending = controller.selectChannel('qoder')
     expect(controller.getSnapshot()).toMatchObject({
-      channel: 'qoder',
+      channel: 'buddy',
       viewChannel: 'buddy',
       busy: true,
+      error: null,
     })
 
     response.resolve(failure)
@@ -159,7 +176,8 @@ describe('SettingsController', () => {
     let notifications = 0
     controller.subscribe(() => { notifications += 1 })
     const pending = controller.setEnabled(true)
-    const afterOptimistic = notifications
+    const afterPending = notifications
+    expect(controller.getSnapshot()).toMatchObject({ enabled: false, busy: true })
 
     controller.dispose()
     expect(form.listenerCount()).toBe(0)
@@ -167,7 +185,7 @@ describe('SettingsController', () => {
     response.resolve({ ok: true, value: after })
     await pending
 
-    expect(notifications).toBe(afterOptimistic)
+    expect(notifications).toBe(afterPending)
     expect(controller.getSnapshot().viewChannel).toBe('buddy')
   })
 
