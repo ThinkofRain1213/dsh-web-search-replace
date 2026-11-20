@@ -187,6 +187,23 @@ describe('Client 入口', () => {
     const client = await import('../../src/client/index.ts')
     const registered: { options: Record<string, any>; component: unknown }[] = []
     const locale = createLocaleDouble()
+    const configForms = {
+      get: () => ({
+        getSnapshot: () => ({
+          status: 'loading' as const,
+          value: undefined,
+          base: undefined,
+          user: undefined,
+          revision: undefined,
+          writable: false,
+        }),
+        subscribe: () => () => {},
+      }),
+    }
+    const connection = {
+      fetch: { register: () => async () => {} },
+      rpc: { async call() { return { ok: true as const, value: undefined } } },
+    }
 
     const ctx = {
       effect: (fn: () => unknown) => {
@@ -194,6 +211,8 @@ describe('Client 入口', () => {
         return () => { if (typeof disposer === 'function') (disposer as () => void)() }
       },
       locale: locale.service,
+      configForms,
+      connection,
       slots: {
         inject: (_name: string, callback: () => unknown) => {
           callback()
@@ -215,6 +234,8 @@ describe('Client 入口', () => {
     expect([...locale.namespaces().keys()]).toEqual([options.locale])
 
     const injected = options.inject()
+    expect(injected.configForms).toBe(configForms)
+    expect(injected.connection).toBe(connection)
     const styles = (await import('../../src/client/styles/settings-card.module.css')) as { default: Record<string, string> }
     const page = renderToStaticMarkup(createElement(component as never, { view: 'page', ...injected }))
     expect(typeof styles.default.stack).toBe('string')

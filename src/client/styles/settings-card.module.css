@@ -1,26 +1,320 @@
-/* 「网页搜索渠道」设置卡的 0.1.0 骨架排版。
-   只使用宿主主题 token（--dsw-alias-*），并提供 currentColor 兜底，
-   使深浅主题与未知 token 下都可读。类名由构建脚本按「包名/文件#类名」哈希。 */
+/* 「网页搜索渠道」设置卡的 0.1.0 完整排版。
+   只使用宿主主题 token（--dsw-alias-*），并提供 currentColor 兜底。
+   `.stack` 自己收住整张卡的 flex column gap 0；间距全部由 section / row /
+   field 的 padding 提供。首末 −12px 只按块类型命中，绝不让 h3 被负 margin
+   拖动。类名由构建脚本按「包名/文件#类名」哈希，portal 菜单也使用本表。 */
 
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
   min-width: 0;
-  padding: 4px 0;
 }
 
-.title {
+.section {
+  min-width: 0;
+  padding: 16px 0;
+}
+
+.heading {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  line-height: 20px;
+  line-height: 1.5;
   color: var(--dsw-alias-label-primary, currentColor);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.rowText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rowTitle {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 19.5px;
+  color: var(--dsw-alias-label-primary, currentColor);
+}
+
+.rowDescription {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+}
+
+.rowGated .rowTitle {
+  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-primary, currentColor));
+}
+
+.rowGated .rowDescription {
+  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary, currentColor));
+}
+
+.rowGated .selector {
+  opacity: 0.5;
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary, currentColor);
+}
+
+.rule {
+  flex: none;
+  margin: 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, currentColor);
+}
+
+.fieldSlot {
+  min-width: 0;
+  padding: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.fieldHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, currentColor);
+}
+
+.hintRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -6px 0 12px;
+}
+
+.hintText {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
 }
 
 .hint {
   margin: 0;
   font-size: 12px;
+  font-weight: 400;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary, currentColor));
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+}
+
+/* 首块补偿：h3 不在列表里；fieldSlot 自身 padding 为 0，抵消的是内部
+   .field 的 padding-top。空分组只有 h3 时不会命中任何一条。 */
+.section > .row:first-child,
+.section > .fieldSlot:first-child,
+.section > .group:first-child {
+  margin-top: -12px;
+}
+
+/* 末块补偿：只吸带 12px 空白的末块。hintRow 位于 fieldSlot 内部时由
+   fieldSlot:last-child 承担；只有 section 直接末孩子 hintRow 才用最后一条。 */
+.section > .row:last-child,
+.section > .fieldSlot:last-child,
+.section > .group:last-child,
+.section > .hintRow:last-child {
+  margin-bottom: -12px;
+}
+
+/* 自有 Switch：复制 rc3 primitives 的 36×20 轨道、16px thumb、120ms 动画、
+   focus ring 与 disabled .5；状态颜色由 aria-checked 驱动。 */
+.switch {
+  box-sizing: border-box;
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, currentColor));
+  cursor: pointer;
+}
+
+.switch[aria-checked='true'] {
+  background: var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary, currentColor));
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.switch:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
+  outline-offset: 2px;
+}
+
+.thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-label-primary-foreground, #fff);
+  transition: transform 120ms ease;
+}
+
+.switch[aria-checked='false'] .thumb {
+  background: var(--dsw-alias-switch-thumb, #fff);
+}
+
+.switch[aria-checked='true'] .thumb {
+  transform: translateX(16px);
+}
+
+/* 自有 Dropdown：锚点 34px / 0 12px；Menu 4px padding，item 34px 高、
+   6px 8px、gap 6、13px/20px。Menu 通过 portal 渲染到 body。 */
+.selector {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border: 0.5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3, currentColor));
+  border-radius: var(--dsw-radius-md, 12px);
+  background: var(--dsw-alias-bg-layer-3, transparent);
+  color: var(--dsw-alias-label-primary, currentColor);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .selector:not(:disabled):hover {
+    background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-3, transparent));
+  }
+}
+
+.selector:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
+  outline-offset: 2px;
+}
+
+.selector:disabled {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  cursor: default;
+}
+
+.selectorLabel {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chevron {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.menu {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: 320px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 0.5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3, currentColor));
+  border-radius: var(--dsw-radius-md, 12px);
+  background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2, #fff));
+  box-shadow: 0 8px 24px var(--dsw-alias-shadow-l2, rgba(0, 0, 0, 0.16));
+}
+
+.menuItem {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary, currentColor);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible,
+.menuItem[data-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2, transparent));
+}
+
+.menuItem:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
+  outline-offset: -2px;
+}
+
+.menuItem:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menuCheck {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  color: var(--dsw-alias-state-business-primary, currentColor);
+}
+
+.menuItemLabel {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb {
+    transition: none;
+  }
 }

@@ -1,34 +1,99 @@
 /**
- * 「网页搜索渠道」设置卡的 0.1.0 骨架。
+ * 「网页搜索渠道」bundle 设置卡（`plugins.bundle.config`，key = 包名）。
  *
- * 只渲染标题与「设置加载中」两行；`summary` 视图返回 null，因为 bundle 详情页
- * 的一行摘要由 locale 的 `meta.description` 负责，这里不重复。搜索开关、渠道
- * 下拉与账号区属于后续任务，骨架阶段不伪造。
+ * rc3 的 bundle 配置 slot 只传 `view: 'page'`，不传 `form`；因此这里通过
+ * `configForms.get('dsh-web-search-channels')` 读取/订阅唯一设置快照，保存
+ * 只走插件自己的 `settings.update` RPC。`summary` 视图返回 null，摘要由
+ * locale 的 `meta.description` 负责。
  */
-
 import * as React from 'react'
 
+import { ChannelConfigHost } from './ChannelConfigHost.tsx'
+import { SearchSection } from './SearchSection.tsx'
+import {
+  SettingsController,
+  type ConfigFormsLike,
+} from './controllers/settings.ts'
+import type { ManagementRpcConnection } from '../shared/rpc.ts'
 import styles from './styles/settings-card.module.css'
 
-/** 设置卡收到的视图与翻译函数。 */
+/** 设置卡收到的视图、翻译函数与 Host 服务接缝。 */
 export interface SettingsCardProps {
   /** `summary` 只出现在官方插件卡片；bundle 配置只渲染 `page`。 */
   readonly view: 'summary' | 'page'
   /** 当前 locale 命名空间绑定出的翻译函数。 */
   readonly t: (key: string) => string
+  /** Host 的 configForms 服务；bundle slot 不提供 form，必须自己读取。 */
+  readonly configForms?: ConfigFormsLike | undefined
+  /** Connection 的共享 RPC 通道，用于 settings.update。 */
+  readonly connection?: ManagementRpcConnection | undefined
 }
 
 /**
- * @param props - 视图与翻译函数。
- * @returns 设置卡骨架，或 `summary` 视图下的 null。
+ * @param props - 视图、翻译函数与 Host 服务。
+ * @returns 设置卡，或 `summary` 视图下的 null。
  */
-export function SettingsCard({ view, t }: SettingsCardProps): React.ReactElement | null {
+export function SettingsCard({
+  view,
+  t,
+  configForms,
+  connection,
+}: SettingsCardProps): React.ReactElement | null {
+  const [controller] = React.useState(
+    () => new SettingsController({ configForms, connection }),
+  )
+  React.useEffect(() => () => { controller.dispose() }, [controller])
+  const state = React.useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
+  )
+
   if (view !== 'page') return null
 
+  const body = state.status === 'ready' && state.settings !== null
+    ? (
+      <>
+        <SearchSection
+          enabled={state.enabled}
+          channel={state.channel}
+          busy={state.busy}
+          writable={state.writable}
+          error={state.error}
+          t={t}
+          onToggle={(next) => { void controller.setEnabled(next) }}
+          onSelectChannel={(next) => { void controller.selectChannel(next) }}
+        />
+        <div className={styles.rule} role="separator" aria-orientation="horizontal" />
+        <ChannelConfigHost
+          channel={state.viewChannel}
+          currentAccountId={state.settings[state.viewChannel].currentAccountId}
+          t={t}
+        />
+      </>
+    )
+    : state.status === 'unavailable'
+      ? (
+        <section className={styles.section} data-settings-status="unavailable">
+          <h3 className={styles.heading}>{t('settings.title')}</h3>
+          <p className={styles.error} role="alert">{t('settings.unavailable')}</p>
+        </section>
+      )
+      : (
+        <section className={styles.section} data-settings-status="loading">
+          <h3 className={styles.heading}>{t('settings.title')}</h3>
+          <p className={styles.hint}>{t('settings.loading')}</p>
+        </section>
+      )
+
   return (
-    <div className={styles.stack} data-dsh-web-search-channels="settings-card">
-      <p className={styles.title}>{t('settings.title')}</p>
-      <p className={styles.hint}>{t('settings.loading')}</p>
+    <div
+      className={styles.stack}
+      data-dsh-web-search-channels="settings-card"
+      data-settings-status={state.status}
+      aria-busy={state.busy || undefined}
+    >
+      {body}
     </div>
   )
 }

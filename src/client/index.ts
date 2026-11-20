@@ -3,27 +3,17 @@
  * `plugins.bundle.config` 槽位（key = 包名）。
  *
  * 本文件不导入任何 Harness Client 包的值（只允许 `import type`），
- * React 由页面模块表提供；骨架阶段只渲染标题与「设置加载中」，
- * 不伪造搜索开关、账号或渠道控件。
+ * React 由页面模块表提供；设置值来自 `ctx.configForms`，写入走共享
+ * `settings.update` RPC。
  */
 
+import type { ManagementRpcConnection } from '../shared/rpc.ts'
 import { SettingsCard } from './SettingsCard.tsx'
+import { NS, PACKAGE_NAME } from './constants.ts'
+import type { ConfigFormsLike } from './controllers/settings.ts'
+import { en, zh } from './locales.ts'
 
-/** 本插件拥有的 locale 命名空间。 */
-export const NS = 'webSearchChannels'
-
-/** 包名：同时是 bundle 行名与设置槽 key。 */
-export const PACKAGE_NAME = 'dsh-web-search-channels'
-
-const zh: Record<string, string> = {
-  'settings.title': '网页搜索渠道',
-  'settings.loading': '设置加载中',
-}
-
-const en: Record<string, string> = {
-  'settings.title': 'Web search channels',
-  'settings.loading': 'Loading settings',
-}
+export { NS, PACKAGE_NAME } from './constants.ts'
 
 /** Client 模块运行时依赖的服务。 */
 export const inject = ['slots', 'locale', 'configForms', 'connection'] as const
@@ -55,7 +45,7 @@ export interface ClientSlotsService {
   inject(name: string, callback: () => unknown): unknown
   /**
    * 注册一个槽位条目。
-   * @param options - 槽位条目选项（name、keyed 槽位的 key、locale）。
+   * @param options - 槽位条目选项（name、keyed 槽位的 key、locale 与注入面）。
    * @param component - 渲染该条目的组件。
    * @returns 幂等 disposer。
    */
@@ -74,6 +64,10 @@ export interface ClientContext {
   readonly locale: ClientLocaleService
   /** 宿主槽位服务。 */
   readonly slots: ClientSlotsService
+  /** 宿主 configForms 服务；读取设置快照的唯一入口。 */
+  readonly configForms?: ConfigFormsLike | undefined
+  /** 宿主 Connection；写入共享 settings RPC。 */
+  readonly connection?: ManagementRpcConnection | undefined
 }
 
 /**
@@ -88,7 +82,11 @@ export function apply(ctx: ClientContext): void {
       name: 'plugins.bundle.config',
       key: PACKAGE_NAME,
       locale: NS,
-      inject: () => ({ t }),
+      inject: () => ({
+        t,
+        configForms: ctx.configForms,
+        connection: ctx.connection,
+      }),
     }, SettingsCard)),
     'dsh-web-search-channels: plugins-page card',
   )
