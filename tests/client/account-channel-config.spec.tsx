@@ -13,7 +13,7 @@ import { CHANNEL_IDS, type ChannelId } from '../../src/shared/channels.ts'
 import type { AccountSummary } from '../../src/shared/accounts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
 import {
-  AUTH_URL,
+  AUTH_URLS,
   accountCollection,
   accountSummary,
   authStatus,
@@ -78,26 +78,51 @@ function accountNames(container: ParentNode): string[] {
 }
 
 describe('AccountChannelConfig（真实 DOM）', () => {
-  it.each(CHANNEL_IDS)('渠道 %s 只读取并显示本渠道账号，不串用其他渠道', async (channel) => {
-    const foreignChannel = CHANNEL_IDS.find(id => id !== channel) ?? 'buddy'
+  it.each(CHANNEL_IDS)('渠道 %s 只读取并显示本渠道合法账号，不串用其他渠道', async (channel) => {
     const own = accountSummary(channel, 'own-account', { displayName: 'Own Account' })
-    const foreign = accountSummary(foreignChannel, 'foreign-account', { displayName: 'Foreign Account' })
+    const foreign = accountSummary(
+      CHANNEL_IDS.find(id => id !== channel) ?? 'buddy',
+      'foreign-account',
+      { displayName: 'Foreign Account' },
+    )
     const { container, calls } = await renderAccount(channel, {
       handlers: {
-        'accounts.list': () => ({ ok: true, value: [own, foreign] }),
-        'accounts.current': () => ({ ok: true, value: foreign }),
+        'accounts.list': () => ({ ok: true, value: [own] }),
+        'accounts.current': () => ({ ok: true, value: own }),
       },
     })
 
     expect(accountNames(container)).toEqual(['own-account'])
     expect(container.textContent).toContain('Own Account')
     expect(container.textContent).not.toContain('Foreign Account')
+    expect(container.textContent).toContain('当前使用')
     expect(container.querySelector('[data-account-state]')?.getAttribute('data-account-state'))
-      .toBe('required')
+      .toBe('selected')
     expect(calls.every(call => (
       (call.payload as { channel?: string }).channel === channel
     ))).toBe(true)
     expect(calls.map(call => call.method)).toEqual(['accounts.list', 'accounts.current'])
+    expect(foreign.channelId).not.toBe(channel)
+  })
+
+  it('跨渠道/畸形 list 或 current 整次读取失败，不显示需要账号或部分列表', async () => {
+    const own = accountSummary('buddy', 'own-account')
+    const foreign = accountSummary('qoder', 'foreign-account')
+    const { container } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [own, foreign] }),
+        'accounts.current': () => ({ ok: true, value: own }),
+      },
+    })
+
+    expect(accountNames(container)).toEqual([])
+    expect(container.textContent).not.toContain('需要账号')
+    expect(container.textContent).not.toContain('Foreign Account')
+    expect(container.querySelector('[data-account-state]')?.getAttribute('data-account-state'))
+      .toBe('error')
+    const error = query<HTMLElement>(container, '[data-account-error]')
+    expect(error.getAttribute('role')).toBe('alert')
+    expect(error.textContent).toContain('读取账号失败')
   })
 
   it('读取中不假装没有账号；失败可重试，错误红字保持 class=error', async () => {
@@ -123,6 +148,7 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(error.className).toContain('error')
     expect(error.textContent).toContain('读取账号失败')
     expect(error.closest('[data-gated], [inert], [aria-disabled="true"]')).toBeNull()
+    expect(container.textContent).not.toContain('需要账号')
 
     fail = false
     await click(query(container, '[data-action="retry-accounts"]'))
@@ -195,6 +221,134 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(container.querySelector('button:disabled')).toBeNull()
   })
 
+  it('第一行操作在飞时第二行操作显示排队，并按顺序执行', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const deleteResponse = deferred<RpcResult<ReturnType<typeof accountCollection>>>()
+    const { container, calls } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [a, b] }),
+        'accounts.current': () => ({ ok: true, value: a }),
+        'accounts.setCurrent': () => setCurrentResponse.promise,
+        'accounts.delete': () => deleteResponse.promise,
+      },
+    })
+
+    await click(query(container, '[data-action="set-current"][data-account-id="account-b"]'))
+    await click(query(container, '[data-action="delete"][data-account-id="account-a"]'))
+    const confirmation = query<HTMLElement>(container, '[data-delete-confirmation]')
+    await click(query(confirmation, '[data-action="confirm-delete"]'))
+
+    const rowA = query<HTMLElement>(container, '[data-account-row][data-account-id="account-a"]')
+    expect(rowA.getAttribute('data-row-queued')).toBe('true')
+    expect(rowA.textContent).toContain('排队中')
+    expect(query<HTMLButtonElement>(confirmation, '[data-action="confirm-delete"]').disabled)
+      .toBe(true)
+    expect(calls.filter(call => call.method === 'accounts.setCurrent')).toHaveLength(1)
+    expect(calls.filter(call => call.method === 'accounts.delete')).toEqual([])
+
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await flush()
+    expect(calls.find(call => call.method === 'accounts.delete')).toEqual({
+      method: 'accounts.delete',
+      payload: { channel: 'buddy', accountId: 'account-a' },
+    })
+    expect(query(container, '[data-account-row][data-account-id="account-a"]')
+      .getAttribute('data-row-busy')).toBe('true')
+    expect(container.textContent).toContain('处理中')
+    expect(container.textContent).not.toContain('排队中')
+
+    deleteResponse.resolve({ ok: true, value: accountCollection([b], b) })
+    await flush()
+    expect(accountNames(container)).toEqual(['account-b'])
+    expect(query(container, '[data-account-row][data-account-id="account-b"]')
+      .getAttribute('data-current')).toBe('true')
+    expect(container.querySelector('[data-delete-confirmation]')).toBeNull()
+    expect(container.textContent).not.toContain('排队中')
+  })
+
+  it('授权完成后的刷新在飞时锁账号写操作，刷新 settle 后恢复', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const secondList = deferred<RpcResult<readonly AccountSummary[]>>()
+    const secondCurrent = deferred<RpcResult<AccountSummary | null>>()
+    let listCalls = 0
+    let currentCalls = 0
+    const { container, calls } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => {
+          listCalls += 1
+          return listCalls === 1
+            ? { ok: true, value: [a, b] }
+            : secondList.promise
+        },
+        'accounts.current': () => {
+          currentCalls += 1
+          return currentCalls === 1
+            ? { ok: true, value: a }
+            : secondCurrent.promise
+        },
+        'accounts.setCurrent': () => ({ ok: true, value: b }),
+        'auth.start': () => ({
+          ok: true,
+          value: authStatus('buddy', {
+            status: 'completed',
+            authUrl: null,
+            account: a,
+          }),
+        }),
+      },
+    })
+
+    await click(query(container, '[data-action="add-account"]'))
+    await flush()
+    expect(query<HTMLButtonElement>(container, '[data-action="add-account"]').disabled).toBe(true)
+    expect(query<HTMLButtonElement>(container, '[data-action="set-current"]').disabled).toBe(true)
+
+    await click(query(container, '[data-action="set-current"]'))
+    expect(calls.filter(call => call.method === 'accounts.setCurrent')).toEqual([])
+
+    secondList.resolve({ ok: true, value: [a, b] })
+    await flush()
+    expect(query<HTMLButtonElement>(container, '[data-action="set-current"]').disabled).toBe(true)
+
+    secondCurrent.resolve({ ok: true, value: a })
+    await flush()
+    expect(query<HTMLButtonElement>(container, '[data-action="set-current"]').disabled).toBe(false)
+    expect(container.textContent).toContain('账号已添加')
+  })
+
+  it('排队中的删除确认可以取消，取消后不再执行该删除', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const { container, calls } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [a, b] }),
+        'accounts.current': () => ({ ok: true, value: a }),
+        'accounts.setCurrent': () => setCurrentResponse.promise,
+        'accounts.delete': () => ({ ok: true, value: accountCollection([b], b) }),
+      },
+    })
+
+    await click(query(container, '[data-action="set-current"][data-account-id="account-b"]'))
+    await click(query(container, '[data-action="delete"][data-account-id="account-a"]'))
+    const confirmation = query<HTMLElement>(container, '[data-delete-confirmation]')
+    await click(query(confirmation, '[data-action="confirm-delete"]'))
+    expect(container.textContent).toContain('排队中')
+
+    await click(query(confirmation, '[data-action="cancel-delete"]'))
+    expect(container.querySelector('[data-delete-confirmation]')).toBeNull()
+    expect(container.textContent).not.toContain('排队中')
+
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await flush()
+    expect(calls.filter(call => call.method === 'accounts.delete')).toEqual([])
+    expect(query(container, '[data-account-row][data-account-id="account-b"]')
+      .getAttribute('data-current')).toBe('true')
+  })
+
   it('添加账号在渠道区内联展开，授权 busy 通知上层且不自动打开 Search', async () => {
     const start = deferred<RpcResult<ReturnType<typeof authStatus>>>()
     const { container, calls, onAuthBusyChange } = await renderAccount('qodercn', {
@@ -224,7 +378,7 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     const auth = query<HTMLElement>(container, '[data-inline-auth]')
     expect(auth.getAttribute('data-auth-phase')).toBe('pending')
     expect(auth.textContent).toContain('等待授权完成')
-    expect(query<HTMLElement>(auth, '[data-auth-url]').textContent).toBe(AUTH_URL)
+    expect(query<HTMLElement>(auth, '[data-auth-url]').textContent).toBe(AUTH_URLS.qodercn)
     expect(auth.querySelector('a[href]')).toBeNull()
     expect(auth.textContent).not.toContain('请在浏览器中完成授权')
     expect(onAuthBusyChange).toHaveBeenLastCalledWith(true)
@@ -250,6 +404,37 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(auth.textContent).toContain('重新登录账号')
     expect(auth.textContent).toContain('Account A')
     expect(container.textContent).toContain('当前使用')
+  })
+
+  it('重登返回其他账号时不显示成功，保持当前账号与错误状态', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const { container } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [a, b] }),
+        'accounts.current': () => ({ ok: true, value: a }),
+        'auth.start': () => ({
+          ok: true,
+          value: authStatus('buddy', {
+            status: 'completed',
+            authUrl: null,
+            account: b,
+          }),
+        }),
+      },
+    })
+
+    await click(query(container, '[data-action="reauth-account"][data-account-id="account-a"]'))
+    await flush()
+
+    const auth = query<HTMLElement>(container, '[data-inline-auth]')
+    expect(auth.getAttribute('data-auth-phase')).toBe('failed')
+    expect(auth.textContent).toContain('授权服务返回了无效响应')
+    expect(container.textContent).not.toContain('重新登录完成')
+    expect(query(container, '[data-account-row][data-account-id="account-a"]')
+      .getAttribute('data-current')).toBe('true')
+    expect(query(container, '[data-account-row][data-account-id="account-b"]')
+      .getAttribute('data-current')).toBe('false')
   })
 
   it('删除当前账号默认“暂不指定”，确认前不发 RPC，成功后不自动递补', async () => {
@@ -443,7 +628,7 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(alert.className).toContain('error')
   })
 
-  it('只渲染六字段账号投影：夹带额外秘密字段的 DTO 被拒绝', async () => {
+  it('只渲染六字段账号投影：任一夹带额外秘密字段的 DTO 使整次读取失败', async () => {
     const valid = accountSummary('buddy', 'account-a', { displayName: 'Safe Account' })
     const poisoned = {
       ...accountSummary('buddy', 'account-b', { displayName: 'Poisoned Account' }),
@@ -457,11 +642,13 @@ describe('AccountChannelConfig（真实 DOM）', () => {
       },
     })
 
-    expect(accountNames(container)).toEqual(['account-a'])
+    expect(accountNames(container)).toEqual([])
+    expect(container.textContent).not.toContain('Safe Account')
     expect(container.textContent).not.toContain('Poisoned Account')
     expect(container.innerHTML).not.toContain('sentinel-access-token')
     expect(container.innerHTML).not.toContain('sentinel-machine-id')
     expect(container.innerHTML).not.toContain('accessToken')
+    expect(query(container, '[data-account-error]').textContent).toContain('读取账号失败')
   })
 
   it('账号行不把 AccountSummary.endpointLabel 冒充实际端点', async () => {

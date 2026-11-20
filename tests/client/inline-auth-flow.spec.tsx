@@ -13,7 +13,7 @@ import type { AccountSummary } from '../../src/shared/accounts.ts'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
 import {
-  AUTH_URL,
+  AUTH_URLS,
   accountSummary,
   authStatus,
   routeAccounts,
@@ -133,15 +133,15 @@ describe('InlineAuthFlow（真实 DOM）', () => {
     await click(query(container, '[data-action="copy-auth"]'))
     await flush()
     expect(writeText).toHaveBeenCalledTimes(1)
-    expect(writeText).toHaveBeenCalledWith(AUTH_URL)
+    expect(writeText).toHaveBeenCalledWith(AUTH_URLS.buddy)
     expect(container.textContent).toContain('已复制授权链接')
-    expect(query(container, '[data-auth-url]').textContent).toBe(AUTH_URL)
+    expect(query(container, '[data-auth-url]').textContent).toBe(AUTH_URLS.buddy)
 
     writeText.mockRejectedValueOnce(new Error('denied'))
     await click(query(container, '[data-action="copy-auth"]'))
     await flush()
     expect(container.textContent).toContain('复制失败，请手动选择并复制链接')
-    expect(query(container, '[data-auth-url]').textContent).toBe(AUTH_URL)
+    expect(query(container, '[data-auth-url]').textContent).toBe(AUTH_URLS.buddy)
 
     delete (navigator as { clipboard?: unknown }).clipboard
     await click(query(container, '[data-action="copy-auth"]'))
@@ -238,7 +238,7 @@ describe('InlineAuthFlow（真实 DOM）', () => {
       },
     })
     await startAdd(container)
-    expect(query(container, '[data-auth-url]').textContent).toBe(AUTH_URL)
+    expect(query(container, '[data-auth-url]').textContent).toBe(AUTH_URLS.buddy)
 
     await advance(1000)
     expect(statusCalls).toBe(1)
@@ -411,11 +411,83 @@ describe('InlineAuthFlow（真实 DOM）', () => {
     expect(statusCalls).toBe(0)
   })
 
+  it('非法/错渠道 authUrl 不进入 DOM 或剪贴板，并显示无效授权响应', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const invalidUrls = [
+      'https://qoder.com/device/selectAccounts?machine_id=m',
+      'https://evil.example/auth',
+      'https://user:pass@www.codebuddy.cn/login',
+      'https://www.codebuddy.cn:8443/login',
+      'https://www.codebuddy.cn/login#fragment',
+      'https://www.codebuddy.cn/login\ninjected',
+      'https://',
+      `https://www.codebuddy.cn/login?state=${'a'.repeat(2049)}`,
+    ]
+
+    for (const authUrl of invalidUrls) {
+      const { container } = await renderAccount('buddy', {
+        'auth.start': () => ({
+          ok: true,
+          value: authStatus('buddy', { authUrl }),
+        }),
+      })
+      await startAdd(container)
+
+      const auth = query<HTMLElement>(container, '[data-inline-auth]')
+      expect(auth.getAttribute('data-auth-phase'), authUrl).toBe('failed')
+      expect(container.querySelector('[data-auth-url]'), authUrl).toBeNull()
+      expect(container.querySelector('[data-action="copy-auth"]'), authUrl).toBeNull()
+      expect(container.innerHTML, authUrl).not.toContain(authUrl)
+      expect(auth.textContent, authUrl).toContain('授权服务返回了无效响应')
+      expect(writeText).not.toHaveBeenCalled()
+    }
+  })
+
+  it('正常渠道切换取消旧 pending flow，并停止旧轮询', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let statusCalls = 0
+    const { container, form, calls } = await renderCard(
+      makeSnapshot({ enabled: true, channel: 'buddy' }),
+      {
+        'auth.start': () => ({ ok: true, value: authStatus('buddy') }),
+        'auth.status': () => {
+          statusCalls += 1
+          return { ok: true, value: authStatus('buddy') }
+        },
+        'auth.cancel': () => ({
+          ok: true,
+          value: authStatus('buddy', { status: 'cancelled', authUrl: null }),
+        }),
+      },
+    )
+    await startAdd(container)
+    expect(container.querySelector('[data-auth-url]')).not.toBeNull()
+
+    await act(async () => {
+      form.push({ value: makeSnapshot({ enabled: true, channel: 'workbuddy' }) })
+    })
+    await flush()
+
+    expect(query(container, '[data-channel-config-host]').getAttribute('data-channel'))
+      .toBe('workbuddy')
+    expect(calls.find(call => call.method === 'auth.cancel')).toEqual({
+      method: 'auth.cancel',
+      payload: { channel: 'buddy', flowId: 'flow-1' },
+    })
+    expect(container.querySelector('[data-auth-url]')).toBeNull()
+    await advance(5000)
+    expect(statusCalls).toBe(0)
+  })
+
   it('正常渠道切换卸载旧账号实例：迟到 auth.start 不再显示旧链接，也不启动旧轮询', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const start = deferred<RpcResult<ReturnType<typeof authStatus>>>()
     let statusCalls = 0
-    const { container, form } = await renderCard(
+    const { container, form, calls } = await renderCard(
       makeSnapshot({ enabled: true, channel: 'buddy' }),
       {
         'auth.start': () => start.promise,
@@ -423,6 +495,10 @@ describe('InlineAuthFlow（真实 DOM）', () => {
           statusCalls += 1
           return { ok: true, value: authStatus('buddy') }
         },
+        'auth.cancel': () => ({
+          ok: true,
+          value: authStatus('buddy', { status: 'cancelled', authUrl: null }),
+        }),
       },
     )
     await click(query(container, '[data-account-config-slot] [data-action="add-account"]'))
@@ -441,8 +517,12 @@ describe('InlineAuthFlow（真实 DOM）', () => {
     await advance(5000)
 
     expect(container.querySelector('[data-inline-auth]')).toBeNull()
-    expect(container.textContent).not.toContain(AUTH_URL)
+    expect(container.textContent).not.toContain(AUTH_URLS.buddy)
     expect(statusCalls).toBe(0)
+    expect(calls.find(call => call.method === 'auth.cancel')).toEqual({
+      method: 'auth.cancel',
+      payload: { channel: 'buddy', flowId: 'flow-1' },
+    })
     expect(query<HTMLButtonElement>(container, '[data-search-section] [data-dropdown-trigger]').disabled)
       .toBe(false)
   })

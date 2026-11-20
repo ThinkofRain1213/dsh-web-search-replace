@@ -426,6 +426,24 @@
   color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
 }
 
+.accountStatusLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountQueued {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: var(--dsw-alias-bg-layer-2, transparent);
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .accountStatus[data-account-status='reauth_required'],
 .accountStatus[data-account-status='credential_unavailable'] {
   color: var(--dsw-alias-state-error-primary, currentColor);

@@ -80,8 +80,10 @@ export function AccountChannelConfig({
     : state.accounts.find(account => account.id === state.auth.targetAccountId) ?? null
   const actionLocked = !writable
     || state.authBusy
+    || state.refreshBusy
     || state.busyAccountId !== null
     || state.clearBusy
+    || state.queue.length > 0
     || deletingAccountId !== null
     || confirmingClear
 
@@ -116,7 +118,9 @@ export function AccountChannelConfig({
   }
 
   const handleCancelDelete = (): void => {
-    if (controller.getSnapshot().busyAccountId !== null) return
+    if (deletingAccountId === null) return
+    if (controller.getSnapshot().busyAccountId === deletingAccountId) return
+    controller.cancelQueuedDelete(deletingAccountId)
     setDeletingAccountId(null)
     setReplacementAccountId(null)
   }
@@ -135,11 +139,13 @@ export function AccountChannelConfig({
         : 'selected'
   const hintText = state.status === 'loading'
     ? t('channel.accounts.loading')
-    : state.current !== null
-      ? `${t('channel.account.current')}: ${state.current.displayName}`
-      : state.accounts.length === 0
-        ? t('channel.account.required')
-        : t('channel.accounts.noCurrent')
+    : state.status === 'error'
+      ? ''
+      : state.current !== null
+        ? `${t('channel.account.current')}: ${state.current.displayName}`
+        : state.accounts.length === 0
+          ? t('channel.account.required')
+          : t('channel.accounts.noCurrent')
 
   const channelNames = CHANNEL_IDS.map(id => t(`channel.${id}.name`)).join(
     t('channel.accounts.listSeparator'),
@@ -204,7 +210,8 @@ export function AccountChannelConfig({
             accounts={state.accounts}
             current={state.current}
             busyAccountId={state.busyAccountId}
-            locked={state.authBusy || deletingAccountId !== null || confirmingClear || state.clearBusy}
+            queue={state.queue}
+            locked={state.authBusy || state.refreshBusy || deletingAccountId !== null || confirmingClear || state.clearBusy}
             writable={writable}
             t={t}
             onSetCurrent={(accountId) => { void controller.setCurrent(accountId) }}
@@ -223,6 +230,7 @@ export function AccountChannelConfig({
             onConfirm={() => { void handleConfirmDelete() }}
             onCancel={handleCancelDelete}
             busy={state.busyAccountId === deletingAccount.id}
+            queued={state.queue.some(operation => operation.accountId === deletingAccount.id)}
             t={t}
           />
         )}

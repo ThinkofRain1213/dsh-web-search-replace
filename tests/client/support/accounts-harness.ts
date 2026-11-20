@@ -22,9 +22,19 @@ export const CHANNEL_ENDPOINT_LABELS: Readonly<Record<ChannelId, string>> = Obje
 })
 
 /** 一个带 Qoder `machine_id` 的取值范围受限的模拟授权 URL。 */
-export const AUTH_URL =
-  'https://qoder.com/device/selectAccounts?challenge=challenge-value'
-  + '&challenge_method=S256&nonce=nonce-value&machine_id=machine-123&client_id=client-1'
+export const AUTH_URLS: Readonly<Record<AuthChannel, string>> = Object.freeze({
+  buddy: 'https://www.codebuddy.cn/login?state=state-value',
+  workbuddy: 'https://www.workbuddy.ai/auth?flow=flow-value',
+  qoder:
+    'https://qoder.com/device/selectAccounts?challenge=challenge-value'
+    + '&challenge_method=S256&nonce=nonce-value&machine_id=machine-123&client_id=client-1',
+  qodercn:
+    'https://qoder.cn/device/selectAccounts?challenge=challenge-cn'
+    + '&challenge_method=S256&nonce=nonce-cn&machine_id=machine-cn&client_id=client-cn',
+})
+
+/** Qoder 国际版授权 URL（保留旧别名，仅供既有 Qoder 断言）。 */
+export const AUTH_URL = AUTH_URLS.qoder
 
 /**
  * 构造一个精确六字段的 AccountSummary。
@@ -76,7 +86,7 @@ export function authStatus(
     flowId: 'flow-1',
     channel,
     status: 'pending',
-    authUrl: AUTH_URL,
+    authUrl: AUTH_URLS[channel],
     displayHint: '请在浏览器中完成授权',
     account: null,
     errorCode: null,

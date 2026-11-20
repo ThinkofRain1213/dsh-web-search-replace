@@ -27,6 +27,8 @@ export interface InlineDeleteConfirmationProps {
   readonly onCancel: () => void
   /** 删除 RPC 在飞。 */
   readonly busy: boolean
+  /** 删除操作已在顺序队列中等待。 */
+  readonly queued?: boolean
   /** 翻译函数。 */
   readonly t: (key: string) => string
 }
@@ -45,6 +47,7 @@ export function InlineDeleteConfirmation({
   onConfirm,
   onCancel,
   busy,
+  queued = false,
   t,
 }: InlineDeleteConfirmationProps): React.ReactElement {
   const groupName = `dsh-web-search-replacement-${account.id}`
@@ -100,7 +103,7 @@ export function InlineDeleteConfirmation({
           type="button"
           className={styles.dangerButton}
           data-action="confirm-delete"
-          disabled={busy}
+          disabled={busy || queued}
           onClick={onConfirm}
         >
           {t('channel.accounts.confirmDelete')}

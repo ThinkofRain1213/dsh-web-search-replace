@@ -7,6 +7,7 @@
 import * as React from 'react'
 
 import type { AccountSummary } from '../shared/accounts.ts'
+import type { AccountsQueuedOperation } from './controllers/accounts.ts'
 import styles from './styles/settings-card.module.css'
 
 /** 账号列表属性。 */
@@ -17,6 +18,8 @@ export interface AccountListProps {
   readonly current: AccountSummary | null
   /** 正在执行行操作的账号。 */
   readonly busyAccountId: string | null
+  /** 已接受但尚未开始的行操作；用于显示“排队中”。 */
+  readonly queue: readonly AccountsQueuedOperation[]
   /** 授权/重登或确认区在飞时锁定所有行。 */
   readonly locked: boolean
   /** Host 是否允许写入。 */
@@ -40,6 +43,7 @@ export function AccountList({
   accounts,
   current,
   busyAccountId,
+  queue,
   locked,
   writable,
   t,
@@ -51,7 +55,9 @@ export function AccountList({
     <div className={styles.accountList} data-account-list="">
       {accounts.map((account) => {
         const isCurrent = current?.id === account.id
-        const rowLocked = locked || !writable || busyAccountId === account.id
+        const queued = queue.some(operation => operation.accountId === account.id)
+        const working = busyAccountId === account.id
+        const rowLocked = locked || !writable || working || queued
         return (
           <div
             key={account.id}
@@ -59,7 +65,8 @@ export function AccountList({
             data-account-row=""
             data-account-id={account.id}
             data-current={isCurrent ? 'true' : 'false'}
-            data-row-busy={busyAccountId === account.id ? 'true' : undefined}
+            data-row-busy={working ? 'true' : undefined}
+            data-row-queued={queued ? 'true' : undefined}
           >
             <div className={styles.accountRowText}>
               <div className={styles.accountRowHead}>
@@ -75,12 +82,24 @@ export function AccountList({
                   {account.maskedIdentifier}
                 </span>
               </div>
-              <span
-                className={styles.accountStatus}
-                data-account-status={account.status}
-              >
-                {t(`channel.accounts.status.${account.status}`)}
-              </span>
+              <div className={styles.accountStatusLine}>
+                <span
+                  className={styles.accountStatus}
+                  data-account-status={account.status}
+                >
+                  {t(`channel.accounts.status.${account.status}`)}
+                </span>
+                {queued && (
+                  <span className={styles.accountQueued} data-account-queued="">
+                    {t('channel.accounts.queued')}
+                  </span>
+                )}
+                {working && (
+                  <span className={styles.accountQueued} data-account-busy="">
+                    {t('channel.accounts.working')}
+                  </span>
+                )}
+              </div>
             </div>
             <div className={styles.accountActions}>
               {!isCurrent && (

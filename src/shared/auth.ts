@@ -48,6 +48,20 @@ export const AUTH_CHANNELS = [
 /** 授权渠道字面量类型。 */
 export type AuthChannel = (typeof AUTH_CHANNELS)[number]
 
+/**
+ * 每个渠道允许的授权 URL host 白名单；精确匹配，不允许后缀或跨渠道复用。
+ *
+ * 这些值只描述服务端下发的 external-link 授权页 host，不是搜索端点，也不含
+ * 凭证材料。Host 产品层仍负责在生成链接时校验；Client 用同一份最小安全契约
+ * 防止错接线/恶意回包把其他域链接交给用户复制。
+ */
+export const AUTH_URL_HOSTS: Readonly<Record<AuthChannel, readonly string[]>> = Object.freeze({
+  buddy: Object.freeze(['www.codebuddy.cn', 'copilot.tencent.com']),
+  workbuddy: Object.freeze(['www.workbuddy.ai']),
+  qoder: Object.freeze(['qoder.com']),
+  qodercn: Object.freeze(['qoder.cn']),
+})
+
 /** CodeBuddy 渠道字面量类型（保留 Task 9 的公开别名）。 */
 export type BuddyAuthChannel = typeof BUDDY_AUTH_CHANNEL
 
@@ -211,6 +225,46 @@ export function isAuthRpcMethod(value: unknown): value is AuthRpcMethod {
 /** 精确校验共享授权渠道。 */
 export function isAuthChannel(value: unknown): value is AuthChannel {
   return typeof value === 'string' && (AUTH_CHANNELS as readonly string[]).includes(value)
+}
+
+/**
+ * 校验某个渠道的授权 URL 是否满足 Client 可见安全边界。
+ *
+ * 规则与 Host 产品边界一致：绝对 https URL、精确 hostname、无 userinfo、
+ * 无显式端口（含 :443）、无 fragment、无原始控制字符、长度不超过 2048。
+ * 使用 `new URL` 解析而不是字符串前后缀匹配，避免 `qoder.com.evil`、
+ * `notqoder.com` 等伪造域通过。
+ *
+ * @param value - Host 回包的 authUrl。
+ * @param channel - 当前授权流程所属渠道。
+ * @returns 是否为该渠道可展示/复制的授权 URL。
+ */
+export function isAuthUrlForChannel(value: unknown, channel: AuthChannel): value is string {
+  if (typeof value !== 'string') return false
+  if (value.length === 0 || value.length > 2048) return false
+  if (value !== value.trim()) return false
+  // 原始控制字符必须在进入 URL parser 前拒绝；parser 可能静默剥离部分字符。
+  if (/[\u0000-\u001F\u007F]/.test(value)) return false
+
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:') return false
+  if (url.username !== '' || url.password !== '') return false
+  if (url.port !== '') return false
+  if (url.hash !== '') return false
+  if (!(AUTH_URL_HOSTS[channel] as readonly string[]).includes(url.hostname)) return false
+
+  // 显式端口（包括 :443）在 URL.port 会被归一化为空；这里从原始 authority
+  // 再拒绝一次。四渠道授权页不需要端口，也不接受 IPv6/端口形态。
+  const afterScheme = value.slice(value.indexOf('://') + 3)
+  const authority = afterScheme.split(/[/?#]/, 1)[0] ?? ''
+  if (authority.includes(':')) return false
+
+  return true
 }
 
 /** 稳定 flowId 语法：小写字母/数字开头，只含小写字母、数字和连字符。 */

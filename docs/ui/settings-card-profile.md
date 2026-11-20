@@ -146,9 +146,9 @@ Task 14 传入 children 后不再渲染占位 hintRow；该行只保留在缺省
 | Dropdown 键盘 | Enter/Space/ArrowDown 打开并聚焦首项，ArrowUp 打开并聚焦末项；ArrowUp/ArrowDown 循环，Home/End 定位；Escape 与 Shift+Tab 关闭并把焦点还给 trigger；普通 Tab 在当前菜单项上选择、关闭并回 trigger（相同 onSelect/RPC），菜单外 Tab 保持浏览器 traversal；选择后焦点回 trigger；outside pointerdown 只关闭菜单 |
 | Dropdown 最终焦点 | 选择先同步回 trigger；pending 中原生 disabled 不承诺持续持焦；保存结束并重新 enabled 后，只有本次选择且焦点因禁用落到 body/documentElement 等无竞争状态时补一次 `focus()`；用户已聚焦其它控件不抢，不新增定时器 |
 | Qoder 端点下拉 | 仅 `auto / center.qoder.sh / api2.qoder.sh` 三项；auto 无观测显示“尚无运行观测”，有观测显示实际 host 且不改写 preference；固定模式只显示所选域；保存非乐观，失败回滚并只在端点行显示 `.error` |
-| 账号行 | 只显示六字段投影；当前行有“当前使用”标记且无“设为当前使用”；备选行可显式设当前；行操作只锁相关行，授权在飞锁主渠道下拉与全部账号操作 |
-| 内联授权 | 状态按 phase/errorCode 本地化映射，不渲染 Host `displayHint`；授权链接只读 + 复制，剪贴板不可用时降级提示并选中链接文本；取消停止轮询，终态可关闭 |
-| 删除/清除确认 | 删除当前账号默认“暂不指定”替代，不自动递补；清除全部必须就地二次确认，明确影响四渠道且不可自动恢复 |
+| 账号行 | 只显示六字段投影；当前行有“当前使用”标记且无“设为当前使用”；备选行可显式设当前；行操作只锁相关行，授权在飞锁主渠道下拉与全部账号操作；enabled 的第二行操作进入显式顺序队列并显示“排队中/处理中”，不静默丢弃 |
+| 内联授权 | 状态按 phase/errorCode 本地化映射，不渲染 Host `displayHint`；授权链接只读 + 复制，剪贴板不可用时降级提示并选中链接文本；取消停止轮询，终态可关闭；非法/错渠道 authUrl 或异 flow/异目标回包 fail closed，只清理原 flow |
+| 删除/清除确认 | 删除当前账号默认“暂不指定”替代，不自动递补；清除全部必须就地二次确认，明确影响四渠道且不可自动恢复；授权完成后的账号刷新 settle 前禁止写操作，失败不显示成功 notice |
 
 ## 6. 证据边界
 
