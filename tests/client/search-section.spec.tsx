@@ -237,7 +237,6 @@ describe('SearchSection（真实 DOM）', () => {
 
     await click(buttonByText(menu, t('channel.qoder.name')))
     expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
-    expect(document.activeElement).toBe(trigger)
     expect(calls).toHaveLength(1)
     expect(calls[0]).toEqual({ method: 'settings.update', payload: { patch: { channel: 'qoder' } } })
     expect(trigger.textContent).toContain(t('channel.buddy.name'))
@@ -253,6 +252,7 @@ describe('SearchSection（真实 DOM）', () => {
     expect(query(container, '[data-channel-config-host]').querySelector('[data-qoder-endpoint-slot]')).toBeTruthy()
     expect(container.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(1)
     expect(trigger.disabled).toBe(false)
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('渠道保存失败时保持旧值并保持旧配置区', async () => {
@@ -331,7 +331,6 @@ describe('SearchSection（真实 DOM）', () => {
     const tab = await keydown(document.activeElement as Element, 'Tab')
     expect(tab.defaultPrevented).toBe(true)
     expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
-    expect(document.activeElement).toBe(trigger)
     expect(calls).toHaveLength(1)
     expect(calls[0]).toEqual({ method: 'settings.update', payload: { patch: { channel: 'workbuddy' } } })
 
@@ -346,6 +345,7 @@ describe('SearchSection（真实 DOM）', () => {
     expect(trigger.textContent).toContain(t('channel.workbuddy.name'))
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('workbuddy')
     expect(trigger.disabled).toBe(false)
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('普通 Tab 在菜单外不被本菜单拦截', async () => {

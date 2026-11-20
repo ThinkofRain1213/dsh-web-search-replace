@@ -5,6 +5,8 @@
  * 13px·20px。列表 portal 到 document.body，打开时自动聚焦首项，方向键巡回，
  * Escape 与 Shift+Tab 关闭并把焦点还给 trigger；普通 Tab 在当前菜单项上复用
  * 选择路径（选择、关闭、回 trigger），菜单外的 Tab 不拦截；外部 pointerdown 只关闭菜单。
+ * 选择保存导致 trigger 原生 disabled 跨帧失焦时，保存结束并重新 enabled 后只在
+ * 本次选择且无用户竞争焦点的情况下补一次回焦（R30）。
  * 不导入任何 Harness Client 控件；portal 样式在同名 CSS Modules 产物里。
  */
 import * as React from 'react'
@@ -71,6 +73,9 @@ export function Dropdown({
   const menuRef = React.useRef<HTMLDivElement>(null)
   const itemRefs = React.useRef<Array<HTMLButtonElement | null>>([])
   const initialFocus = React.useRef(0)
+  // 本次选择保存结束后的补偿回焦意图；只在选择变化时 armed，初次挂载不触发。
+  const restoreFocusIntent = React.useRef(false)
+  const sawDisabled = React.useRef(false)
   const shown = open && !disabled
 
   /** 打开菜单并记录初始焦点索引。 */
@@ -89,6 +94,27 @@ export function Dropdown({
   // 锚点被上层锁定时，已经打开的菜单也要收起。
   React.useEffect(() => {
     if (disabled && open) setOpen(false)
+  }, [disabled, open])
+
+  // R30：保存导致 disabled 跨帧失焦后，保存结束且重新 enabled 时补一次回焦。
+  // 只有本组件刚选择的意图才生效；用户已聚焦其它控件或焦点仍在可用元素上时不抢。
+  React.useEffect(() => {
+    if (!restoreFocusIntent.current) return
+    if (disabled) {
+      sawDisabled.current = true
+      return
+    }
+    if (sawDisabled.current) {
+      sawDisabled.current = false
+      restoreFocusIntent.current = false
+      const active = document.activeElement
+      if (active === null || active === document.body || active === document.documentElement) {
+        triggerRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+    // 选择没有经过 disabled（例如写入被拒绝），同步 focus 已足够，丢弃意图。
+    if (!open) restoreFocusIntent.current = false
   }, [disabled, open])
 
   // Portal 菜单定位与 minWidthFromAnchor：锚点宽度作为最小宽度。
@@ -188,9 +214,14 @@ export function Dropdown({
 
   /** 选择一项：先还焦点给 trigger，再关闭并报告不同于当前值的选项。 */
   const select = (idValue: string): void => {
+    const changes = idValue !== selectedId
+    if (changes) {
+      restoreFocusIntent.current = true
+      sawDisabled.current = false
+    }
     triggerRef.current?.focus({ preventScroll: true })
     setOpen(false)
-    if (idValue !== selectedId) onSelect(idValue)
+    if (changes) onSelect(idValue)
   }
 
   const trigger = (
