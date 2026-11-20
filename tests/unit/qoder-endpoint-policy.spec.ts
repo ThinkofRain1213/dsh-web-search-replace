@@ -3,13 +3,13 @@
  *
  * ## 被锁死的契约
  *
- * 1. **自动初始**：每个「账号 + 网络出口」的首次调用只走 `center.qoder.sh`。
+ * 1. **自动初始**：本机没有持久最近成功域时只从 `center.qoder.sh` 开始。
  * 2. **限定切换**：只有连接失败（DNS/TCP/TLS）、请求超时、上游 5xx 才在首域
  *    settle 后**顺序**尝试另一域一次；绝不并行双发、不后台测速、不换账号。
  * 3. **非限定错误不切换**：401/403/429、坏响应、签名/配置/账号/本地校验错误、
  *    调用方取消都只停留在首域；未知异常默认不切换。
- * 4. **粘性**：成功的域成为该账号 + 该网络出口在当前进程内的首选；不同账号、
- *    不同出口、不同策略实例（重启）互不共享；固定模式不写入 auto 粘性。
+ * 4. **R43 全局路由**：成功域是本机全局唯一最近成功域，所有账号共用、换账号
+ *    不清空；新策略实例从注入的持久值开始；fixed 与 probe 不写。
  * 5. **固定模式**：center / api2 只走所选域，任何错误都不切换。
  * 6. **可归因失败**：两域都失败时抛出含两个域名与结构化类别的安全错误；单 query
  *    每域最多一次；错误与观察记录都不含 query、凭据、账号键或底层异常原文。
@@ -24,6 +24,7 @@ import {
   QoderEndpointUnavailableError,
   type QoderEndpointObservation,
   type QoderEndpointOperationContext,
+  type QoderInternationalHost,
 } from '../../src/host/channels/qoder/endpoint-policy.ts'
 import {
   QoderSearchProtocolError,
@@ -36,7 +37,7 @@ import type { QoderEndpointPreference } from '../../src/shared/channels.ts'
 const CENTER = 'center.qoder.sh'
 const API2 = 'api2.qoder.sh'
 const ACCOUNT_KEY = 'account-key-7f2c'
-const EXIT_KEY = 'network-exit-7f2c'
+const ROUTE_STATE_KEY = 'lastSuccessfulHost'
 const QUERY = '策略测试查询 7f2c'
 
 /** 构造共享协议层失败；策略只能依赖结构化 kind/status，不能靠消息猜测。 */
@@ -97,12 +98,15 @@ interface PolicyHarness {
 }
 
 function makePolicy(options: {
-  readonly exitKey?: () => string
+  readonly initialHost?: QoderInternationalHost | null
+  readonly readHost?: () => QoderInternationalHost | null
   readonly onObservation?: (observation: QoderEndpointObservation) => void
 } = {}): PolicyHarness {
   const observations: QoderEndpointObservation[] = []
+  let persisted = options.initialHost ?? null
   const policy = new QoderEndpointPolicy({
-    networkExitKey: options.exitKey ?? (() => EXIT_KEY),
+    readLastSuccessfulHost: () => options.readHost?.() ?? persisted,
+    writeLastSuccessfulHost: async (host) => { persisted = host },
     onObservation: (observation) => {
       observations.push(observation)
       options.onObservation?.(observation)
@@ -306,8 +310,8 @@ describe('自动模式：非限定故障不切换', () => {
   })
 })
 
-describe('自动模式：粘性按账号与网络出口隔离', () => {
-  it('不同账号不共享粘性', async () => {
+describe('自动模式：R43 本机全局最近成功域', () => {
+  it('不同账号共享最近成功域，换账号不清空', async () => {
     const { policy } = makePolicy()
     await execute(policy, 'auto', recordingOperation((host) => {
       if (host === CENTER) throw protocolError('connection')
@@ -316,21 +320,14 @@ describe('自动模式：粘性按账号与网络出口隔离', () => {
 
     const other = recordingOperation(() => 'ok')
     await execute(policy, 'auto', other.operation, { accountKey: 'account-b' })
-    expect(other.hosts).toEqual([CENTER])
+    expect(other.hosts).toEqual([API2])
   })
 
-  it('不同网络出口不共享粘性', async () => {
-    let exit = 'exit-a'
-    const { policy } = makePolicy({ exitKey: () => exit })
-    await execute(policy, 'auto', recordingOperation((host) => {
-      if (host === CENTER) throw protocolError('connection')
-      return 'api2'
-    }).operation)
-
-    exit = 'exit-b'
+  it('新策略实例从传入的持久最近成功域开始', async () => {
+    const { policy } = makePolicy({ initialHost: API2 })
     const other = recordingOperation(() => 'ok')
     await execute(policy, 'auto', other.operation)
-    expect(other.hosts).toEqual([CENTER])
+    expect(other.hosts).toEqual([API2])
   })
 
   it('新策略实例（进程重启）回到 center', async () => {
@@ -372,53 +369,53 @@ describe('自动模式：粘性按账号与网络出口隔离', () => {
   })
 })
 
-describe('Qoder 国际版端点策略：固定模式不依赖 networkExitKey', () => {
+describe('Qoder 国际版端点策略：固定模式不依赖 lastSuccessfulHost', () => {
   /**
-   * 网络出口键只服务于 auto 粘性。固定 center/api2 没有粘性语义，因此不得读取
-   * 该依赖——否则一个与固定端点无关的 resolver 故障会阻断搜索（修复轮 1 / I1）。
+   * lastSuccessfulHost 只服务于 auto。固定 center/api2 不得读取该 Host-only
+   * 路由状态，否则无关的读取故障会阻断固定域搜索。
    */
-  const EXIT_KEY_FAILURES: readonly (readonly [string, () => string])[] = [
-    ['resolver 抛错', () => { throw new Error('exit probe offline') }],
-    ['返回空串', () => ''],
-    ['返回空白串', () => '   '],
-    ['返回非字符串', () => 42 as unknown as string],
+  const ROUTE_READ_FAILURES: readonly (readonly [string, () => QoderInternationalHost])[] = [
+    ['resolver 抛错', () => { throw new Error('route read offline') }],
+    ['返回空串', () => '' as QoderInternationalHost],
+    ['返回空白串', () => '   ' as QoderInternationalHost],
+    ['返回非字符串', () => 42 as unknown as QoderInternationalHost],
   ]
 
-  it.each(EXIT_KEY_FAILURES)('固定 center + %s：不解析出口键，仍只走 center 且成功', async (
+  it.each(ROUTE_READ_FAILURES)('固定 center + %s：不读取持久路由，仍只走 center 且成功', async (
     _label,
-    exitKey,
+    readHost,
   ) => {
-    const exitResolver = vi.fn(exitKey)
-    const { policy } = makePolicy({ exitKey: exitResolver })
+    const readResolver = vi.fn(readHost)
+    const { policy } = makePolicy({ readHost: readResolver })
     const recorder = recordingOperation(() => 'ok')
 
     await expect(execute(policy, 'center', recorder.operation)).resolves.toBe('ok')
     expect(recorder.hosts).toEqual([CENTER])
-    expect(exitResolver).not.toHaveBeenCalled()
+    expect(readResolver).not.toHaveBeenCalled()
   })
 
-  it.each(EXIT_KEY_FAILURES)('固定 api2 + %s：不解析出口键，仍只走 api2 且成功', async (
+  it.each(ROUTE_READ_FAILURES)('固定 api2 + %s：不读取持久路由，仍只走 api2 且成功', async (
     _label,
-    exitKey,
+    readHost,
   ) => {
-    const exitResolver = vi.fn(exitKey)
-    const { policy } = makePolicy({ exitKey: exitResolver })
+    const readResolver = vi.fn(readHost)
+    const { policy } = makePolicy({ readHost: readResolver })
     const recorder = recordingOperation(() => 'ok')
 
     await expect(execute(policy, 'api2', recorder.operation)).resolves.toBe('ok')
     expect(recorder.hosts).toEqual([API2])
-    expect(exitResolver).not.toHaveBeenCalled()
+    expect(readResolver).not.toHaveBeenCalled()
   })
 
-  it('固定 center 在出口键不可用且连接失败时仍只走 center，不切换也不解析出口键', async () => {
-    const exitResolver = vi.fn((): string => { throw new Error('exit probe offline') })
-    const { policy } = makePolicy({ exitKey: exitResolver })
+  it('固定 center 在持久路由读取故障且连接失败时仍只走 center，不切换也不读取持久路由', async () => {
+    const readResolver = vi.fn((): QoderInternationalHost => { throw new Error('route read offline') })
+    const { policy } = makePolicy({ readHost: readResolver })
     const recorder = recordingOperation(() => { throw protocolError('connection') })
 
     const error = await execute(policy, 'center', recorder.operation).catch(caught => caught)
     expect(error).toBeInstanceOf(QoderSearchProtocolError)
     expect(recorder.hosts).toEqual([CENTER])
-    expect(exitResolver).not.toHaveBeenCalled()
+    expect(readResolver).not.toHaveBeenCalled()
   })
 })
 
@@ -467,7 +464,7 @@ describe('自动模式：两域失败可归因', () => {
     expect(recorder.hosts).toEqual([CENTER, API2])
   })
 
-  it('错误不含 query、账号键、网络出口键或原始异常文本', async () => {
+  it('错误不含 query、账号键、持久路由字段或原始异常文本', async () => {
     const { policy } = makePolicy()
     const recorder = recordingOperation((host) => {
       if (host === CENTER) throw protocolError('connection', { message: `leak ${QUERY}` })
@@ -478,7 +475,7 @@ describe('自动模式：两域失败可归因', () => {
     const text = `${(error as Error).message} ${JSON.stringify(error)}`
     expect(text).not.toContain(QUERY)
     expect(text).not.toContain(ACCOUNT_KEY)
-    expect(text).not.toContain(EXIT_KEY)
+    expect(text).not.toContain(ROUTE_STATE_KEY)
   })
 })
 
@@ -499,8 +496,7 @@ describe('自动模式：绝不并行双发', () => {
     }
 
     const promise = execute(policy, 'auto', operation)
-    await Promise.resolve()
-    expect(events).toEqual([`start:${CENTER}`])
+    await vi.waitFor(() => { expect(events).toEqual([`start:${CENTER}`]) })
 
     firstAttempt.resolve()
     await expect(promise).resolves.toBe('ok')
@@ -583,7 +579,7 @@ describe('Qoder 国际版端点策略：观察记录（脱敏状态）', () => {
     const text = JSON.stringify(observation)
     expect(text).not.toContain(QUERY)
     expect(text).not.toContain(ACCOUNT_KEY)
-    expect(text).not.toContain(EXIT_KEY)
+    expect(text).not.toContain(ROUTE_STATE_KEY)
   })
 
   it('失败时逐域报告类别、状态与耗时', async () => {
@@ -681,9 +677,9 @@ describe('Qoder 国际版端点策略：域名边界与参数校验', () => {
     expect(recorder.hosts).toEqual([])
   })
 
-  it('networkExitKey 解析失败 → 结构化错误且不调用 operation', async () => {
+  it('lastSuccessfulHost 解析失败 → 结构化错误且不调用 operation', async () => {
     const { policy } = makePolicy({
-      exitKey: () => { throw new Error(`exit probe leaked ${ACCOUNT_KEY}`) },
+      readHost: () => { throw new Error(`exit probe leaked ${ACCOUNT_KEY}`) },
     })
     const recorder = recordingOperation(() => 'ok')
 

@@ -1726,6 +1726,7 @@ describe('WorkBuddy 授权 RPC 分派与通用错误边界', () => {
   it('dispatcher 对错误渠道/夹带秘密的结果返回固定 auth/internal，不泄漏对象', async () => {
     const fixture = createTencentAuthFixture()
     const wrongChannelFlow = {
+      channel: 'workbuddy',
       async start() {
         return {
           flowId: 'flow-1',
@@ -1739,6 +1740,7 @@ describe('WorkBuddy 授权 RPC 分派与通用错误边界', () => {
       },
     } as unknown as WorkbuddyAuthFlow
     const leakingFlow = {
+      channel: 'workbuddy',
       async start() {
         return {
           flowId: 'flow-1',

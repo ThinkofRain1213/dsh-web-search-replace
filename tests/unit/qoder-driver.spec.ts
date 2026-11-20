@@ -8,8 +8,8 @@
  * 2. **自动模式**：初始 center；只有连接失败、请求超时、上游 5xx 才在同一账号、
  *    同一 query 下顺序切换另一域一次；401/403/429/坏响应/签名失败都不切换。
  * 3. **固定模式**：center / api2 只走所选域，任何错误都不切换。
- * 4. **粘性**：成功域按「账号 + 网络出口」在当前进程内粘性；不同账号、不同出口、
- *    新驱动实例互不共享。
+ * 4. **R43 全局路由**：成功域是本机全局最近成功域，所有账号共用；新驱动实例
+ *    从 Host 持久值开始，fixed 不读、probe 不写。
  * 5. **无账号**：缺账号/凭据/账号键时在任何 fetch/WASM 之前失败。
  * 6. **秘密卫生**：错误消息、观察记录与日志不含 query、token、machineId、
  *    账号键或签名头；两域失败错误只含域名与结构化类别。
@@ -28,6 +28,7 @@ import {
 import {
   QODER_INTERNATIONAL_HOSTS,
   type QoderEndpointObservation,
+  type QoderInternationalHost,
 } from '../../src/host/channels/qoder/endpoint-policy.ts'
 import type { QoderSigningCredential } from '../../src/host/channels/qoder/protocol.ts'
 import { QoderSigner, __testing } from '../../src/host/channels/qoder/signer.ts'
@@ -71,7 +72,7 @@ type FetchHandler = (url: string, init: RequestInit) => Response | Promise<Respo
 interface HarnessOptions {
   readonly account?: QoderInternationalAccount | null | undefined
   readonly preference?: QoderEndpointPreference
-  readonly exitKey?: string
+  readonly initialHost?: QoderInternationalHost | null
   readonly handler?: FetchHandler
 }
 
@@ -83,7 +84,7 @@ interface Harness {
   readonly preferenceResolver: Mock
   setAccount(account: QoderInternationalAccount | null | undefined): void
   setPreference(preference: QoderEndpointPreference): void
-  setExitKey(key: string): void
+  setPersistedHost(host: QoderInternationalHost | null): void
   setHandler(handler: FetchHandler): void
 }
 
@@ -122,7 +123,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
   const observations: QoderEndpointObservation[] = []
   let account = 'account' in options ? options.account : ACCOUNT_A
   let preference = options.preference ?? 'auto'
-  let exitKey = options.exitKey ?? 'exit-a'
+  let persistedHost = options.initialHost ?? null
   let handler = options.handler ?? defaultHandler
 
   const accountResolver = vi.fn(async () => account)
@@ -137,7 +138,8 @@ function makeHarness(options: HarnessOptions = {}): Harness {
   const driver = createQoderInternationalDriver({
     resolveAccount: accountResolver,
     resolveEndpointPreference: preferenceResolver,
-    networkExitKey: () => exitKey,
+    readLastSuccessfulHost: () => persistedHost,
+    writeLastSuccessfulHost: async (host) => { persistedHost = host },
     fetcher: fetcher as unknown as typeof fetch,
     onObservation: (observation) => { observations.push(observation) },
   })
@@ -150,7 +152,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
     preferenceResolver,
     setAccount: (next) => { account = next },
     setPreference: (next) => { preference = next },
-    setExitKey: (next) => { exitKey = next },
+    setPersistedHost: (next) => { persistedHost = next },
     setHandler: (next) => { handler = next },
   }
 }
@@ -520,7 +522,6 @@ describe('Qoder 国际版驱动：账号边界（先于 fetch/WASM）', () => {
         throw new ChannelSearchError(code as never, 'qodercn', `store echoed ${secret}`)
       },
       resolveEndpointPreference: async () => 'auto' as const,
-      networkExitKey: () => 'exit-a',
       fetcher: fetcher as unknown as typeof fetch,
     })
 
@@ -537,7 +538,6 @@ describe('Qoder 国际版驱动：账号边界（先于 fetch/WASM）', () => {
     const driver = createQoderInternationalDriver({
       resolveAccount: async () => { throw new Error(`store offline ${CREDENTIAL.securityOauthToken}`) },
       resolveEndpointPreference: async () => 'auto' as const,
-      networkExitKey: () => 'exit-a',
       fetcher: fetcher as unknown as typeof fetch,
     })
 
@@ -554,7 +554,6 @@ describe('Qoder 国际版驱动：账号边界（先于 fetch/WASM）', () => {
     const driver = createQoderInternationalDriver({
       resolveAccount: async () => ACCOUNT_A,
       resolveEndpointPreference: async () => { throw new Error('settings offline') },
-      networkExitKey: () => 'exit-a',
       fetcher: fetcher as unknown as typeof fetch,
     })
 
@@ -599,8 +598,8 @@ describe('Qoder 国际版驱动：渠道与域名边界', () => {
   })
 })
 
-describe('Qoder 国际版驱动：粘性按账号与网络出口隔离', () => {
-  it('切换账号后重新从 center 开始', async () => {
+describe('Qoder 国际版驱动：R43 本机全局路由', () => {
+  it('切换账号后仍从全局最近成功域开始', async () => {
     const harness = makeHarness({ handler: failCenterConnection })
 
     await harness.driver.searchOnce(QUERY, 10, signal())
@@ -612,10 +611,10 @@ describe('Qoder 国际版驱动：粘性按账号与网络出口隔离', () => {
 
     harness.setAccount(ACCOUNT_B)
     await harness.driver.searchOnce(QUERY, 10, signal())
-    expect(harness.calls.map(call => hostOf(call.url))).toEqual([CENTER, API2, API2, CENTER])
+    expect(harness.calls.map(call => hostOf(call.url))).toEqual([CENTER, API2, API2, API2])
   })
 
-  it('网络出口变化后重新从 center 开始', async () => {
+  it('Host 持久全局值变化后，下一次调用从新值开始', async () => {
     const harness = makeHarness({ handler: failCenterConnection })
 
     await harness.driver.searchOnce(QUERY, 10, signal())
@@ -623,12 +622,12 @@ describe('Qoder 国际版驱动：粘性按账号与网络出口隔离', () => {
     await harness.driver.searchOnce(QUERY, 10, signal())
     expect(harness.calls.map(call => hostOf(call.url))).toEqual([CENTER, API2, API2])
 
-    harness.setExitKey('exit-b')
+    harness.setPersistedHost(CENTER)
     await harness.driver.searchOnce(QUERY, 10, signal())
     expect(harness.calls.map(call => hostOf(call.url))).toEqual([CENTER, API2, API2, CENTER])
   })
 
-  it('新驱动实例（进程重启）回到 center', async () => {
+  it('新驱动实例没有持久记录时回到 center', async () => {
     const first = makeHarness({ handler: failCenterConnection })
     await first.driver.searchOnce(QUERY, 10, signal())
 

@@ -6,7 +6,7 @@
  *    没有协议族选择器、余额选号、自动轮换或官方/另一渠道回退。
  * 2. 适配器把服务返回的同一账号快照（accountId + 凭据）原样交给驱动；渠道
  *    不匹配的快照一律 fail-closed（NO_ACCOUNT），绝不用于请求。
- * 3. Qoder 国际版绑定必须显式接收稳定 `networkExitKey`，不探测 OS、不造共享
+ * 3. Qoder 国际版绑定必须显式接收稳定 `readLastSuccessfulHost`，不探测 OS、不造共享
  *    默认键；固定 center/api2 不读取它。
  * 4. 驱动实例在绑定时创建一次，同一实例的端点粘性跨查询保留（不是每次 query
  *    重建策略）。
@@ -218,11 +218,11 @@ describe('Qoder 中国版绑定', () => {
 })
 
 describe('Qoder 国际版绑定：显式网络出口与粘性', () => {
-  it('固定 center 不读取 networkExitKey，仍只请求 center.qoder.sh', async () => {
+  it('固定 center 不读取 readLastSuccessfulHost，仍只请求 center.qoder.sh', async () => {
     const resolver = resolverFor(channel => channel === 'qoder' ? QODER_CREDENTIAL : null)
     const { fetcher, calls } = jsonFetcher(QODER_RESULT)
     const driver = createQoderInternationalSearchBinding(resolver, {
-      networkExitKey: () => { throw new Error(`must not be called ${LEAK_SENTINEL}`) },
+      readLastSuccessfulHost: () => { throw new Error(`must not be called ${LEAK_SENTINEL}`) },
       resolveEndpointPreference: () => 'center',
       fetcher,
     })
@@ -233,7 +233,7 @@ describe('Qoder 国际版绑定：显式网络出口与粘性', () => {
     expect(calls.map(call => new URL(call.url).hostname)).toEqual([CENTER])
   })
 
-  it('同一绑定实例跨查询保留 auto 粘性，换账号后重新从 center 开始', async () => {
+  it('同一绑定实例跨查询保留全局最近成功域，换账号也不清空', async () => {
     let current: ResolvedChannelCredential | null = QODER_CREDENTIAL
     const resolver = resolverFor(() => current)
     const calls: string[] = []
@@ -248,7 +248,7 @@ describe('Qoder 国际版绑定：显式网络出口与粘性', () => {
     }) as unknown as typeof fetch
 
     const driver = createQoderInternationalSearchBinding(resolver, {
-      networkExitKey: () => 'exit-a',
+      readLastSuccessfulHost: () => null,
       resolveEndpointPreference: () => 'auto',
       fetcher,
     })
@@ -264,20 +264,25 @@ describe('Qoder 国际版绑定：显式网络出口与粘性', () => {
       accountId: 'a000000000099',
     }
     await driver.searchOnce('第三次', 10, signal())
-    expect(calls).toEqual([CENTER, API2, API2, CENTER, API2])
+    expect(calls).toEqual([CENTER, API2, API2, API2])
   })
 
-  it('缺少显式 networkExitKey 无法通过类型检查（禁止共享默认键/OS 探测）', () => {
+  it('没有持久最近成功域时从 center 开始，不需要 networkExitKey 或 OS 探测', async () => {
     const resolver = resolverFor(() => QODER_CREDENTIAL)
-    // @ts-expect-error networkExitKey 必须由 Host 根组合显式提供
-    createQoderInternationalSearchBinding(resolver, { resolveEndpointPreference: () => 'auto' })
+    const { fetcher, calls } = jsonFetcher(QODER_RESULT)
+    const driver = createQoderInternationalSearchBinding(resolver, {
+      resolveEndpointPreference: () => 'auto',
+      fetcher,
+    })
+    await driver.searchOnce('天气', 10, signal())
+    expect(calls.map(call => new URL(call.url).hostname)).toEqual([CENTER])
   })
 
   it('拿到 qodercn 快照时 fail-closed（NO_ACCOUNT）且不发请求', async () => {
     const resolver = resolverFor(() => QODERCN_CREDENTIAL)
     const { fetcher, calls } = jsonFetcher(QODER_RESULT)
     const driver = createQoderInternationalSearchBinding(resolver, {
-      networkExitKey: () => 'exit-a',
+      readLastSuccessfulHost: () => null,
       resolveEndpointPreference: () => 'center',
       fetcher,
     })
@@ -295,7 +300,7 @@ describe('Qoder 国际版绑定：显式网络出口与粘性', () => {
     })
     const { fetcher, calls } = jsonFetcher(QODER_RESULT)
     const driver = createQoderInternationalSearchBinding(resolver, {
-      networkExitKey: () => 'exit-a',
+      readLastSuccessfulHost: () => null,
       resolveEndpointPreference: () => 'center',
       fetcher,
     })
@@ -313,7 +318,7 @@ describe('Qoder 国际版绑定：显式网络出口与粘性', () => {
     const resolver = resolverFor(() => QODER_CREDENTIAL)
     const { fetcher, calls } = jsonFetcher(QODER_RESULT, 500)
     const driver = createQoderInternationalSearchBinding(resolver, {
-      networkExitKey: () => 'exit-a',
+      readLastSuccessfulHost: () => null,
       resolveEndpointPreference: () => 'api2',
       fetcher,
     })

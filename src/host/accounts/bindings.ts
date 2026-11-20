@@ -7,9 +7,8 @@
  * 余额选号、自动轮换或官方/另一渠道回退；渠道不匹配的快照一律返回 null，
  * 由驱动在 fetch/WASM 之前以 NO_ACCOUNT 失败。
  *
- * Qoder 国际版绑定必须由 Host 根组合显式提供稳定 `networkExitKey`：本层不
- * 探测 OS 网络，也不创建共享默认键；固定 center/api2 不读取该键（由 Task 7
- * 的端点策略保证）。
+ * Qoder 国际版绑定由 Host 根组合提供本机全局 `lastSuccessfulHost`：所有国际版
+ * 账号共用、换账号不清空，fixed center/api2 不读取；不做 networkExitKey 或 OS 探测。
  */
 import type { ChannelId, QoderEndpointPreference } from '../../shared/channels.ts'
 import type { SearchDriver } from '../drivers/mock-driver.ts'
@@ -43,14 +42,14 @@ export interface ChannelBindingOptions {
   readonly fetcher?: typeof fetch
 }
 
-/** Qoder 国际版绑定依赖；networkExitKey 必须显式提供。 */
+/** Qoder 国际版绑定依赖；R43 使用 Host 管理的唯一全局路由值。 */
 export interface QoderInternationalBindingOptions extends ChannelBindingOptions {
-  /**
-   * 当前网络出口的稳定标识。
-   *
-   * 由 Host 根组合显式提供；本层绝不自动探测 OS 网络或伪造共享默认键。
-   */
-  readonly networkExitKey: () => string
+  readonly readLastSuccessfulHost?: () => 'center.qoder.sh' | 'api2.qoder.sh' | null
+    | Promise<'center.qoder.sh' | 'api2.qoder.sh' | null>
+  readonly writeLastSuccessfulHost?: (
+    host: 'center.qoder.sh' | 'api2.qoder.sh',
+    signal: AbortSignal,
+  ) => Promise<void>
   /** 端点偏好；每次搜索解析一次。 */
   readonly resolveEndpointPreference: () => QoderEndpointPreference
     | Promise<QoderEndpointPreference>
@@ -94,7 +93,12 @@ export function createQoderInternationalSearchBinding(
       await accounts.resolveCurrentCredential('qoder'),
     ),
     resolveEndpointPreference: options.resolveEndpointPreference,
-    networkExitKey: options.networkExitKey,
+    ...options.readLastSuccessfulHost === undefined
+      ? {}
+      : { readLastSuccessfulHost: options.readLastSuccessfulHost },
+    ...options.writeLastSuccessfulHost === undefined
+      ? {}
+      : { writeLastSuccessfulHost: options.writeLastSuccessfulHost },
     ...options.fetcher === undefined ? {} : { fetcher: options.fetcher },
     ...options.onObservation === undefined ? {} : { onObservation: options.onObservation },
   })
@@ -168,6 +172,16 @@ function toQoderAccount(
 }
 
 /** Qoder 签名快照 → 中国版账号快照；渠道不符返回 null。 */
+export { createInvocationDriverFactory } from './invocation.ts'
+export { createChannelCapabilityVerifiers } from '../channels/capability.ts'
+export type { CapabilityVerifierDeps, ChannelCapabilityVerifiers } from '../channels/capability.ts'
+export type {
+  InvocationAuthFlows,
+  InvocationDriverFactory,
+  InvocationDriverFactoryDeps,
+  InvocationSelection,
+} from './invocation.ts'
+
 function toQoderCnAccount(
   resolved: ResolvedChannelCredential | null,
 ): QoderCnAccountCredential | null {

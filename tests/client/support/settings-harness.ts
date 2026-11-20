@@ -155,10 +155,14 @@ export interface RpcCall {
 }
 
 /** 一次 RPC 响应；返回 Promise 可模拟在飞写入。 */
-export type RpcResponder = (call: RpcCall) => RpcResult<unknown> | Promise<RpcResult<unknown>>
+export type RpcResponder = (
+  call: RpcCall,
+  signal?: AbortSignal,
+) => RpcResult<unknown> | Promise<RpcResult<unknown>>
 
 /** Connection 替身。 */
 export interface ConnectionDouble {
+  readonly signalCalls: Array<{ readonly method: string; readonly signal?: AbortSignal }>
   readonly connection: {
     readonly fetch: { register(): () => Promise<void> }
     readonly rpc: {
@@ -190,8 +194,10 @@ export function createConnectionDouble(
   options: ConnectionDoubleOptions = {},
 ): ConnectionDouble {
   const calls: RpcCall[] = []
+  const signalCalls: Array<{ method: string; signal?: AbortSignal }> = []
   const ignored = new Set(options.ignoredMethods ?? [])
   return {
+    signalCalls,
     connection: {
       fetch: { register: () => async () => {} },
       rpc: {
@@ -199,10 +205,12 @@ export function createConnectionDouble(
           _channel: string,
           _endpoint: string,
           payload: unknown,
+          signal?: AbortSignal,
         ): Promise<RpcResult<unknown>> => {
           const call = payload as RpcCall
+          signalCalls.push({ method: call.method, signal })
           if (!ignored.has(call.method)) calls.push(call)
-          return await responder(call)
+          return await responder(call, signal)
         },
       },
     },

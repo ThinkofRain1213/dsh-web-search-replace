@@ -609,17 +609,22 @@ describe('settings.update', () => {
 })
 
 describe('settings.setCurrentAccount', () => {
-  it('写入指定渠道的稳定 slug 并返回快照', async () => {
-    const { connection } = createRpcHarness()
+  it('写入指定渠道已存在账号的稳定 slug 并返回快照（R39 账号感知）', async () => {
+    const { connection, store } = createRpcHarness()
+    const account = await store.saveAccount({
+      channel: 'workbuddy',
+      vendorAccountId: 'legacy-workbuddy-account',
+      secret: { accessToken: 'LEGACY_WORKBUDDY_TOKEN' },
+    })
 
     const result = await callManagementRpc(connection, 'settings.setCurrentAccount', {
       channel: 'workbuddy',
-      accountId: 'account-1',
+      accountId: account.accountId,
     })
 
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.value.workbuddy.currentAccountId).toBe('account-1')
+      expect(result.value.workbuddy.currentAccountId).toBe(account.accountId)
       expect(result.value.buddy.currentAccountId).toBeNull()
       expect(result.value.qoder.currentAccountId).toBeNull()
       expect(result.value.qodercn.currentAccountId).toBeNull()
@@ -627,10 +632,15 @@ describe('settings.setCurrentAccount', () => {
   })
 
   it('接受 null 清除当前账号', async () => {
-    const { connection } = createRpcHarness()
+    const { connection, store } = createRpcHarness()
+    const account = await store.saveAccount({
+      channel: 'buddy',
+      vendorAccountId: 'legacy-buddy-account',
+      secret: { accessToken: 'LEGACY_BUDDY_TOKEN' },
+    })
     await callManagementRpc(connection, 'settings.setCurrentAccount', {
       channel: 'buddy',
-      accountId: 'account-1',
+      accountId: account.accountId,
     })
 
     const cleared = await callManagementRpc(connection, 'settings.setCurrentAccount', {

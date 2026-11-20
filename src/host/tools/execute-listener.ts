@@ -10,10 +10,20 @@ import type { SearchDriver } from '../drivers/mock-driver.ts'
 import { SEARCH_DEFAULT_PROFILE } from '../search/execution-profile.ts'
 import { executeSearchQueries } from '../search/executor.ts'
 import type { SettingsService } from '../settings/service.ts'
+import type { SearchSettingsSnapshot } from '../../shared/contracts.ts'
+import type { InvocationDriverFactory, InvocationSelection } from '../accounts/invocation.ts'
 
 /** Task 15 可提供兼容 PluginLifecycle；本任务不定义完整生命周期系统。 */
 export interface SearchOverrideLifecycle {
   track?<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T>
+  begin?(callerSignal?: AbortSignal): {
+    readonly signal: AbortSignal
+    track<T>(operation: Promise<T>): Promise<T>
+  }
+}
+
+export interface SearchInvocationRuntime {
+  captureSelection(snapshot: SearchSettingsSnapshot): number
 }
 
 /** 当前渠道的搜索驱动表；缺失表示该账号/渠道尚不可执行。 */
@@ -22,8 +32,9 @@ export type SearchDrivers = Readonly<Partial<Record<ChannelId, SearchDriver>>>
 /** `installSearchOverride` 的最小依赖。 */
 export interface SearchOverrideOptions {
   readonly settings: Pick<SettingsService, 'getSnapshot'>
-  readonly drivers: SearchDrivers
+  readonly drivers: SearchDrivers | InvocationDriverFactory
   readonly lifecycle?: SearchOverrideLifecycle
+  readonly runtime?: SearchInvocationRuntime
 }
 
 /** DSH around-dispatch 调用中本监听器读取的字段。 */
@@ -62,21 +73,45 @@ export interface SearchOverrideContext {
 export function installSearchOverride(
   ctx: SearchOverrideContext,
   options: SearchOverrideOptions,
-): void {
-  ctx.on('tools/execute', async (exec, next) => {
+): () => void {
+  const registration = ctx.on('tools/execute', async (exec, next) => {
     if (exec.name !== 'web_search') return next()
-    const search = options.settings.getSnapshot().search
+    const snapshot = options.settings.getSnapshot()
+    const search = snapshot.search
+    // OFF 必须在 runtime/账号/WASM/厂商工作之前 next，且不取消旧调用。
     if (!search.enabled) return next()
 
+    const lease = options.lifecycle?.begin?.(exec.signal)
+    const signal = lease?.signal ?? exec.signal
+    let boundDriver: SearchDriver | undefined
     const operation = executeSearchQueries(exec.arguments, {
       channel: search.channel,
-      // executor 先完成参数校验，再通过此 getter 解析账号对应的驱动。
-      get driver() { return options.drivers[search.channel] },
+      // executor 先完成参数校验；getter 只执行一次并冻结整个 batch 的 invocation。
+      get driver() {
+        if (boundDriver !== undefined) return boundDriver
+        if ('bind' in options.drivers && typeof options.drivers.bind === 'function') {
+          const selection: InvocationSelection = {
+            channel: search.channel,
+            accountId: snapshot[search.channel].currentAccountId,
+            endpointPreference: snapshot.qoder.endpointPreference,
+            selectionGeneration: options.runtime?.captureSelection(snapshot) ?? 0,
+          }
+          boundDriver = options.drivers.bind(selection)
+        } else {
+          boundDriver = (options.drivers as SearchDrivers)[search.channel]
+        }
+        return boundDriver
+      },
       profile: SEARCH_DEFAULT_PROFILE,
-    }, exec.signal)
-    const value = options.lifecycle?.track === undefined
-      ? await operation
-      : await options.lifecycle.track(operation, exec.signal)
+    }, signal)
+    const value = lease !== undefined
+      ? await lease.track(operation)
+      : options.lifecycle?.track === undefined
+        ? await operation
+        : await options.lifecycle.track(operation, signal)
     return { value }
   })
+  return () => {
+    if (typeof registration === 'function') (registration as () => void)()
+  }
 }

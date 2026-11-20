@@ -44,6 +44,7 @@ export function SettingsCard({
     () => new SettingsController({ configForms, connection }),
   )
   const [authBusy, setAuthBusy] = React.useState(false)
+  React.useEffect(() => { controller.setView(view) }, [controller, view])
   React.useEffect(() => () => { controller.dispose() }, [controller])
   const state = React.useSyncExternalStore(
     controller.subscribe,
@@ -72,7 +73,7 @@ export function SettingsCard({
           currentAccountId={state.settings[state.viewChannel].currentAccountId}
           t={t}
           endpointPreference={state.settings.qoder.endpointPreference}
-          actualEndpointHost={null}
+          actualEndpointHost={state.actualEndpointHost}
           endpointBusy={state.busy}
           endpointWritable={state.writable}
           endpointError={state.errorScope === 'endpoint' ? state.error : null}

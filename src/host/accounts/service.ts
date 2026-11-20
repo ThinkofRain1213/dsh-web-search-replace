@@ -27,6 +27,7 @@ import type { SettingsService } from '../settings/service.ts'
 import { SettingsWriteCancelledError } from '../settings/service.ts'
 import {
   accountInvalid,
+  accountCancelled,
   accountNotFound,
   accountStorageFailed,
   accountUnavailable,
@@ -121,7 +122,9 @@ export class AccountService {
     channel: ChannelId,
     accountId: string,
     replacementAccountId?: string | null,
+    signal?: AbortSignal,
   ): Promise<AccountCollection> {
+    if (signal?.aborted) throw accountCancelled()
     const exactChannel = requireChannel(channel)
     const exactAccountId = requireAccountId(accountId)
     const replacement = replacementAccountId === undefined || replacementAccountId === null
@@ -142,8 +145,9 @@ export class AccountService {
     }
 
     const currentWasDeleted = this.currentAccountId(exactChannel) === exactAccountId
+    if (signal?.aborted) throw accountCancelled()
     if (currentWasDeleted) {
-      await this.writeCurrent(exactChannel, replacement)
+      await this.writeCurrent(exactChannel, replacement, signal)
     }
 
     let deleted: boolean
@@ -152,9 +156,9 @@ export class AccountService {
     } catch (error) {
       // 凭据删除失败时，账号记录仍在；尽力把当前账号恢复为删除前的值，
       // 避免普通配置指向一个已不可用的选择。恢复失败也不覆盖原始错误。
-      if (currentWasDeleted) {
+      if (currentWasDeleted && !signal?.aborted) {
         try {
-          await this.writeCurrent(exactChannel, exactAccountId)
+          await this.writeCurrent(exactChannel, exactAccountId, signal)
         } catch {
           /* 静默：保留原始删除错误 */
         }
@@ -162,6 +166,7 @@ export class AccountService {
       throw error
     }
     if (!deleted) throw accountNotFound()
+    if (signal?.aborted) throw accountCancelled()
 
     const accounts = await this.list(exactChannel)
     const current = await this.getCurrent(exactChannel)
@@ -173,11 +178,13 @@ export class AccountService {
    *
    * 配置写失败发生在删除凭据之前，因此旧快照与账号记录都保留，用户可重试。
    */
-  async clearAll(): Promise<ClearAccountsResult> {
+  async clearAll(signal?: AbortSignal): Promise<ClearAccountsResult> {
     for (const channel of CHANNEL_IDS) {
-      if (this.currentAccountId(channel) !== null) await this.writeCurrent(channel, null)
+      if (signal?.aborted) throw accountCancelled()
+      if (this.currentAccountId(channel) !== null) await this.writeCurrent(channel, null, signal)
     }
     const cleared = await this.options.store.clearAll()
+    if (signal?.aborted) throw accountCancelled()
     return Object.freeze({ cleared })
   }
 

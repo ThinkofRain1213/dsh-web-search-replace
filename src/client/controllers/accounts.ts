@@ -24,6 +24,10 @@ import type { ChannelId } from '../../shared/channels.ts'
 import {
   callManagementRpc,
   type ManagementRpcConnection,
+  type ManagementRpcMethod,
+  type ManagementRpcPayloads,
+  type ManagementRpcResults,
+  type RpcResult,
 } from '../../shared/rpc.ts'
 
 /** 账号 UI 的稳定错误键；组件按当前语言翻译。 */
@@ -214,6 +218,7 @@ export class AccountsController {
   private operationQueue: InternalQueuedOperation[] = []
   private queueRunning = false
   private queueSequence = 0
+  private readonly rpcControllers = new Map<string, AbortController>()
 
   /**
    * @param options - 渠道、Connection 与轮询间隔。
@@ -239,6 +244,24 @@ export class AccountsController {
     return () => { this.listeners.delete(listener) }
   }
 
+  /** 每个 RPC 都有独立 AbortController；同 scope 新操作取消旧等待，dispose 全量 abort。 */
+  private async callRpc<M extends ManagementRpcMethod>(
+    scope: 'load' | 'auth' | 'action',
+    method: M,
+    payload: ManagementRpcPayloads[M],
+  ): Promise<RpcResult<ManagementRpcResults[M]>> {
+    const connection = this.connection
+    if (connection === undefined) throw new Error('connection unavailable')
+    this.rpcControllers.get(scope)?.abort()
+    const controller = new AbortController()
+    this.rpcControllers.set(scope, controller)
+    try {
+      return await callManagementRpc(connection, method, payload, controller.signal)
+    } finally {
+      if (this.rpcControllers.get(scope) === controller) this.rpcControllers.delete(scope)
+    }
+  }
+
   /**
    * 读取当前渠道的账号列表与当前账号；失败保留旧列表并显示错误。
    * @returns 是否成功发布了新的 ready 快照。
@@ -257,14 +280,14 @@ export class AccountsController {
       return false
     }
     try {
-      const listed = await callManagementRpc(connection, 'accounts.list', {
+      const listed = await this.callRpc('load', 'accounts.list', {
         channel: this.channel,
       })
       if (!this.activeLoad(generation)) return false
       if (!listed.ok) throw new Error('accounts.list failed')
       const accounts = readAccounts(listed.value, this.channel)
 
-      const currentResult = await callManagementRpc(connection, 'accounts.current', {
+      const currentResult = await this.callRpc('load', 'accounts.current', {
         channel: this.channel,
       })
       if (!this.activeLoad(generation)) return false
@@ -310,7 +333,7 @@ export class AccountsController {
       notice: null,
     })
     try {
-      const result = await callManagementRpc(connection, 'accounts.setCurrent', {
+      const result = await this.callRpc('action', 'accounts.setCurrent', {
         channel: this.channel,
         accountId,
       })
@@ -375,7 +398,7 @@ export class AccountsController {
       notice: null,
     })
     try {
-      const result = await callManagementRpc(connection, 'accounts.delete', {
+      const result = await this.callRpc('action', 'accounts.delete', {
         channel: this.channel,
         accountId,
         ...(deletingCurrent ? { replacementAccountId: replacement } : {}),
@@ -457,7 +480,7 @@ export class AccountsController {
     const generation = ++this.actionGeneration
     this.patch({ clearBusy: true, error: null, notice: null })
     try {
-      const result = await callManagementRpc(connection, 'accounts.clearAll', {})
+      const result = await this.callRpc('action', 'accounts.clearAll', {})
       if (!this.activeAction(generation)) return
       if (!result.ok || !isRecord(result.value) || typeof result.value.cleared !== 'number') {
         throw new Error('accounts.clearAll failed')
@@ -516,8 +539,8 @@ export class AccountsController {
       },
     })
     try {
-      const result = await callManagementRpc(
-        connection,
+      const result = await this.callRpc(
+        'auth',
         'auth.start',
         targetAccountId === null
           ? { channel: this.channel }
@@ -573,7 +596,7 @@ export class AccountsController {
       error: null,
     })
     try {
-      const result = await callManagementRpc(connection, 'auth.cancel', {
+      const result = await this.callRpc('auth', 'auth.cancel', {
         channel: this.channel,
         flowId: expectedFlowId,
       })
@@ -647,6 +670,8 @@ export class AccountsController {
     this.loadGeneration += 1
     this.authGeneration += 1
     this.actionGeneration += 1
+    for (const controller of this.rpcControllers.values()) controller.abort()
+    this.rpcControllers.clear()
     this.activeFlowId = null
     this.clearPoll()
     this.listeners.clear()
@@ -664,10 +689,13 @@ export class AccountsController {
     if (connection === undefined || this.cancelledFlowIds.has(flowId)) return
     this.cancelledFlowIds.add(flowId)
     try {
+      // 独立、有界、at-most-once：不得使用刚被 dispose abort 的 scope controller。
+      const controller = new AbortController()
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(1_000)])
       void callManagementRpc(connection, 'auth.cancel', {
         channel: this.channel,
         flowId,
-      }).catch(() => {})
+      }, signal).catch(() => {})
     } catch {
       // flowId 非法等同步校验失败：没有可安全清理的流程。
     }
@@ -793,7 +821,7 @@ export class AccountsController {
     const connection = this.connection
     if (expectedFlowId === null || connection === undefined) return
     try {
-      const result = await callManagementRpc(connection, 'auth.status', {
+      const result = await this.callRpc('auth', 'auth.status', {
         channel: this.channel,
         flowId: expectedFlowId,
       })

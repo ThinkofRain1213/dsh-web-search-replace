@@ -10,6 +10,8 @@ import {
   type AccountRpcPayloads,
 } from '../../shared/accounts.ts'
 import type { AccountService } from './service.ts'
+import { accountCancelled } from './errors.ts'
+import { waitWithAuthAbort } from '../channels/auth-abort.ts'
 
 /**
  * 执行一次账号 RPC。
@@ -21,22 +23,26 @@ export async function dispatchAccountRpc(
   accounts: AccountService,
   method: AccountRpcMethod,
   payload: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   assertAccountRpcPayload(method, payload)
+  const read = async <T>(operation: Promise<T>): Promise<T> => signal === undefined
+    ? await operation
+    : await waitWithAuthAbort(operation, signal, accountCancelled)
   switch (method) {
     case 'accounts.list':
-      return accounts.list((payload as AccountRpcPayloads['accounts.list']).channel)
+      return await read(accounts.list((payload as AccountRpcPayloads['accounts.list']).channel))
     case 'accounts.current':
-      return accounts.getCurrent((payload as AccountRpcPayloads['accounts.current']).channel)
+      return await read(accounts.getCurrent((payload as AccountRpcPayloads['accounts.current']).channel))
     case 'accounts.setCurrent': {
       const request = payload as AccountRpcPayloads['accounts.setCurrent']
-      return accounts.setCurrent(request.channel, request.accountId)
+      return accounts.setCurrent(request.channel, request.accountId, signal)
     }
     case 'accounts.delete': {
       const request = payload as AccountRpcPayloads['accounts.delete']
-      return accounts.delete(request.channel, request.accountId, request.replacementAccountId)
+      return accounts.delete(request.channel, request.accountId, request.replacementAccountId, signal)
     }
     case 'accounts.clearAll':
-      return accounts.clearAll()
+      return accounts.clearAll(signal)
   }
 }

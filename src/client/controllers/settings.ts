@@ -21,6 +21,7 @@ import {
   type ManagementRpcConnection,
 } from '../../shared/rpc.ts'
 import { PACKAGE_NAME } from '../constants.ts'
+import { isHostRuntimeSnapshot, type QoderRuntimeHost } from '../../shared/runtime.ts'
 
 /** configForms 快照的最小结构（与 Host 的 ConfigFormSnapshot 同形）。 */
 export interface ConfigFormSnapshotLike<T> {
@@ -62,6 +63,8 @@ export interface SettingsCardState {
   readonly error: SettingsErrorKey | null
   /** 最近一次失败属于哪个控件；成功或未失败时为 null。 */
   readonly errorScope: SettingsErrorScope
+  /** 仅 qoder+auto+page 激活时从 runtime.get 读取；其他情况始终 null。 */
+  readonly actualEndpointHost: QoderRuntimeHost | null
 }
 
 /** 控制器依赖的 Host 边界。 */
@@ -117,6 +120,7 @@ const INITIAL_STATE: SettingsCardState = Object.freeze({
   writable: false,
   error: null,
   errorScope: null,
+  actualEndpointHost: null,
 })
 
 /** 设置卡状态控制器；实现 React `useSyncExternalStore` 需要的稳定读取面。 */
@@ -138,6 +142,17 @@ export class SettingsController {
   private error: SettingsErrorKey | null = null
   private errorScope: SettingsErrorScope = null
   private disposed = false
+  private view: 'summary' | 'page' = 'summary'
+  private writeController: AbortController | undefined
+  private writeGeneration = 0
+  private readonly unsubscribeConnection: (() => void) | undefined
+  private runtimeActive = false
+  private runtimeGeneration = 0
+  private runtimeTimer: ReturnType<typeof setTimeout> | null = null
+  private runtimeController: AbortController | undefined
+  private runtimeActivationId: string | null = null
+  private runtimeRevision = -1
+  private actualEndpointHost: QoderRuntimeHost | null = null
 
   /**
    * @param options - configForms 与 Connection 的公开面。
@@ -146,6 +161,9 @@ export class SettingsController {
     this.connection = options.connection
     this.form = options.configForms?.get(PACKAGE_NAME)
     this.unsubscribeForm = this.form?.subscribe(() => { this.syncFromForm() })
+    this.unsubscribeConnection = this.connection?.generation?.subscribe(() => {
+      this.restartRuntimePolling()
+    })
     this.syncFromForm()
   }
 
@@ -193,11 +211,22 @@ export class SettingsController {
     await this.write({ endpointPreference: next }, 'endpoint')
   }
 
+  /** 由 React view 驱动 runtime 激活门；constructor 不会无条件轮询。 */
+  setView(view: 'summary' | 'page'): void {
+    if (this.disposed || this.view === view) return
+    this.view = view
+    this.restartRuntimePolling()
+  }
+
   /** 释放大订阅并丢弃迟到回包。 */
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.writeGeneration += 1
+    this.writeController?.abort()
+    this.stopRuntimePolling()
     this.unsubscribeForm?.()
+    this.unsubscribeConnection?.()
     this.listeners.clear()
   }
 
@@ -256,13 +285,16 @@ export class SettingsController {
   private async write(patch: SearchSettingsPatch, scope: SettingsErrorScope): Promise<void> {
     const connection = this.connection
     if (connection === undefined) return
+    const generation = ++this.writeGeneration
+    const controller = new AbortController()
+    this.writeController = controller
     this.busy = true
     this.error = null
     this.errorScope = null
     this.publish()
     try {
-      const result = await callManagementRpc(connection, 'settings.update', { patch })
-      if (this.disposed) return
+      const result = await callManagementRpc(connection, 'settings.update', { patch }, controller.signal)
+      if (this.disposed || generation !== this.writeGeneration) return
       const next = result.ok ? decodeSettingsSnapshot(result.value) : null
       if (next === null) throw new Error('settings update did not return a valid snapshot')
       this.committed = next
@@ -271,11 +303,12 @@ export class SettingsController {
       this.error = null
       this.errorScope = null
     } catch {
-      if (this.disposed) return
+      if (this.disposed || generation !== this.writeGeneration) return
       this.error = 'settings.saveFailed'
       this.errorScope = scope
     } finally {
-      if (!this.disposed) {
+      if (this.writeController === controller) this.writeController = undefined
+      if (!this.disposed && generation === this.writeGeneration) {
         this.busy = false
         this.publish()
       }
@@ -285,6 +318,7 @@ export class SettingsController {
   /** 组装并发布一份新状态。 */
   private publish(): void {
     if (this.disposed) return
+    const runtimeGeneration = this.updateRuntimeActivation()
     const status = this.formStatus === 'ready' && this.committed !== null
       ? 'ready'
       : this.formStatus === 'unavailable'
@@ -300,7 +334,81 @@ export class SettingsController {
       writable: this.writable && status === 'ready',
       error: this.error,
       errorScope: this.errorScope,
+      actualEndpointHost: this.actualEndpointHost,
     }
     for (const listener of [...this.listeners]) listener()
+    if (runtimeGeneration !== null) void this.pollRuntime(runtimeGeneration)
+  }
+
+  private updateRuntimeActivation(): number | null {
+    const active = this.view === 'page'
+      && this.viewChannel === 'qoder'
+      && this.committed?.qoder.endpointPreference === 'auto'
+      && this.formStatus === 'ready'
+      && this.connection !== undefined
+    if (!active) {
+      this.stopRuntimePolling()
+      return null
+    }
+    if (this.runtimeActive) return null
+    this.runtimeActive = true
+    this.runtimeGeneration += 1
+    return this.runtimeGeneration
+  }
+
+  private restartRuntimePolling(): void {
+    if (this.disposed) return
+    this.stopRuntimePolling()
+    this.publish()
+  }
+
+  private stopRuntimePolling(): void {
+    this.runtimeActive = false
+    this.runtimeGeneration += 1
+    if (this.runtimeTimer !== null) clearTimeout(this.runtimeTimer)
+    this.runtimeTimer = null
+    this.runtimeController?.abort()
+    this.runtimeController = undefined
+    this.runtimeActivationId = null
+    this.runtimeRevision = -1
+    this.actualEndpointHost = null
+  }
+
+  /** 顺序轮询：前一个 settle 后才安排下一次，绝不重叠或访问厂商。 */
+  private async pollRuntime(generation: number): Promise<void> {
+    const connection = this.connection
+    if (connection === undefined || !this.runtimeActive || generation !== this.runtimeGeneration) return
+    const controller = new AbortController()
+    this.runtimeController = controller
+    try {
+      const result = await callManagementRpc(connection, 'runtime.get', {}, controller.signal)
+      if (!this.runtimeActive || generation !== this.runtimeGeneration) return
+      if (!result.ok || !isHostRuntimeSnapshot(result.value)) {
+        throw new Error('runtime.get failed')
+      }
+      const snapshot = result.value
+      if (snapshot.activationId !== this.runtimeActivationId) {
+        this.runtimeActivationId = snapshot.activationId
+        this.runtimeRevision = -1
+        this.actualEndpointHost = null
+      }
+      if (snapshot.revision <= this.runtimeRevision) return
+      this.runtimeRevision = snapshot.revision
+      this.actualEndpointHost = snapshot.qoder.autoActualHost
+    } catch {
+      if (!this.runtimeActive || generation !== this.runtimeGeneration) return
+      this.runtimeActivationId = null
+      this.runtimeRevision = -1
+      this.actualEndpointHost = null
+    } finally {
+      if (this.runtimeController === controller) this.runtimeController = undefined
+      if (this.runtimeActive && generation === this.runtimeGeneration) {
+        this.publish()
+        this.runtimeTimer = setTimeout(() => {
+          this.runtimeTimer = null
+          void this.pollRuntime(generation)
+        }, 2_000)
+      }
+    }
   }
 }

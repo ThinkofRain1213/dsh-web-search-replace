@@ -18,7 +18,8 @@
  *
  * ## 生命周期（R3）
  *
- * - WASM 实例是**进程级共享**的（`gluePromise` 单例）；本任务**不**释放它。
+ * - WASM 实例是**进程级共享**的（`gluePromise` 单例）；activation lease 与 signer
+ *   refs 全部归零后断开引用允许 GC，后续 activation 可重新实例化。
  * - 每次 `prepare()` 创建独立的 `QoderContext` 与 `RequestResult`，并在
  *   `try/finally` 中**立即释放**（成功与失败路径都释放），返回的字符串也逐个
  *   free —— 否则 wasm 线性内存只增不减，最终 trap `unreachable`。
@@ -132,16 +133,64 @@ const wasmStats: WasmStats = {
   inputStringsFreed: 0,
 }
 
-/** 进程级共享 WASM；Task 15 才负责在在飞归零后最终释放。 */
+/** 进程级共享 WASM；owner lease 启用后才执行最终断引用。 */
 let gluePromise: Promise<Glue> | null = null
+let activationRefs = 0
+let ownerEnabled = false
+let finalReleases = 0
+let finalReleasePromise: Promise<void> | null = null
+
+export interface QoderWasmOwnerLease {
+  /** 幂等；旧代重复 dispose 不会减少新代引用。 */
+  dispose(): Promise<void>
+}
+
+/** 每个 Host activation 一个 lease；只管理生命周期，不提前加载 WASM。 */
+export function acquireQoderWasmOwnerLease(): QoderWasmOwnerLease {
+  ownerEnabled = true
+  activationRefs += 1
+  let disposed = false
+  return {
+    dispose: async () => {
+      if (disposed) return
+      disposed = true
+      activationRefs -= 1
+      await maybeReleaseGlue()
+    },
+  }
+}
+
+/** 全部 activation lease 与 signer refs 归零后断引用，允许 GC/后续重新实例化。 */
+function maybeReleaseGlue(): Promise<void> {
+  if (!ownerEnabled || activationRefs > 0 || wasmStats.signerRefs > 0 || gluePromise === null) {
+    return Promise.resolve()
+  }
+  if (finalReleasePromise !== null) return finalReleasePromise
+  const candidate = gluePromise
+  finalReleasePromise = (async () => {
+    // 等旧 async load 成败 settle；identity+refs 双重检查防止误清新代。
+    await Promise.allSettled([candidate])
+    if (gluePromise === candidate && activationRefs === 0 && wasmStats.signerRefs === 0) {
+      gluePromise = null
+      finalReleases += 1
+    }
+  })().finally(() => {
+    finalReleasePromise = null
+  })
+  return finalReleasePromise
+}
 
 function getGlue(): Promise<Glue> {
+  if (finalReleasePromise !== null) {
+    return finalReleasePromise.then(() => getGlue())
+  }
   if (gluePromise === null) {
-    gluePromise = createGlue().catch((error: unknown) => {
-      // 资产缺失/实例化失败不应永久缓存拒绝，便于安装修复后重试。
-      gluePromise = null
+    const promise = createGlue().catch((error: unknown) => {
+      // 旧 async load 失败只能在 identity 仍匹配时清理，不得误清新代。
+      if (gluePromise === promise) gluePromise = null
       throw error
     })
+    gluePromise = promise
   }
   return gluePromise
 }
@@ -830,8 +879,10 @@ export class QoderSigner implements QoderRequestSigner {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    if (this.inflightCount === 0) wasmStats.signerRefs -= 1
-    else this.releaseWhenIdle = true
+    if (this.inflightCount === 0) {
+      wasmStats.signerRefs -= 1
+      void maybeReleaseGlue()
+    } else this.releaseWhenIdle = true
   }
 
   /** 在飞归零；若 dispose 已发生，此时才释放本句柄的引用。 */
@@ -840,6 +891,7 @@ export class QoderSigner implements QoderRequestSigner {
     if (this.inflightCount === 0 && this.releaseWhenIdle) {
       this.releaseWhenIdle = false
       wasmStats.signerRefs -= 1
+      void maybeReleaseGlue()
     }
   }
 }
@@ -857,6 +909,22 @@ export const __testing = {
   async wasmHeapBytes(): Promise<number> {
     const glue = await getGlue()
     return glue.memoryBytes()
+  },
+  /** 不调用 getGlue：final release 后观察绝不会复活 WASM。 */
+  wasmOwnerStats(): Readonly<{
+    activationRefs: number
+    signerRefs: number
+    glueLoads: number
+    finalReleases: number
+    glueResident: boolean
+  }> {
+    return {
+      activationRefs,
+      signerRefs: wasmStats.signerRefs,
+      glueLoads: wasmStats.glueLoads,
+      finalReleases,
+      glueResident: gluePromise !== null,
+    }
   },
   /** I2 回归用：直接驱动返回值读取逻辑（含 view 重新获取与返回串释放）。 */
   readRequestResultString(

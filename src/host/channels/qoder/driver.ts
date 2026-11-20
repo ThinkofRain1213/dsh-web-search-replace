@@ -9,8 +9,8 @@
  * 端点选择委托给 {@link QoderEndpointPolicy}：
  *
  * - `center` / `api2`：只走所选域，任何错误都不切换；
- * - `auto`：初始 center，只有连接失败/超时/上游 5xx 才在同一账号、同一 query 下
- *   顺序换域一次，并按「账号 + 网络出口」在当前进程内粘性。
+ * - `auto`：无持久记录时从 center 开始，只有连接失败/超时/上游 5xx 才在同一账号、
+ *   同一 query 下顺序换域一次，并更新本机全局最近成功域（R43）。
  *
  * ⚠️ 账号由 Task 8 的 `createQoderInternationalSearchBinding` 以精确渠道快照注入；
  * 本驱动不读账号库、不做授权/刷新/UI，也不接触其他渠道账号。
@@ -67,12 +67,14 @@ export interface QoderInternationalDriverDeps {
   /** 端点偏好；每次搜索解析一次并作为本次调用快照。 */
   readonly resolveEndpointPreference: () => QoderEndpointPreference
     | Promise<QoderEndpointPreference>
-  /**
-   * 当前网络出口的稳定标识；用于隔离粘性。
-   *
-   * ⚠️ 必须由调用方显式提供，本驱动不探测 OS 网络，也不伪造「自动识别」。
-   */
-  readonly networkExitKey: () => string
+  /** R43：读取本机全局最近成功域；fixed 不会调用。 */
+  readonly readLastSuccessfulHost?: () => 'center.qoder.sh' | 'api2.qoder.sh' | null
+    | Promise<'center.qoder.sh' | 'api2.qoder.sh' | null>
+  /** 真实用户 auto 搜索成功后持久化；capability probe 不提供。 */
+  readonly writeLastSuccessfulHost?: (
+    host: 'center.qoder.sh' | 'api2.qoder.sh',
+    signal: AbortSignal,
+  ) => Promise<void>
   /** 测试注入；生产默认使用全局 fetch。 */
   readonly fetcher?: typeof fetch
   /** 脱敏观察钩子：实际域名、耗时与错误类别；不含 query 或凭据。 */
@@ -86,7 +88,12 @@ export interface QoderInternationalDriverDeps {
  */
 export function createQoderInternationalDriver(deps: QoderInternationalDriverDeps): SearchDriver {
   const policy = new QoderEndpointPolicy({
-    networkExitKey: deps.networkExitKey,
+    ...deps.readLastSuccessfulHost === undefined
+      ? {}
+      : { readLastSuccessfulHost: deps.readLastSuccessfulHost },
+    ...deps.writeLastSuccessfulHost === undefined
+      ? {}
+      : { writeLastSuccessfulHost: deps.writeLastSuccessfulHost },
     ...deps.onObservation === undefined ? {} : { onObservation: deps.onObservation },
   })
 
@@ -139,11 +146,21 @@ export function createQoderInternationalDriver(deps: QoderInternationalDriverDep
 }
 
 /** 两域都失败的错误带结构化类别；其余错误沿用共享协议映射。 */
-function toQoderChannelError(error: unknown): ChannelSearchError {
+export function toQoderChannelError(
+  error: unknown,
+  channel: 'qoder' | 'qodercn' = QODER_CHANNEL,
+): ChannelSearchError {
   if (error instanceof QoderEndpointUnavailableError) {
-    return new ChannelSearchError(error.code, QODER_CHANNEL, error.message)
+    return new ChannelSearchError(
+      error.code,
+      channel,
+      error.message,
+      undefined,
+      error.httpStatus,
+      error.host,
+    )
   }
-  return toQoderChannelSearchError(error, QODER_CHANNEL)
+  return toQoderChannelSearchError(error, channel)
 }
 
 /**

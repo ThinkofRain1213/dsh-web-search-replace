@@ -18,6 +18,7 @@ import {
   DEFAULT_SEARCH_CHANNEL,
   DEFAULT_SEARCH_ENABLED,
 } from '../shared/contracts.ts'
+import { QODER_RUNTIME_HOSTS, type QoderRuntimeHost } from '../shared/runtime.ts'
 
 /** 稳定的不可变配置引用；结构上与 Cordis 的 `Volatile<T>` 一致。 */
 export interface VolatileConfigValue<T> {
@@ -35,6 +36,8 @@ export interface SearchConfig {
   readonly qoder: {
     readonly currentAccountId: VolatileConfigValue<string | null>
     readonly endpointPreference: VolatileConfigValue<QoderEndpointPreference>
+    /** Host-only 全局路由状态；绝不进入 SearchSettingsSnapshot。 */
+    readonly lastSuccessfulHost: VolatileConfigValue<QoderRuntimeHost | null>
   }
   readonly qodercn: { readonly currentAccountId: VolatileConfigValue<string | null> }
 }
@@ -49,6 +52,16 @@ export interface SearchConfig {
 const nullableAccountId = () => Schema.transform(
   Schema.union([Schema.string(), Schema.const(null)]),
   (value: string | null | undefined) => value === undefined || value === '' ? null : value,
+).default('').volatile()
+
+/** 最近成功域只接受两个国际版 host；空哨兵仅用于表达缺省 null。 */
+const nullableLastSuccessfulHost = () => Schema.transform(
+  Schema.union([
+    ...QODER_RUNTIME_HOSTS.map(host => Schema.const(host)),
+    Schema.const(null),
+    Schema.const(''),
+  ]),
+  (value: QoderRuntimeHost | '' | null | undefined) => value === undefined || value === '' ? null : value,
 ).default('').volatile()
 
 /**
@@ -72,6 +85,7 @@ export const Config = Schema.object({
     endpointPreference: Schema.union([...QODER_ENDPOINT_PREFERENCES])
       .default(DEFAULT_QODER_ENDPOINT_PREFERENCE)
       .volatile(),
+    lastSuccessfulHost: nullableLastSuccessfulHost(),
   }),
   qodercn: Schema.object({
     currentAccountId: nullableAccountId(),

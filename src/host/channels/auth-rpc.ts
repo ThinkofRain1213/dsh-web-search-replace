@@ -16,6 +16,7 @@
 import type { AccountSummary } from '../../shared/accounts.ts'
 import {
   assertAuthRpcPayload,
+  AUTH_CHANNELS,
   AuthRpcValidationError,
   isAccountSummary,
   isAuthFlowStatusForChannel,
@@ -26,6 +27,31 @@ import {
   type AuthRpcMethod,
   type AuthRpcPayloads,
 } from '../../shared/auth.ts'
+
+/** 根组合专用：恰好四个渠道、key/channel 一致、同实例不得双注册。 */
+export function createAuthFlowRegistry(
+  flows: Readonly<Record<string, AuthFlowPort>>,
+): Readonly<Record<AuthChannel, AuthFlowPort>> {
+  const keys = Object.keys(flows)
+  if (keys.length !== AUTH_CHANNELS.length
+    || keys.some(key => !(AUTH_CHANNELS as readonly string[]).includes(key))) {
+    throw new TypeError('auth flow registry must contain exactly the four channel keys')
+  }
+  const instances = new Set<AuthFlowPort>()
+  const registry = {} as Record<AuthChannel, AuthFlowPort>
+  for (const channel of AUTH_CHANNELS) {
+    const flow = flows[channel]
+    if (flow === undefined || flow.channel !== channel) {
+      throw new TypeError(`auth flow registry channel mismatch for ${channel}`)
+    }
+    if (instances.has(flow)) {
+      throw new TypeError('the same auth flow instance cannot be registered twice')
+    }
+    instances.add(flow)
+    registry[channel] = flow
+  }
+  return Object.freeze(registry)
+}
 
 /**
  * 执行一次授权 RPC。
@@ -47,7 +73,7 @@ export async function dispatchChannelAuthRpc(
   internalError: () => AuthFlowError,
 ): Promise<AuthFlowStatus | AccountSummary> {
   assertAuthRpcPayload(method, payload)
-  if (payload.channel !== channel) {
+  if (payload.channel !== channel || flow.channel !== channel) {
     throw new AuthRpcValidationError(`授权 RPC 只接受 channel=${channel}`)
   }
   switch (method) {

@@ -13,15 +13,14 @@
  * - **自动模式**：初始 `center.qoder.sh`；只有连接失败（DNS/TCP/TLS）、请求超时、
  *   上游 5xx 才在首域 settle 后**顺序**尝试另一域一次。401/403、429、坏响应、
  *   签名/配置/账号/本地校验错误、调用方取消都不切换；未知异常默认不切换。
- * - **粘性**：成功的域成为「该账号 + 该网络出口」在当前进程内的首选；重启回
- *   center；固定模式不写入粘性；不同账号、不同出口互不共享。
+ * - **R43 全局路由**：成功的域成为本机唯一最近成功域，所有国际版账号共用；
+ *   新 activation 从 Host 持久值开始，fixed 与 capability probe 不写入。
  * - **可归因**：单 query 每域最多一次；两域都失败时抛出含两个域名与结构化类别
- *   的安全错误（不含 query、凭据、账号键、网络出口键或底层异常原文）。
+ *   的安全错误（不含 query、凭据、账号键、持久路由字段或底层异常原文）。
  *
  * ## 明确不做
  *
- * 不做并行双发、后台测速、周期性探测、延迟评分或滞回窗口；不自动探测 OS 网络。
- * `networkExitKey` 由外部显式注入，本层只把它并入粘性键。
+ * 不做并行双发、后台测速、周期性探测、延迟评分、滞回窗口、networkExitKey 或 OS 探测。
  */
 import { isQoderEndpointPreference, type QoderEndpointPreference } from '../../../shared/channels.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
@@ -90,17 +89,25 @@ export interface QoderEndpointExecuteInput<T> {
   /** 用同一账号、同一 query 发往指定域的一次尝试。 */
   readonly operation: (context: QoderEndpointOperationContext) => Promise<T>
   readonly signal: AbortSignal
+  /** 真实用户搜索默认为 true；capability probe 必须为 false，禁止写持久路由。 */
+  readonly rememberSuccess?: boolean
+  /** invocation-bound 持久化门禁；可携带本次 selection generation。 */
+  readonly writeLastSuccessfulHost?: (
+    host: QoderInternationalHost,
+    signal: AbortSignal,
+  ) => Promise<void>
+  /** invocation-bound observation；闭包携带 Host 内部选择代际，不进入 DTO。 */
+  readonly onObservation?: (observation: QoderEndpointObservation) => void
 }
 
-/** 策略依赖：网络出口键必须显式注入，本层不探测 OS 网络。 */
+/** R43：单一本机全局路由值；fixed 不调用这两个依赖。 */
 export interface QoderEndpointPolicyDeps {
-  /**
-   * 当前网络出口的稳定标识；每次 `execute` 解析一次并并入粘性键。
-   *
-   * 生产实现由调用方提供（例如用户配置的网络出口 ID）；本层绝不自动探测或
-   * 伪造「已识别网络出口」。
-   */
-  readonly networkExitKey: () => string
+  readonly readLastSuccessfulHost?: () => QoderInternationalHost | null
+    | Promise<QoderInternationalHost | null>
+  readonly writeLastSuccessfulHost?: (
+    host: QoderInternationalHost,
+    signal: AbortSignal,
+  ) => Promise<void>
   /** 脱敏观察钩子；抛错会被吞掉，绝不影响搜索本身。 */
   readonly onObservation?: (observation: QoderEndpointObservation) => void
 }
@@ -125,6 +132,9 @@ export class QoderEndpointUnavailableError extends Error {
     readonly code: QoderProtocolFailureCode,
     message: string,
     readonly attempts: readonly QoderEndpointAttempt[],
+    /** 第二域为非换域类错误时保留其可信状态与 host；聚合连接错误时为 undefined。 */
+    readonly httpStatus?: number,
+    readonly host?: QoderInternationalHost,
   ) {
     super(message)
   }
@@ -137,6 +147,18 @@ export class QoderEndpointUnavailableError extends Error {
  * 签名失败与配置错误，靠消息文本猜测会误切换。
  */
 export function classifyQoderEndpointFailure(error: unknown): QoderEndpointFailureClassification {
+  if (error instanceof ChannelSearchError) {
+    const status = error.httpStatus
+    if (error.code === 'TIMEOUT') return { category: 'timeout', retryable: true, ...statusOption(status) }
+    if (error.code === 'UNAUTHORIZED') return { category: 'unauthorized', retryable: false, ...statusOption(status) }
+    if (error.code === 'RATE_LIMITED') return { category: 'rate_limited', retryable: false, ...statusOption(status) }
+    if (error.code === 'BAD_RESPONSE') return { category: 'bad_response', retryable: false, ...statusOption(status) }
+    if (error.code === 'NO_ACCOUNT') return { category: 'no_account', retryable: false, ...statusOption(status) }
+    if (status !== undefined && status >= 500) {
+      return { category: 'server_error', retryable: true, status }
+    }
+    return { category: 'other', retryable: false, ...statusOption(status) }
+  }
   if (!(error instanceof QoderSearchProtocolError)) {
     // 未知异常（含第三方包装错误）默认不可切换。
     return { category: 'other', retryable: false }
@@ -186,11 +208,12 @@ function classifyHttpStatus(status: number | undefined): QoderEndpointFailureCla
 /**
  * 双域端点策略实例。
  *
- * 粘性只保存在本实例（= 当前进程）内；实例重建即回到 center。
+ * 本实例缓存唯一全局值；新 activation 从 Host 持久最近成功域开始，缺失才回 center。
  */
 export class QoderEndpointPolicy {
-  /** 粘性键：`accountKey\0networkExitKey` → 最近成功域名。 */
-  private readonly stickyHosts = new Map<string, QoderInternationalHost>()
+  /** R43：只有一个有界全局值，不按账号/网络建 Map。 */
+  private lastSuccessfulHost: QoderInternationalHost | null = null
+  private routeInitialized = false
 
   constructor(private readonly deps: QoderEndpointPolicyDeps) {}
 
@@ -202,20 +225,16 @@ export class QoderEndpointPolicy {
    */
   async execute<T>(input: QoderEndpointExecuteInput<T>): Promise<T> {
     const preference = requirePreference(input.preference)
-    const accountKey = requireAccountKey(input.accountKey)
-    // 网络出口键只服务于 auto 粘性：固定模式没有粘性语义，绝不能读取该依赖，
-    // 否则一个与固定端点无关的 resolver 故障会阻断搜索（修复轮 1 / I1）。
-    const stickyKey = preference === 'auto'
-      ? `${accountKey}\u0000${requireNetworkExitKey(this.deps)}`
-      : ''
-    const hosts = this.hostsFor(preference, stickyKey)
+    requireAccountKey(input.accountKey)
+    // fixed 不读取持久路由；auto 从本机唯一全局值开始，账号切换不影响它。
+    const hosts = await this.hostsFor(preference)
     const attempts: QoderEndpointAttempt[] = []
 
     let firstError: unknown
     try {
       const value = await this.runAttempt(hosts[0]!, input.operation, attempts)
-      this.rememberSuccessfulHost(preference, stickyKey, hosts[0]!)
-      this.report({ preference, outcome: 'succeeded', host: hosts[0]!, attempts: [...attempts] })
+      await this.rememberSuccessfulHost(input, hosts[0]!)
+      this.report({ preference, outcome: 'succeeded', host: hosts[0]!, attempts: [...attempts] }, input.onObservation)
       return value
     } catch (error) {
       firstError = error
@@ -224,7 +243,7 @@ export class QoderEndpointPolicy {
     // 固定模式（hosts 只有一个）绝不切换；非限定错误与调用方取消也不切换。
     const classification = classifyQoderEndpointFailure(firstError)
     if (hosts.length === 1 || !classification.retryable || isAborted(input.signal)) {
-      this.report({ preference, outcome: 'failed', attempts: [...attempts] })
+      this.report({ preference, outcome: 'failed', attempts: [...attempts] }, input.onObservation)
       throw firstError
     }
 
@@ -232,11 +251,24 @@ export class QoderEndpointPolicy {
     const fallbackHost = hosts[1]!
     try {
       const value = await this.runAttempt(fallbackHost, input.operation, attempts)
-      this.rememberSuccessfulHost(preference, stickyKey, fallbackHost)
-      this.report({ preference, outcome: 'succeeded', host: fallbackHost, attempts: [...attempts] })
+      await this.rememberSuccessfulHost(input, fallbackHost)
+      this.report({ preference, outcome: 'succeeded', host: fallbackHost, attempts: [...attempts] }, input.onObservation)
       return value
-    } catch {
-      this.report({ preference, outcome: 'failed', attempts: [...attempts] })
+    } catch (secondError) {
+      this.report({ preference, outcome: 'failed', attempts: [...attempts] }, input.onObservation)
+      const secondClassification = classifyQoderEndpointFailure(secondError)
+      // 第二域 401/403/429/bad response 等必须保留自己的结构化归因；只有两个
+      // 都属于允许换域类时才聚合为双域连接/服务失败。
+      if (!secondClassification.retryable
+        && (secondError instanceof QoderSearchProtocolError || secondError instanceof ChannelSearchError)) {
+        throw new QoderEndpointUnavailableError(
+          secondError.code === 'INVALID_ARGUMENTS' ? 'SEARCH_FAILED' : secondError.code,
+          secondError.message,
+          [...attempts],
+          secondClassification.status,
+          fallbackHost,
+        )
+      }
       throw new QoderEndpointUnavailableError(
         aggregateFailureCode(attempts),
         aggregateFailureMessage(attempts),
@@ -245,25 +277,50 @@ export class QoderEndpointPolicy {
     }
   }
 
-  /** 本次调用允许的域名顺序；固定模式只有一个。 */
-  private hostsFor(
+  /** 本次调用允许的域名顺序；固定模式只有一个且绝不读取持久路由。 */
+  private async hostsFor(
     preference: QoderEndpointPreference,
-    stickyKey: string,
-  ): readonly QoderInternationalHost[] {
+  ): Promise<readonly QoderInternationalHost[]> {
     if (preference === 'center') return [CENTER_HOST]
     if (preference === 'api2') return [API2_HOST]
-    const sticky = this.stickyHosts.get(stickyKey) ?? QODER_AUTO_INITIAL_HOST
+    // 有持久 writer 时可重读 volatile 值；纯内存策略在首次读取后使用唯一缓存，
+    // 避免一个返回 null 的 reader 把刚成功的内存值覆盖掉。
+    if (this.deps.writeLastSuccessfulHost !== undefined || !this.routeInitialized) {
+      let persisted: QoderInternationalHost | null | undefined
+      try {
+        persisted = await this.deps.readLastSuccessfulHost?.()
+      } catch {
+        throw new ChannelSearchError(
+          'SEARCH_FAILED',
+          'qoder',
+          'Qoder international search could not read the last successful host',
+        )
+      }
+      if (persisted !== undefined) this.lastSuccessfulHost = persisted
+      this.routeInitialized = true
+    }
+    const sticky = this.lastSuccessfulHost ?? QODER_AUTO_INITIAL_HOST
     return sticky === CENTER_HOST ? [CENTER_HOST, API2_HOST] : [API2_HOST, CENTER_HOST]
   }
 
-  /** 只有自动模式的成功域成为粘性首选；固定模式不污染 auto 粘性。 */
-  private rememberSuccessfulHost(
-    preference: QoderEndpointPreference,
-    stickyKey: string,
+  /** 真实用户 auto 成功后才更新；probe 与 fixed 都不写全局路由。 */
+  private async rememberSuccessfulHost<T>(
+    input: QoderEndpointExecuteInput<T>,
     host: QoderInternationalHost,
-  ): void {
-    if (preference !== 'auto') return
-    this.stickyHosts.set(stickyKey, host)
+  ): Promise<void> {
+    if (input.preference !== 'auto' || input.rememberSuccess === false) return
+    const write = input.writeLastSuccessfulHost ?? this.deps.writeLastSuccessfulHost
+    if (write === undefined) {
+      this.lastSuccessfulHost = host
+      return
+    }
+    try {
+      await write(host, input.signal)
+      this.lastSuccessfulHost = host
+    } catch {
+      // 路由持久化失败不能把已成功的真实搜索结果改写成失败；保留旧值，
+      // 后续真实搜索可再次尝试。configEditor 物理提交边界由调用方 await settle。
+    }
   }
 
   /** 一次尝试：计时、记录脱敏结果，然后把原始错误继续抛出。 */
@@ -291,8 +348,11 @@ export class QoderEndpointPolicy {
   }
 
   /** 观察钩子只用于脱敏状态；它失败绝不能影响搜索结果。 */
-  private report(observation: QoderEndpointObservation): void {
-    const hook = this.deps.onObservation
+  private report(
+    observation: QoderEndpointObservation,
+    invocationHook?: (observation: QoderEndpointObservation) => void,
+  ): void {
+    const hook = invocationHook ?? this.deps.onObservation
     if (hook === undefined) return
     try {
       hook(observation)
@@ -354,30 +414,4 @@ function requireAccountKey(value: string): string {
     )
   }
   return trimmed
-}
-
-/**
- * 解析网络出口键。
- *
- * 失败时 fail-closed：宁可本次搜索失败，也不在没有出口标识时把不同网络的粘性
- * 混在一起。错误消息固定，不透传底层异常原文（可能含环境信息）。
- */
-function requireNetworkExitKey(deps: QoderEndpointPolicyDeps): string {
-  let value: unknown
-  try {
-    value = deps.networkExitKey()
-  } catch {
-    throw networkExitKeyFailure()
-  }
-  const key = typeof value === 'string' ? value.trim() : ''
-  if (key.length === 0) throw networkExitKeyFailure()
-  return key
-}
-
-function networkExitKeyFailure(): ChannelSearchError {
-  return new ChannelSearchError(
-    'SEARCH_FAILED',
-    'qoder',
-    'Qoder international search could not resolve the network exit key',
-  )
 }

@@ -87,6 +87,8 @@ export async function postTencentSearch(
         max_results: request.maxResults,
       }),
       signal: composed,
+      // 不把 Authorization/query/body 随 3xx 转发到任何目标。
+      redirect: 'error',
     })
   } catch (error) {
     throw transportFailure(error, timeout, composed)

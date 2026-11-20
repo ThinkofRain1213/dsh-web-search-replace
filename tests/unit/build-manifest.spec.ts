@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
 import { createSettingsDouble } from './support/settings-double.ts'
+import { MemoryCredentials } from './support/memory-credentials.ts'
 
 const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PACKAGE_NAME = 'dsh-web-search-channels'
@@ -147,11 +148,12 @@ describe('Host 入口', () => {
     expect(typeof host.apply).toBe('function')
     expect(host.apply.length).toBe(2)
     expect(host.Config).toBeDefined()
-    expect([...host.inject].sort()).toEqual(['configEditor', 'connection'])
+    expect([...host.inject].sort()).toEqual(['configEditor', 'connection', 'credentials', 'tools'])
 
     const double = createSettingsDouble()
     const routes = new Map<string, { path: string }>()
     let effects = 0
+    let disposal: (() => Promise<void>) | undefined
     const ctx = {
       connection: {
         fetch: {
@@ -163,16 +165,29 @@ describe('Host 入口', () => {
         rpc: { async call() { return { ok: true, value: undefined } } },
       },
       configEditor: double.editor,
-      fiber: { entry: { id: 'dsh-web-search-channels' } },
-      effect(execute: () => (() => Promise<void>) | void) {
+      credentials: new MemoryCredentials(),
+      fiber: {
+        entry: {
+          id: 'dsh-web-search-channels',
+          options: { id: 'dsh-web-search-channels', name: 'dsh-web-search-channels', config: {} },
+          fiber: {},
+        },
+      },
+      on: () => () => {},
+      effect(execute: () => Promise<() => Promise<void>> | (() => Promise<void>) | void) {
         effects += 1
-        return execute()
+        const result = execute()
+        if (result instanceof Promise) return result.then((dispose) => { disposal = dispose })
+        disposal = result ?? undefined
+        return disposal
       },
     }
 
     expect(() => { host.apply(ctx as never, double.config) }).not.toThrow()
     expect(effects).toBe(1)
     expect(routes.has('/api/web-search-channels')).toBe(true)
+    await Promise.resolve()
+    await disposal?.()
   })
 })
 

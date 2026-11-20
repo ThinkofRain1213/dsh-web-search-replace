@@ -145,6 +145,8 @@ export interface AuthFlowStartOptions {
  * 本接口只描述 RPC 分派需要的方法，不提供任何共享状态。
  */
 export interface AuthFlowPort {
+  /** 固定归属；注册与每次 dispatch 都必须在任何工作前核对。 */
+  readonly channel: AuthChannel
   start(options?: AuthFlowStartOptions): Promise<AuthFlowStatus>
   cancel(flowId: string): Promise<AuthFlowStatus>
   status(flowId: string): Promise<AuthFlowStatus>

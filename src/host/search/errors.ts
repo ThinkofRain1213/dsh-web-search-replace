@@ -25,6 +25,8 @@ export class ChannelSearchError extends Error {
      * 调用方把 403/业务错误误判成可刷新重试的 401。
      */
     readonly httpStatus?: number,
+    /** 可确定时的实际 Qoder host；仅用于归因，不进入 Client 普通设置 DTO。 */
+    readonly host?: string,
   ) {
     super(message, cause === undefined ? undefined : { cause })
   }

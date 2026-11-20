@@ -10,6 +10,7 @@
  * 和 `shared/auth.ts` 的单一实现，不在这里复制第二套。
  */
 import type { ChannelId } from './channels.ts'
+import type { HostRuntimeSnapshot } from './runtime.ts'
 import {
   ACCOUNT_RPC_METHODS,
   assertAccountRpcPayload,
@@ -47,11 +48,15 @@ export const SETTINGS_RPC_METHODS = [
   'settings.setCurrentAccount',
 ] as const
 
-/** 管理 RPC 的全部精确方法名：设置 + 账号 + 授权。 */
+/** 只读 Host runtime RPC；不与普通设置快照合并。 */
+export const RUNTIME_RPC_METHODS = ['runtime.get'] as const
+
+/** 管理 RPC 的全部精确方法名：设置 + 账号 + 授权 + runtime。 */
 export const MANAGEMENT_RPC_METHODS = [
   ...SETTINGS_RPC_METHODS,
   ...ACCOUNT_RPC_METHODS,
   ...AUTH_RPC_METHODS,
+  ...RUNTIME_RPC_METHODS,
 ] as const
 
 /** 普通设置 RPC 方法名。 */
@@ -71,7 +76,9 @@ export interface SettingsRpcPayloads {
 }
 
 /** 每个管理 RPC 方法接受的内部 payload；账号/授权半边复用共享契约。 */
-export type ManagementRpcPayloads = SettingsRpcPayloads & AccountRpcPayloads & AuthRpcPayloads
+export type ManagementRpcPayloads = SettingsRpcPayloads & AccountRpcPayloads & AuthRpcPayloads & {
+  'runtime.get': Record<string, never>
+}
 
 /** 每个管理 RPC 方法成功时的结果类型；授权半边复用共享结果契约。 */
 export type ManagementRpcResults = {
@@ -83,6 +90,7 @@ export type ManagementRpcResults = {
   'accounts.setCurrent': AccountSummary | null
   'accounts.delete': AccountCollection
   'accounts.clearAll': ClearAccountsResult
+  'runtime.get': HostRuntimeSnapshot
 } & AuthRpcResults
 
 /** 管理 RPC 的错误载荷；`details` 是 Connection 客户端解析所必需的对象。 */
@@ -116,7 +124,13 @@ export interface ManagementRpcRoute {
 }
 
 /** Client 侧调用器只依赖 Connection 的两个公开入口。 */
+export interface ManagementRpcConnectionGeneration {
+  getSnapshot(): unknown
+  subscribe(listener: () => void): () => void
+}
+
 export interface ManagementRpcConnection {
+  readonly generation?: ManagementRpcConnectionGeneration
   readonly fetch: {
     register(route: ManagementRpcRoute): () => Promise<void>
   }
@@ -160,8 +174,9 @@ export function assertManagementRpcPayload<M extends ManagementRpcMethod>(
   }
   switch (method) {
     case 'settings.get':
+    case 'runtime.get':
       if (Object.keys(payload).length !== 0) {
-        throw new TypeError('settings.get 不接受 payload 字段')
+        throw new TypeError(`${method} 不接受 payload 字段`)
       }
       return
     case 'settings.update': {

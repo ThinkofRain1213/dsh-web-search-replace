@@ -248,7 +248,14 @@ export async function postQoderSearch(
       // 不跟随重定向：307/308 可能把签名头与密文 body 重发到其他 host。
       redirect: 'error',
     })
-  } catch {
+  } catch (error) {
+    if (!composed.aborted && isRedirectFailure(error)) {
+      throw new QoderSearchProtocolError(
+        'BAD_RESPONSE',
+        'qoder search refused a redirect response',
+        'bad_response',
+      )
+    }
     throw transportFailure(timeout, composed)
   }
 
@@ -311,6 +318,18 @@ function abortFailure(signal: AbortSignal): QoderSearchProtocolError {
     'qoder search aborted by the caller',
     'aborted',
   )
+}
+
+/** 只用于分类的有限 cause 检查；绝不把原始消息/cause 透出。 */
+function isRedirectFailure(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; depth < 3 && typeof current === 'object' && current !== null; depth += 1) {
+    const record = current as { code?: unknown; message?: unknown; cause?: unknown }
+    if (record.code === 'ERR_UNEXPECTED_REDIRECT') return true
+    if (typeof record.message === 'string' && /redirect/i.test(record.message)) return true
+    current = record.cause
+  }
+  return false
 }
 
 /**

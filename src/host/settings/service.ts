@@ -8,6 +8,8 @@
  * R2：本任务只校验渠道与稳定小写 slug 并持久化用户意图，账号记录是否存在
  * 由 Task 8 的 account-aware service 关闭。
  */
+import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
+
 import {
   isChannelId,
   type ChannelId,
@@ -20,6 +22,7 @@ import {
   type SearchSettingsSnapshot,
 } from '../../shared/contracts.ts'
 import type { SearchConfig } from '../config.ts'
+import { isQoderRuntimeHost, type QoderRuntimeHost } from '../../shared/runtime.ts'
 
 /** 普通配置的原始嵌套对象。 */
 type RawConfig = Record<string, unknown>
@@ -39,13 +42,13 @@ type ConfigChange = (current: RawConfig, inherited: RawConfig) => RawConfig
 
 /** 只依赖 ConfigEditor 的写入方法，便于测试与后续 Task 复用。 */
 export interface SettingsConfigEditor {
-  edit(entry: any, change: ConfigChange): Promise<void>
+  edit(entry: Entry, change: ConfigChange): Promise<void>
 }
 
 /** 构建设置服务所需依赖。 */
 export interface SettingsServiceOptions {
   readonly configEditor: SettingsConfigEditor
-  readonly entry: unknown
+  readonly entry: Entry
   /** `apply` 收到的有效配置；每个可热修改字段都是稳定引用。 */
   readonly config: SearchConfig
 }
@@ -71,9 +74,14 @@ export class SettingsService {
    * @throws {SearchSettingsValidationError} 补丁非法时。
    * @throws 配置写入失败时保留旧快照并向上抛出。
    */
-  async updateSearch(patch: SearchSettingsPatch): Promise<SearchSettingsSnapshot> {
+  async updateSearch(
+    patch: SearchSettingsPatch,
+    signal?: AbortSignal,
+  ): Promise<SearchSettingsSnapshot> {
     assertSearchSettingsPatch(patch)
+    if (signal?.aborted) throw new SettingsWriteCancelledError()
     await this.options.configEditor.edit(this.options.entry, (current) => {
+      if (signal?.aborted) throw new SettingsWriteCancelledError()
       const base = isRecord(current) ? current : {}
       const nextSearch = isRecord(base.search) ? { ...base.search } : {}
       if (Object.hasOwn(patch, 'enabled')) nextSearch.enabled = patch.enabled
@@ -87,6 +95,34 @@ export class SettingsService {
       return next
     })
     return this.publish()
+  }
+
+  /** Host-only：读取本机全局最近成功域；fixed 与 Client 快照都不会读取它。 */
+  getLastSuccessfulHost(): QoderRuntimeHost | null {
+    const value = this.options.config.qoder.lastSuccessfulHost.get()
+    return isQoderRuntimeHost(value) ? value : null
+  }
+
+  /**
+   * Host-only：真实用户 auto 搜索成功后经 configEditor 持久化唯一全局路由值。
+   * 不发布普通设置快照，也不把该字段传入任何 Client DTO。
+   */
+  async updateLastSuccessfulHost(
+    host: QoderRuntimeHost,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!isQoderRuntimeHost(host)) {
+      throw new SearchSettingsValidationError('非法 Qoder 最近成功域')
+    }
+    if (signal?.aborted) throw new SettingsWriteCancelledError()
+    await this.options.configEditor.edit(this.options.entry, (current) => {
+      // callback 返回后的物理提交只能由调用方 await settle，不能伪称回滚。
+      if (signal?.aborted) throw new SettingsWriteCancelledError()
+      const base = isRecord(current) ? current : {}
+      const qoder = isRecord(base.qoder) ? { ...base.qoder } : {}
+      qoder.lastSuccessfulHost = host
+      return { ...base, qoder }
+    })
   }
 
   /**
@@ -119,6 +155,11 @@ export class SettingsService {
       channelConfig.currentAccountId = accountId
       return { ...base, [channel]: channelConfig }
     })
+    return this.publish()
+  }
+
+  /** loader/volatile-update 后重读稳定引用；lastSuccessfulHost 仍不进入快照。 */
+  refreshFromVolatile(): SearchSettingsSnapshot {
     return this.publish()
   }
 

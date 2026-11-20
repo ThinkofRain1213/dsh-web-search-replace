@@ -87,6 +87,12 @@ describe('postTencentSearch 请求形状', () => {
     expect(sources).toEqual([{ url: 'https://a.test/', title: 'A', snippet: 'S' }])
   })
 
+  it('腾讯搜索 data-plane 明确 redirect:error，不跟随重定向转发授权材料', async () => {
+    const { fetcher, calls } = jsonFetcher({ results: [] })
+    await postTencentSearch(request({ fetcher }))
+    expect(calls[0]?.init.redirect).toBe('error')
+  })
+
   it('共享层不写死渠道 host，也不自行封顶 maxResults', async () => {
     const { fetcher, calls } = jsonFetcher({ results: [] })
 

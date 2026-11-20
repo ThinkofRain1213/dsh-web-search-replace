@@ -30,11 +30,15 @@ import {
   type AuthFlowPort,
 } from '../shared/auth.ts'
 import { SearchSettingsValidationError } from '../shared/contracts.ts'
+import type { HostRuntimeSnapshot } from '../shared/runtime.ts'
 import { AccountError } from './accounts/errors.ts'
 import { dispatchAccountRpc } from './accounts/rpc-methods.ts'
 import type { AccountService } from './accounts/service.ts'
 import { dispatchChannelAuthRpc } from './channels/auth-rpc.ts'
 import type { SettingsService } from './settings/service.ts'
+import { registerGenerationRoute } from './route-broker.ts'
+import type { PluginLifecycle } from './lifecycle.ts'
+import { InFlightStoppedError } from './inflight.ts'
 
 /**
  * 按渠道注册的授权流程。
@@ -44,6 +48,20 @@ import type { SettingsService } from './settings/service.ts'
  * 不会回退到另一渠道。
  */
 export type AuthFlowRegistry = Partial<Record<AuthChannel, AuthFlowPort>>
+
+/** Host runtime 只读端口；实现由本代 observation store 提供。 */
+export interface HostRuntimePort {
+  getSnapshot(): HostRuntimeSnapshot
+}
+
+/** 完整根组合的可选扩展；保留旧测试的局部组合入口。 */
+export interface ManagementRpcOptions {
+  readonly runtime?: HostRuntimePort
+  readonly lifecycle?: PluginLifecycle
+}
+
+/** 兼容旧 disposer 调用，同时暴露本代 async setup readiness。 */
+export type ManagementRpcDisposer = (() => Promise<void>) & { readonly ready: Promise<void> }
 
 /** 未知管理方法；映射为 RPC 的 `bad-request`。 */
 class UnknownManagementMethodError extends Error {
@@ -71,13 +89,17 @@ export function registerManagementRpc(
   settings: SettingsService,
   accounts?: AccountService,
   authFlows?: AuthFlowRegistry,
-): () => Promise<void> {
-  return connection.fetch.register({
+  options: ManagementRpcOptions = {},
+): ManagementRpcDisposer {
+  const registration = registerGenerationRoute(connection, {
     path: MANAGEMENT_RPC_PATH,
     methods: ['POST'],
     requestBody: 'buffered',
-    fetch: (request) => handleManagementRpcRequest(settings, request, accounts, authFlows),
+    fetch: (request) => handleManagementRpcRequest(settings, request, accounts, authFlows, options),
   })
+  const dispose = async (): Promise<void> => { await registration.dispose() }
+  Object.defineProperty(dispose, 'ready', { value: registration.ready, enumerable: true })
+  return dispose as ManagementRpcDisposer
 }
 
 /**
@@ -91,6 +113,7 @@ export async function handleManagementRpcRequest(
   request: Request,
   accounts?: AccountService,
   authFlows?: AuthFlowRegistry,
+  options: ManagementRpcOptions = {},
 ): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response('method not allowed', { status: 405 })
@@ -111,13 +134,17 @@ export async function handleManagementRpcRequest(
     return jsonReply(envelope.rpcId, { ok: false, error: envelope.error })
   }
   try {
-    const value = await dispatch(
+    const lease = options.lifecycle?.begin(request.signal)
+    const operation = dispatch(
       settings,
       accounts,
       authFlows,
       envelope.call.method,
       envelope.call.payload,
+      options,
+      lease?.signal,
     )
+    const value = lease === undefined ? await operation : await lease.track(operation)
     return jsonReply(envelope.rpcId, { ok: true, value })
   } catch (error) {
     return jsonReply(envelope.rpcId, { ok: false, error: toFailure(error) })
@@ -176,10 +203,12 @@ async function dispatch(
   authFlows: AuthFlowRegistry | undefined,
   method: string,
   payload: unknown,
+  options: ManagementRpcOptions,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   if (isAccountRpcMethod(method)) {
     if (accounts === undefined) throw new UnknownManagementMethodError(method)
-    return dispatchAccountRpc(accounts, method, payload)
+    return dispatchAccountRpc(accounts, method, payload, signal)
   }
   if (isAuthRpcMethod(method)) {
     // 先校验共享 payload 才能安全读取 channel；随后只查该渠道的 flow。
@@ -203,10 +232,17 @@ async function dispatch(
       return settings.getSnapshot()
     case 'settings.update':
       assertManagementRpcPayload(method, payload)
-      return settings.updateSearch(payload.patch)
-    case 'settings.setCurrentAccount':
+      return settings.updateSearch(payload.patch, signal)
+    case 'settings.setCurrentAccount': {
       assertManagementRpcPayload(method, payload)
-      return settings.setCurrentAccount(payload.channel, payload.accountId)
+      if (accounts === undefined) throw new UnknownManagementMethodError(method)
+      await accounts.setCurrent(payload.channel, payload.accountId, signal)
+      return settings.getSnapshot()
+    }
+    case 'runtime.get':
+      assertManagementRpcPayload(method, payload)
+      if (options.runtime === undefined) throw new UnknownManagementMethodError(method)
+      return options.runtime.getSnapshot()
     default:
       throw new UnknownManagementMethodError(method)
   }
@@ -258,6 +294,13 @@ function toFailure(error: unknown): RpcErrorPayload {
     return {
       code: error.code,
       message: error.message,
+      details: {},
+    }
+  }
+  if (error instanceof InFlightStoppedError) {
+    return {
+      code: 'lifecycle/stopped',
+      message: 'plugin activation is stopping',
       details: {},
     }
   }

@@ -12,9 +12,11 @@
  * 真实凭据或网络。
  */
 import type {
-  AccountCredentialProvider,
-  AccountCredentialRecordEntry,
-} from '../../../src/host/accounts/store.ts'
+  CredentialKey,
+  CredentialRecord,
+  CredentialRecordEntry,
+} from '@deepseek-ai/dsh-credentials'
+import type { AccountCredentialProvider } from '../../../src/host/accounts/store.ts'
 
 /** 一条内存记录；payload 由账号库自行解释。 */
 export interface MemoryCredentialRecord {
@@ -67,20 +69,20 @@ export class MemoryCredentials implements AccountCredentialProvider {
     return [...this.records.keys()]
   }
 
-  async readRecord(key: string): Promise<unknown> {
+  async readRecord(key: CredentialKey): Promise<CredentialRecord | undefined> {
     this.reads.push(key)
     const failure = this.failNextRead
     if (failure !== undefined) {
       this.failNextRead = undefined
       throw failure
     }
-    return clone(this.records.get(key))
+    return clone(this.records.get(key)) as CredentialRecord | undefined
   }
 
   async modifyRecord(
-    key: string,
-    mutate: (current: unknown) => Promise<unknown>,
-  ): Promise<unknown> {
+    key: CredentialKey,
+    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+  ): Promise<CredentialRecord | undefined> {
     const run = this.queue.then(async () => {
       this.writes.push(key)
       const failure = this.failNextModify
@@ -88,7 +90,7 @@ export class MemoryCredentials implements AccountCredentialProvider {
         this.failNextModify = undefined
         throw failure
       }
-      const current = clone(this.records.get(key))
+      const current = clone(this.records.get(key)) as CredentialRecord | undefined
       const next = await mutate(current)
       if (next === undefined) return current
       this.records.set(key, clone(next as MemoryCredentialRecord))
@@ -99,7 +101,7 @@ export class MemoryCredentials implements AccountCredentialProvider {
     return run
   }
 
-  async deleteRecord(key: string): Promise<void> {
+  async deleteRecord(key: CredentialKey): Promise<void> {
     this.deletes.push(key)
     const failure = this.failNextDelete
     if (failure !== undefined) {
@@ -109,15 +111,15 @@ export class MemoryCredentials implements AccountCredentialProvider {
     this.records.delete(key)
   }
 
-  async listRecords(): Promise<readonly AccountCredentialRecordEntry[]> {
+  async listRecords(): Promise<readonly CredentialRecordEntry[]> {
     const failure = this.failNextList
     if (failure !== undefined) {
       this.failNextList = undefined
       throw failure
     }
     return [...this.records.entries()].map(([key, record]) => ({
-      key,
-      kind: record.kind,
+      key: key as CredentialKey,
+      kind: record.kind as CredentialRecord['kind'],
     }))
   }
 }

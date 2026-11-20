@@ -14,6 +14,11 @@
  * - 任何底层异常都不透传原文或 cause，只抛固定账号域错误。
  */
 import { createHash } from 'node:crypto'
+import type {
+  CredentialKey,
+  CredentialRecord,
+  CredentialRecordEntry,
+} from '@deepseek-ai/dsh-credentials'
 
 import {
   isChannelId,
@@ -40,26 +45,18 @@ export const ACCOUNT_CREDENTIAL_SCOPE = 'dsh-web-search-channels'
 /** credentials key 的 scope/id 两段共用语法。 */
 export const CREDENTIAL_KEY_SEGMENT_PATTERN = /^[a-z][a-z0-9-]*$/
 
-/** credentials record 的最小结构；payload 由本插件解释。 */
-export interface AccountCredentialRecordEntry {
-  readonly key: string
-  readonly kind: string
-}
+/** credentials 列表项只含 branded key 与 kind，不含 payload。 */
+export type AccountCredentialRecordEntry = CredentialRecordEntry
 
-/**
- * 本插件依赖的 credentials provider 子集。
- *
- * 与 `@deepseek-ai/dsh-credentials` 的 record 半边结构一致；这里只声明实际
- * 使用的方法，避免 Host 编译面依赖具体的包导出。
- */
+/** 本插件使用的真实 credentials record 半边签名；全部依赖均为 type-only。 */
 export interface AccountCredentialProvider {
-  readRecord(key: string): Promise<any>
+  readRecord(key: CredentialKey): Promise<CredentialRecord | undefined>
   modifyRecord(
-    key: string,
-    mutate: (current: any) => Promise<any>,
-  ): Promise<any>
-  deleteRecord(key: string): Promise<void>
-  listRecords(): Promise<readonly AccountCredentialRecordEntry[]>
+    key: CredentialKey,
+    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+  ): Promise<CredentialRecord | undefined>
+  deleteRecord(key: CredentialKey): Promise<void>
+  listRecords(): Promise<readonly CredentialRecordEntry[]>
 }
 
 /** 一条有效账号记录（Host 内部；secret 不进入 Client DTO）。 */
@@ -152,11 +149,12 @@ const MAX_VENDOR_ACCOUNT_ID_LENGTH = 256
  *
  * @throws {TypeError} 任一段非法时。
  */
-export function buildCredentialKey(scope: string, id: string): string {
+export function buildCredentialKey(scope: string, id: string): CredentialKey {
   if (!CREDENTIAL_KEY_SEGMENT_PATTERN.test(scope) || !CREDENTIAL_KEY_SEGMENT_PATTERN.test(id)) {
     throw new TypeError('credential key segments must be lowercase hyphenated identifiers')
   }
-  return `${scope}/${id}`
+  // 唯一受控 brand 边界；两段语法与真实 makeCredentialKey 完全一致。
+  return `${scope}/${id}` as CredentialKey
 }
 
 /**
@@ -164,7 +162,7 @@ export function buildCredentialKey(scope: string, id: string): string {
  *
  * @throws {AccountError} 渠道或账号 ID 非法时。
  */
-export function accountRecordKey(channel: ChannelId, accountId: string): string {
+export function accountRecordKey(channel: ChannelId, accountId: string): CredentialKey {
   const exactChannel = requireChannel(channel)
   const exactAccountId = requireAccountId(accountId)
   return buildCredentialKey(ACCOUNT_CREDENTIAL_SCOPE, `${exactChannel}-${exactAccountId}`)
@@ -350,7 +348,7 @@ export class AccountStore {
   }
 
   /** 读取一条原始记录；底层异常转换为固定 storage-failed。 */
-  private async readRaw(key: string): Promise<unknown> {
+  private async readRaw(key: CredentialKey): Promise<CredentialRecord | undefined> {
     try {
       return await this.options.credentials.readRecord(key)
     } catch (error) {
@@ -360,9 +358,9 @@ export class AccountStore {
 
   /** 独占读改写；底层异常转换为固定 storage-failed，账号域错误原样保留。 */
   private async modifyRaw(
-    key: string,
-    mutate: (current: unknown) => Promise<unknown>,
-  ): Promise<unknown> {
+    key: CredentialKey,
+    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+  ): Promise<CredentialRecord | undefined> {
     try {
       return await this.options.credentials.modifyRecord(key, mutate)
     } catch (error) {
@@ -371,7 +369,7 @@ export class AccountStore {
   }
 
   /** 删除一条记录；底层异常转换为固定 storage-failed。 */
-  private async deleteRaw(key: string): Promise<void> {
+  private async deleteRaw(key: CredentialKey): Promise<void> {
     try {
       await this.options.credentials.deleteRecord(key)
     } catch (error) {
