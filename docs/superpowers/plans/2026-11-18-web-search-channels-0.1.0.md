@@ -20,7 +20,7 @@
 - `search.enabled=false`、`search.channel='buddy'`；四渠道各有独立 `currentAccountId=null`，不得跨渠道读取账号或凭据。
 - ON 时任何账号、配置、渠道或上游错误均不得 `next()` 或调用 DeepSeek；OFF 必须在任何账号/网络工作之前 `next()`。
 - 不修改官方 `web.searchProvider/fetchProvider`，不注册默认 Shadow，不新增 `tool:web_search` 提示词 section。
-- Qoder 国际版端点偏好为 `auto / center / api2`，默认 `auto`；自动初始 center，仅在 DNS/TCP/TLS/连接失败、超时或 5xx 时在两个国际版域名间切换一次并粘性，固定模式不切换。不得并行双发、后台测速或使用 `gateway.qoder.com.cn`。
+- Qoder 国际版端点偏好为 `auto / center / api2`，默认 `auto`；无最近成功记录时自动从 center 开始，仅在 DNS/TCP/TLS/连接失败、明显超时或 5xx 时在两个国际版域名间切换一次，并按账号持久保存最近成功域供后续与重启后优先使用，固定模式不切换且忽略该记录。不得并行双发、后台测速、虚构网络出口 ID 或使用 `gateway.qoder.com.cn`。
 - 普通配置只保存非秘密用户意图；token、刷新材料和签名秘密只进入本插件 Host credentials。Client 只接收脱敏 DTO。登录、授权、重新登录、删除和清除数据不开放 Agent tool。
 - Qoder `machine_id` 是每次登录新生成的随机、非秘密设备标识（不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密）；设备绑定协议要求它出现在授权 URL 中，因此只允许它作为该次授权 URL 的 `machine_id` 查询参数进入发起流程的 Client 可见 `authUrl`。它仍保存于对应 qoder grant 供签名和续期使用，但不得进入日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化，此例外不适用于 token、刷新材料或其他签名秘密。
 - 最低验收矩阵：Desktop `0.2.2-rc.3` 及其 Web GUI、Native + PTC、Magpie/WPS 灵犀的 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash、DeepSeek 官方路由 OFF 对照。任一声明项失败阻断发布，不得从报告中删项。
@@ -302,9 +302,9 @@ git commit -m "feat: add Qoder CN signed search and signer lifecycle"
 **Interfaces:**
 - Produces: `QoderEndpointPolicy.execute({preference,accountKey,operation,signal})`；`createQoderInternationalDriver(deps):SearchDriver`。
 
-- [ ] **Step 1: 写自动/固定/粘性/错误类别失败测试**
+- [ ] **Step 1: 写自动/固定/持久成功域/错误类别失败测试**
 
-断言：auto 初始 center；连接失败/超时/5xx 可在 center↔api2 间切换一次并粘性；401/403/429/bad response 不切换；固定 center/api2 任何错误不切换；两域失败返回可归因错误；绝不出现 gateway、并行双发、后台测速或换账号。
+断言：auto 无最近成功记录时初始 center；连接失败/超时/5xx 可在 center↔api2 间切换一次，并按账号持久保存最近成功域供后续与重启后优先使用；401/403/429/bad response 不切换；固定 center/api2 任何错误不切换且忽略该记录；两域失败返回可归因错误；绝不出现 gateway、并行双发、后台测速、虚构网络出口 ID 或换账号。
 
 - [ ] **Step 2: 运行策略测试，确认实现缺失**
 
@@ -313,7 +313,7 @@ Expected: FAIL，提示策略或国际版驱动不存在。
 
 - [ ] **Step 3: 实现策略与国际版驱动**
 
-自动粘性只保存于当前进程、当前账号及网络出口；重启回 center。单 query 最多两域各一次；正常多 query 兄弟不重复。记录脱敏实际域名、耗时和错误类别。固定模式只走用户选定域。
+自动模式按账号持久保存最近成功域；无记录时从 center 开始，后续调用及重启后优先最近成功域。单 query 最多两域各一次；正常多 query 兄弟不重复。记录脱敏实际域名、耗时和错误类别。固定模式只走用户选定域并忽略最近成功记录，不使用虚构网络出口 ID。
 
 - [ ] **Step 4: 运行策略与驱动测试**
 
