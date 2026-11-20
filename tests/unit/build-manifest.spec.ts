@@ -197,10 +197,10 @@ describe('Host 入口', () => {
 })
 
 describe('Client 入口', () => {
-  it('运行时 inject 恰好是 slots、locale、configForms、connection', async () => {
+  it('运行时 inject 只声明 apply 直接使用的 slots、locale', async () => {
     const client = await import('../../src/client/index.ts')
     expect(Array.isArray(client.inject)).toBe(true)
-    expect([...client.inject].sort()).toEqual(['configForms', 'connection', 'locale', 'slots'])
+    expect([...client.inject].sort()).toEqual(['locale', 'slots'])
   })
 
   it('把设置卡注册进 plugins.bundle.config，key 等于包名', async () => {
@@ -230,6 +230,8 @@ describe('Client 入口', () => {
         const disposer = fn()
         return () => { if (typeof disposer === 'function') (disposer as () => void)() }
       },
+      // 与 Cordis `ctx.inject(deps, cb)` 同形：依赖就绪后给回调一个服务作用域。
+      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => { callback(ctx) },
       locale: locale.service,
       configForms,
       connection,
@@ -269,10 +271,12 @@ describe('Client 入口', () => {
     const client = await import('../../src/client/index.ts')
     const registered: { options: Record<string, any>; component: unknown }[] = []
     const locale = createLocaleDouble()
-
-    client.apply({
+    const ctx = {
       effect: (fn: () => unknown) => { fn(); return () => {} },
+      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => { callback(ctx) },
       locale: locale.service,
+      configForms: { get: () => ({ getSnapshot: () => ({}), subscribe: () => () => {} }) },
+      connection: { fetch: { register: () => async () => {} }, rpc: { async call() { return { ok: true, value: undefined } } } },
       slots: {
         inject: (_name: string, callback: () => unknown) => { callback(); return () => {} },
         register: (options: Record<string, any>, component: unknown) => {
@@ -280,7 +284,9 @@ describe('Client 入口', () => {
           return () => {}
         },
       },
-    } as never)
+    }
+
+    client.apply(ctx as never)
 
     const [{ options, component }] = registered
     const injected = options.inject()
