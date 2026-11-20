@@ -207,6 +207,110 @@ describe('SettingsController', () => {
     })
   })
 
+  it('端点偏好非乐观保存：pending 保持旧值，成功后用 Host 快照，失败回滚并标记 endpoint 作用域', async () => {
+    const before = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'auto' })
+    const after = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'api2' })
+    const response = deferred<{ ok: true; value: typeof after }>()
+    const { configForms } = createConfigFormsDouble(before)
+    const { connection, calls } = createConnectionDouble(() => response.promise)
+    const controller = new SettingsController({ configForms, connection })
+
+    const pending = controller.setEndpointPreference('api2')
+    expect(controller.getSnapshot()).toMatchObject({
+      busy: true,
+      error: null,
+      errorScope: null,
+    })
+    expect(controller.getSnapshot().settings?.qoder.endpointPreference).toBe('auto')
+    expect(calls).toEqual([{
+      method: 'settings.update',
+      payload: { patch: { endpointPreference: 'api2' } },
+    }])
+
+    response.resolve({ ok: true, value: after })
+    await pending
+    expect(controller.getSnapshot()).toMatchObject({
+      busy: false,
+      error: null,
+      errorScope: null,
+    })
+    expect(controller.getSnapshot().settings?.qoder.endpointPreference).toBe('api2')
+    controller.dispose()
+
+    const failing = deferred<{ ok: false; error: typeof failure.error }>()
+    const failedForm = createConfigFormsDouble(before)
+    const failed = createConnectionDouble(() => failing.promise)
+    const failedController = new SettingsController({
+      configForms: failedForm.configForms,
+      connection: failed.connection,
+    })
+    const rollback = failedController.setEndpointPreference('center')
+    failing.resolve(failure)
+    await rollback
+    expect(failedController.getSnapshot()).toMatchObject({
+      busy: false,
+      error: 'settings.saveFailed',
+      errorScope: 'endpoint',
+    })
+    expect(failedController.getSnapshot().settings?.qoder.endpointPreference).toBe('auto')
+    failedController.dispose()
+  })
+
+  it('端点偏好与当前值相同、只读或未就绪时不发 RPC', async () => {
+    const snapshot = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'auto' })
+    const { configForms } = createConfigFormsDouble(snapshot)
+    const { connection, calls } = createConnectionDouble(() => ({ ok: true, value: snapshot }))
+    const controller = new SettingsController({ configForms, connection })
+
+    await controller.setEndpointPreference('auto')
+    expect(calls).toEqual([])
+    controller.dispose()
+
+    const readOnlyForm = createConfigFormsDouble(snapshot, { writable: false })
+    const readOnlyRpc = createConnectionDouble(() => ({ ok: true, value: snapshot }))
+    const readOnly = new SettingsController({
+      configForms: readOnlyForm.configForms,
+      connection: readOnlyRpc.connection,
+    })
+    await readOnly.setEndpointPreference('api2')
+    expect(readOnlyRpc.calls).toEqual([])
+    readOnly.dispose()
+  })
+
+  it('错误作用域区分开关/渠道/端点，避免端点错误显示在渠道行', async () => {
+    const before = makeSnapshot({ enabled: true, channel: 'qoder' })
+    const cases: Array<{
+      readonly action: (controller: SettingsController) => Promise<void>
+      readonly scope: 'enabled' | 'channel' | 'endpoint'
+    }> = [
+      {
+        action: controller => controller.setEnabled(false),
+        scope: 'enabled',
+      },
+      {
+        action: controller => controller.selectChannel('buddy'),
+        scope: 'channel',
+      },
+      {
+        action: controller => controller.setEndpointPreference('api2'),
+        scope: 'endpoint',
+      },
+    ]
+
+    for (const testCase of cases) {
+      const { configForms } = createConfigFormsDouble(before)
+      const { connection } = createConnectionDouble(() => failure)
+      const controller = new SettingsController({ configForms, connection })
+      await testCase.action(controller)
+      expect(controller.getSnapshot()).toMatchObject({
+        error: 'settings.saveFailed',
+        errorScope: testCase.scope,
+        busy: false,
+      })
+      controller.dispose()
+    }
+  })
+
   it('configForms 尚未就绪或未暴露命名空间时保持不可写状态', () => {
     const { configForms, form } = createConfigFormsDouble(undefined, { status: 'loading' })
     const { connection } = createConnectionDouble(() => ({ ok: true, value: makeSnapshot() }))

@@ -173,13 +173,24 @@ export interface ConnectionDouble {
   readonly calls: RpcCall[]
 }
 
+/** Connection 替身的可选行为。 */
+export interface ConnectionDoubleOptions {
+  /** 仍交给 responder，但不写入 calls 的方法名；用于只关心设置 RPC 的旧回归。 */
+  readonly ignoredMethods?: readonly string[]
+}
+
 /**
  * 创建只实现 Client 调用面的 Connection 替身。
  * @param responder - 收到 method/payload 后返回结果。
+ * @param options - 可选的调用记录过滤。
  * @returns Connection 与调用记录。
  */
-export function createConnectionDouble(responder: RpcResponder): ConnectionDouble {
+export function createConnectionDouble(
+  responder: RpcResponder,
+  options: ConnectionDoubleOptions = {},
+): ConnectionDouble {
   const calls: RpcCall[] = []
+  const ignored = new Set(options.ignoredMethods ?? [])
   return {
     connection: {
       fetch: { register: () => async () => {} },
@@ -190,7 +201,7 @@ export function createConnectionDouble(responder: RpcResponder): ConnectionDoubl
           payload: unknown,
         ): Promise<RpcResult<unknown>> => {
           const call = payload as RpcCall
-          calls.push(call)
+          if (!ignored.has(call.method)) calls.push(call)
           return await responder(call)
         },
       },

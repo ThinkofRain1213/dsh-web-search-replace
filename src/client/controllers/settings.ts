@@ -10,6 +10,7 @@ import {
   isChannelId,
   isQoderEndpointPreference,
   type ChannelId,
+  type QoderEndpointPreference,
 } from '../../shared/channels.ts'
 import {
   type SearchSettingsSnapshot,
@@ -45,6 +46,9 @@ export interface ConfigFormsLike {
 /** 保存失败的稳定错误键，由卡片翻译成当前语言。 */
 export type SettingsErrorKey = 'settings.saveFailed'
 
+/** 保存失败归属；端点错误只显示在端点行，不污染渠道行。 */
+export type SettingsErrorScope = 'enabled' | 'channel' | 'endpoint' | null
+
 /** 设置卡渲染所需的全部状态。 */
 export interface SettingsCardState {
   readonly status: 'loading' | 'ready' | 'unavailable'
@@ -56,6 +60,8 @@ export interface SettingsCardState {
   readonly busy: boolean
   readonly writable: boolean
   readonly error: SettingsErrorKey | null
+  /** 最近一次失败属于哪个控件；成功或未失败时为 null。 */
+  readonly errorScope: SettingsErrorScope
 }
 
 /** 控制器依赖的 Host 边界。 */
@@ -110,6 +116,7 @@ const INITIAL_STATE: SettingsCardState = Object.freeze({
   busy: false,
   writable: false,
   error: null,
+  errorScope: null,
 })
 
 /** 设置卡状态控制器；实现 React `useSyncExternalStore` 需要的稳定读取面。 */
@@ -129,6 +136,7 @@ export class SettingsController {
   private writable = false
   private busy = false
   private error: SettingsErrorKey | null = null
+  private errorScope: SettingsErrorScope = null
   private disposed = false
 
   /**
@@ -162,7 +170,7 @@ export class SettingsController {
    */
   async setEnabled(next: boolean): Promise<void> {
     if (!this.canWrite() || next === this.committed?.search.enabled) return
-    await this.write({ enabled: next })
+    await this.write({ enabled: next }, 'enabled')
   }
 
   /**
@@ -172,7 +180,17 @@ export class SettingsController {
    */
   async selectChannel(next: ChannelId): Promise<void> {
     if (!this.canWrite() || next === this.committed?.search.channel) return
-    await this.write({ channel: next })
+    await this.write({ channel: next }, 'channel')
+  }
+
+  /**
+   * 请求 Qoder 国际版端点偏好；pending 保持旧值，成功后才采用 Host 快照。
+   * @param next - 目标端点偏好。
+   * @returns 本次写入完成或被视为重复/锁定而跳过。
+   */
+  async setEndpointPreference(next: QoderEndpointPreference): Promise<void> {
+    if (!this.canWrite() || next === this.committed?.qoder.endpointPreference) return
+    await this.write({ endpointPreference: next }, 'endpoint')
   }
 
   /** 释放大订阅并丢弃迟到回包。 */
@@ -233,12 +251,14 @@ export class SettingsController {
   /**
    * 执行一次设置写入；pending 只发布 busy，成功后原子切换，失败只设置错误。
    * @param patch - 平铺设置补丁。
+   * @param scope - 失败归属控件。
    */
-  private async write(patch: SearchSettingsPatch): Promise<void> {
+  private async write(patch: SearchSettingsPatch, scope: SettingsErrorScope): Promise<void> {
     const connection = this.connection
     if (connection === undefined) return
     this.busy = true
     this.error = null
+    this.errorScope = null
     this.publish()
     try {
       const result = await callManagementRpc(connection, 'settings.update', { patch })
@@ -249,9 +269,11 @@ export class SettingsController {
       this.draft = { ...next.search }
       this.viewChannel = next.search.channel
       this.error = null
+      this.errorScope = null
     } catch {
       if (this.disposed) return
       this.error = 'settings.saveFailed'
+      this.errorScope = scope
     } finally {
       if (!this.disposed) {
         this.busy = false
@@ -277,6 +299,7 @@ export class SettingsController {
       busy: this.busy,
       writable: this.writable && status === 'ready',
       error: this.error,
+      errorScope: this.errorScope,
     }
     for (const listener of [...this.listeners]) listener()
   }

@@ -8,6 +8,7 @@
  */
 import * as React from 'react'
 
+import { AccountChannelConfig } from './AccountChannelConfig.tsx'
 import { ChannelConfigHost } from './ChannelConfigHost.tsx'
 import { SearchSection } from './SearchSection.tsx'
 import {
@@ -42,6 +43,7 @@ export function SettingsCard({
   const [controller] = React.useState(
     () => new SettingsController({ configForms, connection }),
   )
+  const [authBusy, setAuthBusy] = React.useState(false)
   React.useEffect(() => () => { controller.dispose() }, [controller])
   const state = React.useSyncExternalStore(
     controller.subscribe,
@@ -57,9 +59,9 @@ export function SettingsCard({
         <SearchSection
           enabled={state.enabled}
           channel={state.channel}
-          busy={state.busy}
+          busy={state.busy || authBusy}
           writable={state.writable}
-          error={state.error}
+          error={state.errorScope === 'endpoint' ? null : state.error}
           t={t}
           onToggle={(next) => { void controller.setEnabled(next) }}
           onSelectChannel={(next) => { void controller.selectChannel(next) }}
@@ -69,7 +71,22 @@ export function SettingsCard({
           channel={state.viewChannel}
           currentAccountId={state.settings[state.viewChannel].currentAccountId}
           t={t}
-        />
+          endpointPreference={state.settings.qoder.endpointPreference}
+          actualEndpointHost={null}
+          endpointBusy={state.busy}
+          endpointWritable={state.writable}
+          endpointError={state.errorScope === 'endpoint' ? state.error : null}
+          onEndpointPreferenceChange={(next) => { void controller.setEndpointPreference(next) }}
+        >
+          <AccountChannelConfig
+            key={state.viewChannel}
+            channel={state.viewChannel}
+            connection={connection}
+            t={t}
+            writable={state.writable}
+            onAuthBusyChange={setAuthBusy}
+          />
+        </ChannelConfigHost>
       </>
     )
     : state.status === 'unavailable'

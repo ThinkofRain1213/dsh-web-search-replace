@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
+import { routeAccounts } from './support/accounts-harness.ts'
 import {
   buttonByText,
   click,
@@ -44,14 +45,22 @@ afterEach(() => {
 })
 
 /**
- * 挂载真实设置卡。
+ * 挂载真实设置卡；账号读取路由到空列表且不计入 calls，旧焦点回归只关心设置写入。
  * @param snapshot - 初始快照。
- * @param responder - 可控 RPC。
+ * @param responder - 可控设置 RPC。
  * @returns 卡片容器与 Host 替身。
  */
-function renderCard(snapshot: SearchSettingsSnapshot, responder: RpcResponder) {
+async function renderCard(snapshot: SearchSettingsSnapshot, responder: RpcResponder) {
   const forms = createConfigFormsDouble(snapshot)
-  const rpc = createConnectionDouble(responder)
+  const accounts = routeAccounts({})
+  const routed: RpcResponder = call => (
+    call.method.startsWith('accounts.') || call.method.startsWith('auth.')
+      ? accounts(call)
+      : responder(call)
+  )
+  const rpc = createConnectionDouble(routed, {
+    ignoredMethods: ['accounts.list', 'accounts.current', 'auth.start', 'auth.status', 'auth.cancel'],
+  })
   const t = translator('zh')
   const root = mount(createElement(SettingsCard, {
     view: 'page',
@@ -60,6 +69,7 @@ function renderCard(snapshot: SearchSettingsSnapshot, responder: RpcResponder) {
     connection: rpc.connection,
   }))
   mounted.push(root)
+  await flush()
   return { ...forms, ...rpc, t, ...root }
 }
 
@@ -87,7 +97,7 @@ describe('Dropdown 慢保存后的最终回焦（R30）', () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'workbuddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, calls, t } = renderCard(before, () => response.promise)
+    const { container, calls, t } = await renderCard(before, () => response.promise)
 
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await keydown(trigger, 'Enter')
@@ -120,7 +130,7 @@ describe('Dropdown 慢保存后的最终回焦（R30）', () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'workbuddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, calls, t } = renderCard(before, () => response.promise)
+    const { container, calls, t } = await renderCard(before, () => response.promise)
 
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await click(trigger)
@@ -150,7 +160,7 @@ describe('Dropdown 慢保存后的最终回焦（R30）', () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'workbuddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, t } = renderCard(before, () => response.promise)
+    const { container, t } = await renderCard(before, () => response.promise)
     const userControl = appendUserControl()
 
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
@@ -177,7 +187,7 @@ describe('Dropdown 慢保存后的最终回焦（R30）', () => {
     const before = makeSnapshot({ enabled: false, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'buddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container } = renderCard(before, () => response.promise)
+    const { container } = await renderCard(before, () => response.promise)
     const userControl = appendUserControl()
     userControl.focus()
 

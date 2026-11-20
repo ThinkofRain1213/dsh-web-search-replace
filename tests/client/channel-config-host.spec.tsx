@@ -87,17 +87,23 @@ describe('ChannelConfigHost（真实 DOM）', () => {
     expect(host.textContent).not.toMatch(/就绪|已连接|ready/i)
   })
 
-  it('只有 Qoder 国际版拥有端点行宿主，且宿主位于账号区之前、自身不带第二选择器', () => {
+  it('只有 Qoder 国际版拥有端点行宿主，且宿主位于账号区之前；下拉只服务 qoder', () => {
     const qoder = renderHost('qoder')
     const endpoint = query<HTMLElement>(qoder.host, '[data-qoder-endpoint-slot]')
     const account = query<HTMLElement>(qoder.host, '[data-account-config-slot]')
     expect(endpoint.nextElementSibling).toBe(account)
-    expect(endpoint.querySelector('button')).toBeNull()
-    expect(endpoint.querySelector('[aria-haspopup="menu"]')).toBeNull()
-    expect(endpoint.textContent?.trim()).toBe('')
+    expect(query<HTMLElement>(endpoint, '[data-qoder-endpoint-row]')).toBeTruthy()
+    expect(query<HTMLButtonElement>(endpoint, '[data-dropdown-trigger]').textContent)
+      .toContain('自动')
+    expect(endpoint.querySelector('[data-endpoint-status]')?.textContent).toContain('尚无运行观测')
+    expect(endpoint.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(1)
+    expect(endpoint.textContent).not.toContain('gateway.qoder.com.cn')
 
     const buddy = renderHost('buddy')
     expect(buddy.host.querySelector('[data-qoder-endpoint-slot]')).toBeNull()
+    expect(query<HTMLElement>(buddy.host, '[data-fixed-endpoint]').textContent)
+      .toBe('copilot.tencent.com')
+    expect(buddy.host.querySelector('[data-fixed-endpoint-slot] [aria-haspopup="menu"]')).toBeNull()
   })
 
   it('账号区 hintRow 位于 fieldSlot 内部，section 直接子元素只有 heading/row/fieldSlot', () => {
@@ -116,15 +122,18 @@ describe('ChannelConfigHost（真实 DOM）', () => {
     ))).toBe(true)
   })
 
-  it('Task 14 传入账号区 children 时替换占位状态，但仍不实现端点编辑', () => {
+  it('Task 14 传入账号区 children 时替换占位状态；端点行仍只在 qoder 出现', () => {
     const children = createElement('div', { 'data-account-config': 'future' }, '未来账号区')
     const { host } = renderHost('qoder', { children })
     const slot = query<HTMLElement>(host, '[data-account-config-slot]')
     expect(slot.textContent).toBe('未来账号区')
     expect(host.querySelector('[data-account-state]')).toBeNull()
     expect(host.querySelector('[data-hint-row]')).toBeNull()
-    expect(host.querySelector('[data-qoder-endpoint-slot]')?.textContent?.trim()).toBe('')
-    expect(host.querySelector('[aria-haspopup="menu"]')).toBeNull()
+    const endpoint = query<HTMLElement>(host, '[data-qoder-endpoint-slot]')
+    expect(endpoint.querySelector('[data-qoder-endpoint-row]')).not.toBeNull()
+    expect(endpoint.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(1)
+    expect(host.querySelectorAll('[data-channel-config-host]')).toHaveLength(0)
+    expect(host.querySelectorAll('[data-qoder-endpoint-slot]')).toHaveLength(1)
   })
 
   it('英文配置区不含中文，Qoder 国际版名称与说明来自英文字典', () => {

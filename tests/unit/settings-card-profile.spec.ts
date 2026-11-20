@@ -52,7 +52,7 @@ describe('完整设置卡剖面', () => {
   const profileSource = readText(PROFILE_PATH)
 
   /** 所有包含 `.stack` 与卡片底的 fenced 图。 */
-  const profileBlocks = [...profileSource.matchAll(/```(?:text)?\n([\s\S]*?)```/g)]
+  const profileBlocks = [...profileSource.matchAll(/```(?:text)?\r?\n([\s\S]*?)```/g)]
     .map(match => match[1] ?? '')
     .filter(block => block.includes('.stack') && block.includes('卡片底'))
 

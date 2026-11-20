@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
+import { routeAccounts } from './support/accounts-harness.ts'
 import {
   buttonByText,
   click,
@@ -51,15 +52,28 @@ interface RenderOptions {
 
 /**
  * 挂载真实设置卡。
+ *
+ * Task 14 的账号控制器在挂载后读取当前渠道账号；这里把账号 RPC 路由到空列表，
+ * 并让调用记录只保留 settings.update，避免旧回归把账号读取误算成工作区写入。
+ *
  * @param options - 初始快照、locale、RPC 响应与可写性。
  * @returns 卡片容器与 Host 替身。
  */
-function renderCard(options: RenderOptions = {}) {
+async function renderCard(options: RenderOptions = {}) {
   const snapshot = options.snapshot ?? makeSnapshot()
   const locale = options.locale ?? 'zh'
   const t = translator(locale)
   const forms = createConfigFormsDouble(snapshot, { writable: options.writable })
-  const rpc = createConnectionDouble(options.responder ?? (() => ({ ok: true, value: snapshot })))
+  const accounts = routeAccounts({})
+  const settingsResponder = options.responder ?? (() => ({ ok: true, value: snapshot }))
+  const routed: RpcResponder = call => (
+    call.method.startsWith('accounts.') || call.method.startsWith('auth.')
+      ? accounts(call)
+      : settingsResponder(call)
+  )
+  const rpc = createConnectionDouble(routed, {
+    ignoredMethods: ['accounts.list', 'accounts.current', 'auth.start', 'auth.status', 'auth.cancel'],
+  })
   const root = mount(createElement(SettingsCard, {
     view: 'page',
     t,
@@ -67,6 +81,7 @@ function renderCard(options: RenderOptions = {}) {
     connection: rpc.connection,
   }))
   mounted.push(root)
+  await flush()
   return { ...forms, ...rpc, t, locale, snapshot, ...root }
 }
 
@@ -76,8 +91,8 @@ async function settle(): Promise<void> {
 }
 
 describe('SearchSection（真实 DOM）', () => {
-  it('加载后只有一个 search.channel 真源：下拉、当前配置区和状态一致', () => {
-    const { container, t, getCalls, snapshot } = renderCard({
+  it('加载后只有一个 search.channel 真源：下拉、当前配置区和状态一致', async () => {
+    const { container, t, getCalls, snapshot } = await renderCard({
       snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
     })
 
@@ -123,8 +138,8 @@ describe('SearchSection（真实 DOM）', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
-  it('OFF 时渠道下拉灰化但保值，当前配置区仍可管理', () => {
-    const { container, t } = renderCard({
+  it('OFF 时渠道下拉灰化但保值，当前配置区仍可管理', async () => {
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: false, channel: 'qoder' }),
     })
 
@@ -140,8 +155,8 @@ describe('SearchSection（真实 DOM）', () => {
     expect(config.querySelector('[data-account-state]')?.textContent).toContain('需要账号')
   })
 
-  it('ON 但该渠道无账号时明确显示需要账号，不伪造 ready', () => {
-    const { container, t } = renderCard({
+  it('ON 但该渠道无账号时明确显示需要账号，不伪造 ready', async () => {
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'workbuddy' }),
     })
 
@@ -156,7 +171,9 @@ describe('SearchSection（真实 DOM）', () => {
     expect(query(config, '[data-account-state]').getAttribute('data-account-state')).toBe('required')
     expect(config.textContent).toContain('需要账号')
     expect(config.textContent).not.toMatch(/就绪|已连接|ready/i)
-    expect(config.querySelectorAll('button')).toHaveLength(0)
+    expect(query<HTMLButtonElement>(config, '[data-action="add-account"]').textContent)
+      .toContain(t('channel.accounts.add'))
+    expect(config.querySelector('[data-qoder-endpoint-slot]')).toBeNull()
     expect(container.querySelectorAll('[data-channel-config-host]')).toHaveLength(1)
   })
 
@@ -164,7 +181,7 @@ describe('SearchSection（真实 DOM）', () => {
     const before = makeSnapshot({ enabled: false, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'buddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, calls } = renderCard({ snapshot: before, responder: () => response.promise })
+    const { container, calls } = await renderCard({ snapshot: before, responder: () => response.promise })
 
     const toggle = query<HTMLButtonElement>(container, '[role="switch"]')
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
@@ -194,7 +211,7 @@ describe('SearchSection（真实 DOM）', () => {
   it('开关保存失败时保持旧值并显示未被灰化选择器覆盖的错误红字', async () => {
     const before = makeSnapshot({ enabled: false, channel: 'buddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container } = renderCard({ snapshot: before, responder: () => response.promise })
+    const { container } = await renderCard({ snapshot: before, responder: () => response.promise })
 
     const toggle = query<HTMLButtonElement>(container, '[role="switch"]')
     await click(toggle)
@@ -218,7 +235,7 @@ describe('SearchSection（真实 DOM）', () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'qoder' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, calls, t } = renderCard({ snapshot: before, responder: () => response.promise })
+    const { container, calls, t } = await renderCard({ snapshot: before, responder: () => response.promise })
 
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await click(trigger)
@@ -250,7 +267,11 @@ describe('SearchSection（真实 DOM）', () => {
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('qoder')
     expect(container.querySelectorAll('[data-channel-config-host]')).toHaveLength(1)
     expect(query(container, '[data-channel-config-host]').querySelector('[data-qoder-endpoint-slot]')).toBeTruthy()
-    expect(container.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(2)
+    expect(query(container, '[data-search-section]').querySelectorAll('[aria-haspopup="menu"]'))
+      .toHaveLength(1)
+    expect(query(container, '[data-qoder-endpoint-slot]').querySelectorAll('[aria-haspopup="menu"]'))
+      .toHaveLength(1)
     expect(trigger.disabled).toBe(false)
     expect(document.activeElement).toBe(trigger)
   })
@@ -258,7 +279,7 @@ describe('SearchSection（真实 DOM）', () => {
   it('渠道保存失败时保持旧值并保持旧配置区', async () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, t } = renderCard({ snapshot: before, responder: () => response.promise })
+    const { container, t } = await renderCard({ snapshot: before, responder: () => response.promise })
 
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await click(trigger)
@@ -277,7 +298,7 @@ describe('SearchSection（真实 DOM）', () => {
   })
 
   it('Enter/Space/方向键可打开菜单，自动聚焦首项；方向键循环、Home/End 定位', async () => {
-    const { container, t } = renderCard({
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
     })
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
@@ -321,7 +342,7 @@ describe('SearchSection（真实 DOM）', () => {
     const before = makeSnapshot({ enabled: true, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'workbuddy' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, calls, t } = renderCard({ snapshot: before, responder: () => response.promise })
+    const { container, calls, t } = await renderCard({ snapshot: before, responder: () => response.promise })
 
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await keydown(trigger, 'Enter')
@@ -349,7 +370,7 @@ describe('SearchSection（真实 DOM）', () => {
   })
 
   it('普通 Tab 在菜单外不被本菜单拦截', async () => {
-    const { container, calls } = renderCard({
+    const { container, calls } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
     })
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
@@ -364,7 +385,7 @@ describe('SearchSection（真实 DOM）', () => {
   })
 
   it('菜单打开时卸载会清理 document 监听器', async () => {
-    const { container, unmount } = renderCard({
+    const { container, unmount } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
     })
     const addSpy = vi.spyOn(document, 'addEventListener')
@@ -398,7 +419,7 @@ describe('SearchSection（真实 DOM）', () => {
   })
 
   it('门户定位使用锚点几何，minWidthFromAnchor 取锚点宽度', async () => {
-    const { container } = renderCard({ snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }) })
+    const { container } = await renderCard({ snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }) })
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     const original = HTMLButtonElement.prototype.getBoundingClientRect
     HTMLButtonElement.prototype.getBoundingClientRect = function getRect(): DOMRect {
@@ -421,7 +442,7 @@ describe('SearchSection（真实 DOM）', () => {
 
   it('英文文案覆盖标题、开关、渠道、账号状态与错误', async () => {
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
-    const { container, t } = renderCard({
+    const { container, t } = await renderCard({
       locale: 'en',
       snapshot: makeSnapshot({ enabled: false, channel: 'qodercn' }),
       responder: () => response.promise,

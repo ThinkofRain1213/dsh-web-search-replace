@@ -133,6 +133,35 @@
   color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
 }
 
+/* Task 14 端点行：固定域文本与端点下拉都占用 field 的整行宽度；下拉锚点保持
+   Dropdown 的 34px 高度契约，不引入第二套 selector 样式。 */
+.fieldControl {
+  display: flex;
+  min-width: 0;
+}
+
+.fieldControl > button {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.fieldValue {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, currentColor);
+  overflow-wrap: anywhere;
+}
+
+.fieldValue code,
+.hintText code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
 /* 首块补偿：h3 不在列表里；fieldSlot 自身 padding 为 0，抵消的是内部
    .field 的 padding-top。空分组只有 h3 时不会命中任何一条。 */
 .section > .row:first-child,
@@ -311,6 +340,215 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Task 14 账号区：所有内联流程都在 .field 内就地展开，不引入 Modal/路由。
+   操作按钮使用 28px 高的小按钮；错误红字与删除/清除确认区独立占行。 */
+.accountConfig {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.accountList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, transparent);
+}
+
+.accountRow:first-child {
+  border-top: 0;
+}
+
+.accountRowText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.accountRowHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountBadge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: var(--dsw-alias-bg-layer-2, transparent);
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.accountRow[data-current='true'] .accountBadge {
+  background: var(--dsw-alias-state-business-primary, var(--dsw-alias-bg-layer-2, transparent));
+  color: var(--dsw-alias-label-primary-foreground, currentColor);
+}
+
+.accountName {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 19.5px;
+  color: var(--dsw-alias-label-primary, currentColor);
+  overflow-wrap: anywhere;
+}
+
+.accountMasked {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  overflow-wrap: anywhere;
+}
+
+.accountStatus {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+}
+
+.accountStatus[data-account-status='reauth_required'],
+.accountStatus[data-account-status='credential_unavailable'] {
+  color: var(--dsw-alias-state-error-primary, currentColor);
+}
+
+.accountActions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.actionButton,
+.dangerButton {
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3, currentColor));
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary, currentColor);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dangerButton {
+  color: var(--dsw-alias-state-error-primary, currentColor);
+}
+
+.actionButton:focus-visible,
+.dangerButton:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
+  outline-offset: 2px;
+}
+
+.actionButton:disabled,
+.dangerButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .actionButton:not(:disabled):hover,
+  .dangerButton:not(:disabled):hover {
+    background: var(--dsw-alias-interactive-bg-hover, transparent);
+  }
+}
+
+.errorRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.confirmBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, transparent);
+}
+
+.confirmTitle {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 19.5px;
+  color: var(--dsw-alias-label-primary, currentColor);
+}
+
+.choiceList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary, currentColor);
+}
+
+.confirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.authFlow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, transparent);
+}
+
+.authUrl {
+  display: block;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: var(--dsw-alias-bg-layer-2, transparent);
+  color: var(--dsw-alias-label-primary, currentColor);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 @media (prefers-reduced-motion: reduce) {
