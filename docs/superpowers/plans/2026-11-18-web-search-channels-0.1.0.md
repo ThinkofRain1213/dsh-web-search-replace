@@ -20,7 +20,7 @@
 - `search.enabled=false`、`search.channel='buddy'`；四渠道各有独立 `currentAccountId=null`，不得跨渠道读取账号或凭据。
 - ON 时任何账号、配置、渠道或上游错误均不得 `next()` 或调用 DeepSeek；OFF 必须在任何账号/网络工作之前 `next()`。
 - 不修改官方 `web.searchProvider/fetchProvider`，不注册默认 Shadow，不新增 `tool:web_search` 提示词 section。
-- Qoder 国际版端点偏好为 `auto / center / api2`，默认 `auto`；无最近成功记录时自动从 center 开始，仅在 DNS/TCP/TLS/连接失败、明显超时或 5xx 时在两个国际版域名间切换一次，并在本机全局持久保存最近成功域供后续与重启后优先使用，固定模式不切换且忽略该记录。`qoder.lastSuccessfulHost` 是通过 Host `configEditor` 持久化保存的非秘密路由状态，DSH 重启后仍读取并优先使用；它不是账号 grant 或用户偏好，也不进入 Client 普通设置快照。不得并行双发、后台测速、虚构网络出口 ID 或使用 `gateway.qoder.com.cn`。
+- Qoder 国际版端点偏好为 `auto / center / api2`，默认 `auto`；无最近成功记录时自动从 center 开始，仅在 DNS/TCP/TLS/连接失败、明显超时或 5xx 时在两个国际版域名间切换一次，并在本机全局持久保存最近成功域供后续与重启后优先使用，固定模式不切换且忽略该记录。`qoder.lastSuccessfulHost` 是通过本插件 Host-only 全局持久记录保存的非秘密路由状态，DSH 重启后仍读取并优先使用；它不是账号 grant、普通 Config/configForms 字段或用户偏好，也不进入 Client 普通设置快照。不得并行双发、后台测速、虚构网络出口 ID 或使用 `gateway.qoder.com.cn`。
 - 普通配置只保存非秘密用户意图；token、刷新材料和签名秘密只进入本插件 Host credentials。Client 只接收脱敏 DTO。登录、授权、重新登录、删除和清除数据不开放 Agent tool。
 - Qoder `machine_id` 是每次登录新生成的随机、非秘密设备标识（不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密）；设备绑定协议要求它出现在授权 URL 中，因此只允许它作为该次授权 URL 的 `machine_id` 查询参数进入发起流程的 Client 可见 `authUrl`。它仍保存于对应 qoder grant 供签名和续期使用，但不得进入日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化，此例外不适用于 token、刷新材料或其他签名秘密。
 - 最低验收矩阵：Desktop `0.2.2-rc.3` 及其 Web GUI、Native + PTC、Magpie/WPS 灵犀的 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash、DeepSeek 官方路由 OFF 对照。任一声明项失败阻断发布，不得从报告中删项。
