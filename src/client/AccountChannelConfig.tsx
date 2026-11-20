@@ -211,7 +211,12 @@ export function AccountChannelConfig({
             current={state.current}
             busyAccountId={state.busyAccountId}
             queue={state.queue}
-            locked={state.authBusy || state.refreshBusy || deletingAccountId !== null || confirmingClear || state.clearBusy}
+            locked={state.status !== 'ready'
+              || state.authBusy
+              || state.refreshBusy
+              || deletingAccountId !== null
+              || confirmingClear
+              || state.clearBusy}
             writable={writable}
             t={t}
             onSetCurrent={(accountId) => { void controller.setCurrent(accountId) }}
@@ -230,7 +235,8 @@ export function AccountChannelConfig({
             onConfirm={() => { void handleConfirmDelete() }}
             onCancel={handleCancelDelete}
             busy={state.busyAccountId === deletingAccount.id}
-            queued={state.queue.some(operation => operation.accountId === deletingAccount.id)}
+            queued={state.status !== 'ready'
+              || state.queue.some(operation => operation.accountId === deletingAccount.id)}
             t={t}
           />
         )}

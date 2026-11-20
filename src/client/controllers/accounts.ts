@@ -273,6 +273,10 @@ export class AccountsController {
       assertCurrentInList(current, accounts)
 
       this.patch({ status: 'ready', accounts, current, error: null })
+      // completed 自身的 reload 期间 refreshBusy 仍为 true，drainQueue 会安全返回；
+      // completed 分支清除 refreshBusy 后再按原路径 drain。手动重试成功时这里
+      // 直接恢复既有已接受队列，无需额外 dismiss/新操作。
+      void this.drainQueue()
       return true
     } catch {
       if (!this.activeLoad(generation)) return false

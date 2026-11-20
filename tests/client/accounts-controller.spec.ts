@@ -1482,6 +1482,239 @@ describe('AccountsController', () => {
     })
   })
 
+  it('completed 刷新失败后手动 retry 成功会重新驱动既有 FIFO 队列', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const c = accountSummary('buddy', 'account-c')
+    let listCalls = 0
+    let currentCalls = 0
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const deleteResponse = deferred<RpcResult<ReturnType<typeof accountCollection>>>()
+    const { controller, calls } = createController(routeAccounts({
+      'accounts.list': () => {
+        listCalls += 1
+        if (listCalls === 2) return failure
+        return { ok: true, value: [a, b, c] }
+      },
+      'accounts.current': () => {
+        currentCalls += 1
+        return { ok: true, value: currentCalls === 1 ? a : b }
+      },
+      'accounts.setCurrent': () => setCurrentResponse.promise,
+      'accounts.delete': () => deleteResponse.promise,
+      'auth.start': () => ({
+        ok: true,
+        value: authStatus('buddy', {
+          status: 'completed',
+          authUrl: null,
+          account: a,
+        }),
+      }),
+    }))
+    await controller.reload()
+
+    const setting = controller.setCurrent('account-b')
+    const reauth = controller.startAuth('account-a')
+    const deleting = controller.deleteAccount('account-c', null)
+    expect(controller.getSnapshot().queue.map(op => [op.kind, op.accountId])).toEqual([
+      ['reauth', 'account-a'],
+      ['delete', 'account-c'],
+    ])
+
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await setting
+    await reauth
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'error',
+      error: 'channel.accounts.loadFailed',
+      refreshBusy: false,
+      notice: null,
+      current: b,
+    })
+    expect(controller.getSnapshot().queue.map(op => [op.kind, op.accountId])).toEqual([
+      ['delete', 'account-c'],
+    ])
+    expect(callsOf(calls, 'accounts.delete')).toEqual([])
+
+    expect(await controller.reload()).toBe(true)
+    expect(callsOf(calls, 'accounts.delete')).toEqual([
+      { channel: 'buddy', accountId: 'account-c' },
+    ])
+
+    deleteResponse.resolve({ ok: true, value: accountCollection([a, b], b) })
+    await deleting
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      accounts: [a, b],
+      current: b,
+      queue: [],
+      error: null,
+    })
+    controller.dispose()
+  })
+
+  it('completed 刷新连续失败时队列保持 queued，直到后续 retry 成功才执行', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const c = accountSummary('buddy', 'account-c')
+    let listCalls = 0
+    let currentCalls = 0
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const { controller, calls } = createController(routeAccounts({
+      'accounts.list': () => {
+        listCalls += 1
+        if (listCalls === 2 || listCalls === 3) return failure
+        return { ok: true, value: [a, b, c] }
+      },
+      'accounts.current': () => {
+        currentCalls += 1
+        return { ok: true, value: currentCalls === 1 ? a : b }
+      },
+      'accounts.setCurrent': () => setCurrentResponse.promise,
+      'accounts.delete': () => ({ ok: true, value: accountCollection([a, b], b) }),
+      'auth.start': () => ({
+        ok: true,
+        value: authStatus('buddy', {
+          status: 'completed',
+          authUrl: null,
+          account: a,
+        }),
+      }),
+    }))
+    await controller.reload()
+    const setting = controller.setCurrent('account-b')
+    const reauth = controller.startAuth('account-a')
+    const deleting = controller.deleteAccount('account-c', null)
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await setting
+    await reauth
+
+    expect(controller.getSnapshot().queue.map(op => op.accountId)).toEqual(['account-c'])
+    expect(await controller.reload()).toBe(false)
+    expect(controller.getSnapshot().queue.map(op => op.accountId)).toEqual(['account-c'])
+    expect(callsOf(calls, 'accounts.delete')).toEqual([])
+
+    expect(await controller.reload()).toBe(true)
+    await deleting
+    expect(controller.getSnapshot()).toMatchObject({
+      accounts: [a, b],
+      current: b,
+      queue: [],
+      status: 'ready',
+    })
+    controller.dispose()
+  })
+
+  it('completed 刷新失败后 dispose 丢弃既有队列，不因 dispose 后 retry 重启', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const c = accountSummary('buddy', 'account-c')
+    let listCalls = 0
+    let currentCalls = 0
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const { controller, calls } = createController(routeAccounts({
+      'accounts.list': () => {
+        listCalls += 1
+        if (listCalls === 2) return failure
+        return { ok: true, value: [a, b, c] }
+      },
+      'accounts.current': () => {
+        currentCalls += 1
+        return { ok: true, value: currentCalls === 1 ? a : b }
+      },
+      'accounts.setCurrent': () => setCurrentResponse.promise,
+      'accounts.delete': () => ({ ok: true, value: accountCollection([a, b], b) }),
+      'auth.start': () => ({
+        ok: true,
+        value: authStatus('buddy', {
+          status: 'completed',
+          authUrl: null,
+          account: a,
+        }),
+      }),
+    }))
+    await controller.reload()
+    const setting = controller.setCurrent('account-b')
+    const reauth = controller.startAuth('account-a')
+    const deleting = controller.deleteAccount('account-c', null)
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await setting
+    await reauth
+    expect(controller.getSnapshot().queue.map(op => op.accountId)).toEqual(['account-c'])
+
+    controller.dispose()
+    await deleting
+    expect(await controller.reload()).toBe(false)
+    expect(callsOf(calls, 'accounts.delete')).toEqual([])
+  })
+
+  it('completed 自身的刷新成功期间队列保持暂停，清除 refreshBusy 后才按 FIFO 执行', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const c = accountSummary('buddy', 'account-c')
+    const completionList = deferred<RpcResult<readonly AccountSummary[]>>()
+    const completionCurrent = deferred<RpcResult<AccountSummary | null>>()
+    let listCalls = 0
+    let currentCalls = 0
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const { controller, calls } = createController(routeAccounts({
+      'accounts.list': () => {
+        listCalls += 1
+        return listCalls === 1
+          ? { ok: true, value: [a, b, c] }
+          : completionList.promise
+      },
+      'accounts.current': () => {
+        currentCalls += 1
+        return currentCalls === 1
+          ? { ok: true, value: a }
+          : completionCurrent.promise
+      },
+      'accounts.setCurrent': () => setCurrentResponse.promise,
+      'accounts.delete': () => ({ ok: true, value: accountCollection([a, b], b) }),
+      'auth.start': () => ({
+        ok: true,
+        value: authStatus('buddy', {
+          status: 'completed',
+          authUrl: null,
+          account: a,
+        }),
+      }),
+    }))
+    await controller.reload()
+    const setting = controller.setCurrent('account-b')
+    const reauth = controller.startAuth('account-a')
+    const deleting = controller.deleteAccount('account-c', null)
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await setting
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(controller.getSnapshot()).toMatchObject({
+      refreshBusy: true,
+      auth: { phase: 'completed' },
+    })
+    expect(controller.getSnapshot().queue.map(op => op.accountId)).toEqual(['account-c'])
+    expect(callsOf(calls, 'accounts.delete')).toEqual([])
+
+    completionList.resolve({ ok: true, value: [a, b, c] })
+    completionCurrent.resolve({ ok: true, value: b })
+    await reauth
+    await deleting
+
+    expect(callsOf(calls, 'accounts.delete')).toEqual([
+      { channel: 'buddy', accountId: 'account-c' },
+    ])
+    expect(controller.getSnapshot()).toMatchObject({
+      refreshBusy: false,
+      accounts: [a, b],
+      current: b,
+      queue: [],
+    })
+    controller.dispose()
+  })
+
   it('所有状态只保留六字段账号投影：machine_id 只出现在 authUrl，其他字段不含秘密', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const a = accountSummary('qoder', 'account-a', { status: 'reauth_required' })

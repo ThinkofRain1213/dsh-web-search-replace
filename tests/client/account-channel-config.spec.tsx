@@ -406,6 +406,138 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(container.textContent).toContain('当前使用')
   })
 
+  it('重登刷新失败后错误状态锁定未排队行；点击重试成功即恢复并执行既有队列', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const c = accountSummary('buddy', 'account-c')
+    let listCalls = 0
+    let currentCalls = 0
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const { container, calls } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => {
+          listCalls += 1
+          return listCalls === 2
+            ? { ok: false as const, error: { code: 'accounts/internal', message: 'x', details: {} } }
+            : { ok: true, value: [a, b, c] }
+        },
+        'accounts.current': () => {
+          currentCalls += 1
+          return { ok: true, value: currentCalls === 1 ? a : b }
+        },
+        'accounts.setCurrent': () => setCurrentResponse.promise,
+        'accounts.delete': () => ({ ok: true, value: accountCollection([a, b], b) }),
+        'auth.start': () => ({
+          ok: true,
+          value: authStatus('buddy', {
+            status: 'completed',
+            authUrl: null,
+            account: a,
+          }),
+        }),
+      },
+    })
+
+    await click(query(container, '[data-action="set-current"][data-account-id="account-b"]'))
+    await click(query(container, '[data-action="reauth-account"][data-account-id="account-a"]'))
+    await click(query(container, '[data-action="delete"][data-account-id="account-c"]'))
+    const confirmation = query<HTMLElement>(container, '[data-delete-confirmation]')
+    await click(query(confirmation, '[data-action="confirm-delete"]'))
+    expect(container.textContent).toContain('排队中')
+
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await flush()
+    await flush()
+
+    expect(query(container, '[data-account-error]').textContent).toContain('读取账号失败')
+    const retry = query<HTMLButtonElement>(container, '[data-action="retry-accounts"]')
+    expect(retry.disabled).toBe(false)
+    expect(query<HTMLButtonElement>(container, '[data-action="add-account"]').disabled).toBe(true)
+    expect(query<HTMLButtonElement>(
+      container,
+      '[data-action="set-current"][data-account-id="account-a"]',
+    ).disabled).toBe(true)
+    expect(query<HTMLButtonElement>(
+      container,
+      '[data-action="delete"][data-account-id="account-c"]',
+    ).disabled).toBe(true)
+    expect(container.textContent).toContain('排队中')
+    expect(calls.filter(call => call.method === 'accounts.delete')).toEqual([])
+
+    await click(retry)
+    await flush()
+    await flush()
+
+    expect(calls.find(call => call.method === 'accounts.delete')).toEqual({
+      method: 'accounts.delete',
+      payload: { channel: 'buddy', accountId: 'account-c' },
+    })
+    expect(accountNames(container)).toEqual(['account-a', 'account-b'])
+    expect(query(container, '[data-account-row][data-account-id="account-b"]')
+      .getAttribute('data-current')).toBe('true')
+    expect(container.querySelector('[data-account-error]')).toBeNull()
+    expect(container.textContent).not.toContain('排队中')
+    expect(container.querySelector('[data-delete-confirmation]')).toBeNull()
+    expect(query<HTMLButtonElement>(
+      container,
+      '[data-action="set-current"][data-account-id="account-a"]',
+    ).disabled).toBe(false)
+  })
+
+  it('授权刷新失败的错误状态禁用未排队行按钮，重试成功后恢复', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    let listCalls = 0
+    let currentCalls = 0
+    const { container } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => {
+          listCalls += 1
+          return listCalls === 2
+            ? { ok: false as const, error: { code: 'accounts/internal', message: 'x', details: {} } }
+            : { ok: true, value: [a, b] }
+        },
+        'accounts.current': () => {
+          currentCalls += 1
+          return { ok: true, value: a }
+        },
+        'auth.start': () => ({
+          ok: true,
+          value: authStatus('buddy', {
+            status: 'completed',
+            authUrl: null,
+            account: a,
+          }),
+        }),
+      },
+    })
+
+    await click(query(container, '[data-action="add-account"]'))
+    await flush()
+    await flush()
+
+    expect(query(container, '[data-account-error]').textContent).toContain('读取账号失败')
+    expect(query<HTMLButtonElement>(container, '[data-action="retry-accounts"]').disabled)
+      .toBe(false)
+    expect(query<HTMLButtonElement>(container, '[data-action="add-account"]').disabled).toBe(true)
+    expect(query<HTMLButtonElement>(container, '[data-action="clear-all"]').disabled).toBe(true)
+    expect(query<HTMLButtonElement>(
+      container,
+      '[data-action="set-current"][data-account-id="account-b"]',
+    ).disabled).toBe(true)
+    expect(container.textContent).not.toContain('排队中')
+
+    await click(query(container, '[data-action="retry-accounts"]'))
+    await flush()
+    await flush()
+
+    expect(container.querySelector('[data-account-error]')).toBeNull()
+    expect(query<HTMLButtonElement>(
+      container,
+      '[data-action="set-current"][data-account-id="account-b"]',
+    ).disabled).toBe(false)
+  })
+
   it('重登返回其他账号时不显示成功，保持当前账号与错误状态', async () => {
     const a = accountSummary('buddy', 'account-a')
     const b = accountSummary('buddy', 'account-b')
