@@ -13,6 +13,18 @@ export function combineAuthSignals(
  * 原 Promise 的 rejection 始终有处理器；写操作必须在自身实现里接收同一 signal
  * 并由 owner 的在飞集合继续等待 settle。
  */
+/** 把 caller abort 转发给 flow owner，并返回终态时的解绑函数。 */
+export function forwardAuthAbort(owner: AbortController, caller?: AbortSignal): () => void {
+  if (caller === undefined) return () => {}
+  const abort = () => { owner.abort(caller.reason) }
+  if (caller.aborted) {
+    abort()
+    return () => {}
+  }
+  caller.addEventListener('abort', abort, { once: true })
+  return () => { caller.removeEventListener('abort', abort) }
+}
+
 export async function waitWithAuthAbort<T>(
   operation: Promise<T>,
   signal: AbortSignal,

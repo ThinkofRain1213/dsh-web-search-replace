@@ -15,7 +15,7 @@ export interface CapabilityVerifierDeps {
   readonly fetcher?: typeof fetch
   readonly getEndpointPreference?: () => QoderEndpointPreference
     | Promise<QoderEndpointPreference>
-  readonly readLastSuccessfulHost?: () => QoderInternationalHost | null
+  readonly readLastSuccessfulHost?: (signal: AbortSignal) => QoderInternationalHost | null
     | Promise<QoderInternationalHost | null>
   /** 保留给根组合共享配置；probe rememberSuccess=false，绝不会调用。 */
   readonly writeLastSuccessfulHost?: (

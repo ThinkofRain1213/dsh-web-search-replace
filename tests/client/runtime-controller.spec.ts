@@ -89,6 +89,45 @@ describe('runtime.get 激活期轮询', () => {
     controller.dispose()
   })
 
+  it('B12：publish 监听器同步 dispose 时，finally 不再留下 inert timer', async () => {
+    vi.useFakeTimers()
+    const snapshot = makeSnapshot({ channel: 'qoder', endpointPreference: 'auto' })
+    const { configForms } = createConfigFormsDouble(snapshot)
+    const first = deferred<{ ok: true; value: HostRuntimeSnapshot }>()
+    const rpc = createConnectionDouble(() => first.promise)
+    const controller = new SettingsController({ configForms, connection: rpc.connection })
+    controller.setView('page')
+    controller.subscribe(() => { controller.dispose() })
+    first.resolve({ ok: true, value: runtimeValue('activation-a', 1, 'center.qoder.sh') })
+    await flush()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('B12：publish 监听器同步 restart 时，旧 generation 不再叠加 timer', async () => {
+    vi.useFakeTimers()
+    const snapshot = makeSnapshot({ channel: 'qoder', endpointPreference: 'auto' })
+    const { configForms } = createConfigFormsDouble(snapshot)
+    const first = deferred<{ ok: true; value: HostRuntimeSnapshot }>()
+    const rpc = createConnectionDouble(() => {
+      if (rpc.signalCalls.length === 1) return first.promise
+      return { ok: true, value: runtimeValue('activation-a', 1, 'center.qoder.sh') }
+    })
+    const controller = new SettingsController({ configForms, connection: rpc.connection })
+    controller.setView('page')
+    let restarted = false
+    controller.subscribe(() => {
+      if (restarted) return
+      restarted = true
+      controller.setView('summary')
+      controller.setView('page')
+    })
+    first.resolve({ ok: true, value: runtimeValue('activation-a', 1, 'center.qoder.sh') })
+    await flush()
+    expect(restarted).toBe(true)
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(1)
+    controller.dispose()
+  })
+
   it('Connection generation 变化 abort 当前 RPC 并立即 baseline 重拉', async () => {
     vi.useFakeTimers()
     const snapshot = makeSnapshot({ channel: 'qoder', endpointPreference: 'auto' })

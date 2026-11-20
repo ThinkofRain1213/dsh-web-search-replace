@@ -156,7 +156,10 @@ export class BuddyAuthFlow extends TencentProductAuthFlow<typeof BUDDY_AUTH_CHAN
   }
 
   /** 显式保留 start 的产品选项类型（实现由通用状态机提供）。 */
-  override async start(options: BuddyStartOptions = {}): Promise<AuthFlowStatus> {
-    return await super.start(options)
+  override async start(
+    options: BuddyStartOptions = {},
+    callerSignal?: AbortSignal,
+  ): Promise<AuthFlowStatus> {
+    return await super.start(options, callerSignal)
   }
 }

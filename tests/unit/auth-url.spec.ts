@@ -9,6 +9,8 @@ import {
   isAuthUrlForChannel,
   type AuthChannel,
 } from '../../src/shared/auth.ts'
+import { normalizeTencentAuthUrl } from '../../src/host/channels/tencent/auth-flow.ts'
+import { normalizeQoderAuthUrl } from '../../src/host/channels/qoder/auth-flow.ts'
 
 describe('isAuthUrlForChannel', () => {
   it('四渠道分别接受自己的精确授权 host', () => {
@@ -51,6 +53,28 @@ describe('isAuthUrlForChannel', () => {
     }
   })
 
+  it('B2：四渠道 Host/Client 都接受显式标准 443，拒绝其他显式端口', () => {
+    const cases = [
+      { channel: 'buddy', host: 'www.codebuddy.cn', family: 'tencent' },
+      { channel: 'workbuddy', host: 'www.workbuddy.ai', family: 'tencent' },
+      { channel: 'qoder', host: 'qoder.com', family: 'qoder' },
+      { channel: 'qodercn', host: 'qoder.cn', family: 'qoder' },
+    ] as const
+    for (const { channel, host, family } of cases) {
+      const standard = `https://${host}:443/login?state=abc`
+      const other = `https://${host}:8443/login?state=abc`
+      expect(isAuthUrlForChannel(standard, channel), `${channel} Client :443`).toBe(true)
+      expect(isAuthUrlForChannel(other, channel), `${channel} Client :8443`).toBe(false)
+      if (family === 'tencent') {
+        expect(normalizeTencentAuthUrl(standard, [host]), `${channel} Host :443`).toBe(standard)
+        expect(normalizeTencentAuthUrl(other, [host]), `${channel} Host :8443`).toBeUndefined()
+      } else {
+        expect(normalizeQoderAuthUrl(standard, [host]), `${channel} Host :443`).toBe(standard)
+        expect(normalizeQoderAuthUrl(other, [host]), `${channel} Host :8443`).toBeUndefined()
+      }
+    }
+  })
+
   it('拒绝 http、userinfo、非默认端口、fragment、控制字符与畸形 https', () => {
     const invalid = [
       'http://qoder.com/device',
@@ -59,7 +83,6 @@ describe('isAuthUrlForChannel', () => {
       'https://user:pass@qoder.com/device',
       'https://user%3Apass@qoder.com/device',
       'https://qoder.com:8443/device',
-      'https://qoder.com:443/device',
       'https://qoder.com/device#fragment',
       'https://qoder.com/de\u0000vice',
       'https://qoder.com/de\nvice',

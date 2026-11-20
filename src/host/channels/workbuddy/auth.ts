@@ -191,7 +191,10 @@ export class WorkbuddyAuthFlow extends TencentProductAuthFlow<
   }
 
   /** 显式保留 start 的产品选项类型（实现由通用状态机提供）。 */
-  override async start(options: WorkbuddyStartOptions = {}): Promise<AuthFlowStatus> {
-    return await super.start(options)
+  override async start(
+    options: WorkbuddyStartOptions = {},
+    callerSignal?: AbortSignal,
+  ): Promise<AuthFlowStatus> {
+    return await super.start(options, callerSignal)
   }
 }

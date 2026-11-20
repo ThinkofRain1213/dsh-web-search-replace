@@ -9,6 +9,7 @@ import * as React from 'react'
 
 import { CHANNEL_IDS, type ChannelId } from '../shared/channels.ts'
 import type { SettingsErrorKey } from './controllers/settings.ts'
+import type { SearchStatusView } from './search-status.ts'
 import { Dropdown } from './components/Dropdown.tsx'
 import { Switch } from './components/Switch.tsx'
 import styles from './styles/settings-card.module.css'
@@ -19,8 +20,12 @@ export interface SearchSectionProps {
   readonly enabled: boolean
   /** 当前渠道，也是唯一配置区真源。 */
   readonly channel: ChannelId
-  /** 是否有写入在飞或授权流程锁定。 */
+  /** 是否有写入在飞或账号交互锁定。 */
   readonly busy: boolean
+  /** 删除确认、授权/刷新或已接受队列等统一交互锁。 */
+  readonly interactionBusy: boolean
+  /** 同渠道 settings + account/status 推导出的 §5.5 状态。 */
+  readonly status: SearchStatusView
   /** Host 是否允许写入。 */
   readonly writable: boolean
   /** 最近一次保存失败的本地化键。 */
@@ -42,6 +47,8 @@ export function SearchSection({
   enabled,
   channel,
   busy,
+  interactionBusy,
+  status,
   writable,
   error,
   t,
@@ -56,6 +63,10 @@ export function SearchSection({
   const label = t('search.enabled.label')
   const items = CHANNEL_IDS.map(id => ({ id, label: t(`channel.${id}.name`) }))
   const selectedLabel = t(`channel.${channel}.name`)
+  const statusText = status.kind === 'ready' && status.account !== undefined
+    ? `${t('search.status.ready')}：${selectedLabel} / ${status.account.displayName}`
+      + `（${status.account.maskedIdentifier} · ${t(`channel.accounts.status.${status.account.status}`)}）`
+    : t(`search.status.${status.kind}`)
 
   return (
     <section
@@ -66,6 +77,12 @@ export function SearchSection({
       data-enabled={enabled ? 'true' : 'false'}
     >
       <h3 id={headingId} className={styles.heading}>{t('settings.title')}</h3>
+
+      <div className={styles.row} data-search-status={status.kind} aria-live="polite">
+        <div className={styles.rowText}>
+          <span className={styles.rowDescription}>{statusText}</span>
+        </div>
+      </div>
 
       <div className={styles.row} data-row="enabled">
         <div className={styles.rowText}>
@@ -90,6 +107,11 @@ export function SearchSection({
           <span className={styles.rowDescription}>{t('search.channel.description')}</span>
           {gated && (
             <span className={styles.rowDescription}>{t('search.channel.lockedHint')}</span>
+          )}
+          {interactionBusy && (
+            <span className={styles.rowDescription} data-interaction-busy-hint="">
+              {t('search.channel.interactionLockedHint')}
+            </span>
           )}
           {error !== null && (
             <span className={styles.error} role="alert" data-error="settings-save-failed">

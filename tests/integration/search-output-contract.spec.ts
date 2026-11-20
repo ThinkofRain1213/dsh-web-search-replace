@@ -73,6 +73,30 @@ describe.each(MODES)('%s 官方 web_search output 差分', (mode) => {
   })
 })
 
+describe.each(MODES)('%s 腾讯秘密不进入 DSH error result', (mode) => {
+  it.each(['tencent-secret-http', 'tencent-secret-cause'] as const)('%s 全链固定错误且无正文/cause', async (driver) => {
+    const observation = await runDshFixture({
+      mode,
+      installOverride: true,
+      enabled: true,
+      driver,
+      lifecycle: true,
+    })
+    expect(observation.officialSearchCalls).toBe(0)
+    expect(observation.driverCalls).toEqual([{ query: 'fixture query', maxResults: 10 }])
+    expect(observation.result?.isError).toBe(true)
+    const serialized = JSON.stringify(observation.result)
+    expect(serialized).not.toContain('FIXTURE_ACCESS_SENTINEL')
+    expect(serialized).not.toContain('FIXTURE_REFRESH_SENTINEL')
+    expect(serialized).not.toContain('FIXTURE_THROWN_CAUSE_SENTINEL')
+    expect(serialized).not.toContain('upstream echoed')
+    expect(serialized).not.toContain('transport echoed')
+    expect(observation.result?.error).toMatchObject({
+      message: expect.stringContaining('tencent search'),
+    })
+  })
+})
+
 describe.each(MODES)('%s ON 错误 fail-closed', (mode) => {
   it.each([
     {

@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
 import { runWithTimeout } from './process-tree.mjs'
+import { findHarnessClientValueImports } from './harness-imports.mjs'
 
 const SELF_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const PACK_TIMEOUT_MS = 60_000
@@ -341,10 +342,7 @@ const staticChecks = [
     assert(client.includes(`id: ${JSON.stringify(manifest.name)}`), 'Client factory id 不等于包名')
     assert(/factory\s*\(\s*require\s*\)/.test(client), 'Client factory 未接收 require')
     assert(/return\s+module\.exports/.test(client), 'Client factory 未返回 module.exports')
-    const forbidden = [
-      ...client.matchAll(/require\(\s*['"]@deepseek-ai\/[^'"]+['"]\s*\)/g),
-      ...client.matchAll(/from\s*['"]@deepseek-ai\/[^'"]+['"]/g),
-    ].map(match => match[0])
+    const forbidden = findHarnessClientValueImports(client)
     assert(forbidden.length === 0, `Client 产物含 Harness Client 值导入：${forbidden.join(', ')}`)
     const reactMarkers = [
       '__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED',

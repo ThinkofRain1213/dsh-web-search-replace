@@ -80,24 +80,44 @@ export function InlineAuthFlow({
   const statusText = authStatusText(auth, t)
   const urlRef = React.useRef<HTMLElement>(null)
   const [copyState, setCopyState] = React.useState<CopyState>('idle')
+  const copyGeneration = React.useRef(0)
+  const mounted = React.useRef(false)
+  const currentAuth = React.useRef({ flowId: auth.flowId, authUrl: auth.authUrl })
+  currentAuth.current = { flowId: auth.flowId, authUrl: auth.authUrl }
 
-  // 链接变化或流程进入终态时重置复制反馈，避免旧提示挂在新流程上。
   React.useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      copyGeneration.current += 1
+    }
+  }, [])
+
+  // flowId/URL 变化使旧复制代次失效；A 的结果不能标到同 URL 的 B。
+  React.useEffect(() => {
+    copyGeneration.current += 1
     setCopyState('idle')
-  }, [auth.authUrl])
+  }, [auth.flowId, auth.authUrl])
 
   /** 复制链接；剪贴板不可用时选中链接文本作为降级。 */
   const handleCopy = async (): Promise<void> => {
     const url = auth.authUrl
+    const flowId = auth.flowId
     if (url === null) return
+    const generation = ++copyGeneration.current
+    const isCurrent = (): boolean => mounted.current
+      && copyGeneration.current === generation
+      && currentAuth.current.flowId === flowId
+      && currentAuth.current.authUrl === url
     try {
       if (navigator.clipboard === undefined
         || typeof navigator.clipboard.writeText !== 'function') {
         throw new Error('clipboard unavailable')
       }
       await navigator.clipboard.writeText(url)
-      setCopyState('copied')
+      if (isCurrent()) setCopyState('copied')
     } catch {
+      if (!isCurrent()) return
       setCopyState('failed')
       try {
         const node = urlRef.current

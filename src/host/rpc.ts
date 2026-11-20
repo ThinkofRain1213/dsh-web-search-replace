@@ -142,7 +142,7 @@ export async function handleManagementRpcRequest(
       envelope.call.method,
       envelope.call.payload,
       options,
-      lease?.signal,
+      lease?.signal ?? request.signal,
     )
     const value = lease === undefined ? await operation : await lease.track(operation)
     return jsonReply(envelope.rpcId, { ok: true, value })
@@ -224,6 +224,7 @@ async function dispatch(
       method,
       payload,
       genericAuthInternalError,
+      signal,
     )
   }
   switch (method) {

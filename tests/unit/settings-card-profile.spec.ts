@@ -180,6 +180,8 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.menuItem')).toMatch(/gap:\s*6px;/)
     expect(cssBlock(css, '.menuItem')).toMatch(/font-size:\s*13px;/)
     expect(cssBlock(css, '.menuItem')).toMatch(/line-height:\s*20px;/)
+    expect(cssBlock(css, '.menu')).toMatch(/border-radius:\s*var\(--dsw-radius-md, 12px\);/)
+    expect(cssBlock(css, '.menuItem')).toMatch(/border-radius:\s*var\(--dsw-radius-md, 12px\);/)
     expect(css).toMatch(/\.menu\s*\{[^}]*position:\s*fixed;/)
   })
 

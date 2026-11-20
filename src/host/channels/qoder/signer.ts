@@ -649,10 +649,15 @@ function prepareSignedRequest(
   // 读取抛错的路径，否则异常路径反倒成了泄漏最多的那条。
   try {
     const headerMap = glue.takeObject(glue.exports.requestresult_headers!(result))
-    const headers: Record<string, string> = {}
-    if (headerMap instanceof Map) {
-      for (const [key, value] of headerMap) headers[String(key)] = String(value)
+    if (!(headerMap instanceof Map)) {
+      throw new QoderSearchProtocolError(
+        'SEARCH_FAILED',
+        'qoder signer returned invalid request headers',
+        'signing',
+      )
     }
+    const headers: Record<string, string> = {}
+    for (const [key, value] of headerMap) headers[String(key)] = String(value)
 
     return {
       // ⚠️ 参数顺序：(栈指针, ptr) —— 与直觉相反。
@@ -925,6 +930,16 @@ export const __testing = {
       finalReleases,
       glueResident: gluePromise !== null,
     }
+  },
+  /** B6 回归用：直接驱动 request result 产物的 Map 校验与释放。 */
+  prepareSignedRequest(
+    glue: Parameters<typeof prepareSignedRequest>[0],
+    context: number,
+    endpoint: string,
+    path: string,
+    body: string,
+  ): PreparedRequest {
+    return prepareSignedRequest(glue, context, endpoint, path, body)
   },
   /** I2 回归用：直接驱动返回值读取逻辑（含 view 重新获取与返回串释放）。 */
   readRequestResultString(

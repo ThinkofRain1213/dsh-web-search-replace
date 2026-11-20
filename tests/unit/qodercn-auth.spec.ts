@@ -698,12 +698,23 @@ describe('Qoder 中国版授权生命周期', () => {
       pollRoute(() => okToken({ user_id: '', user_name: '' })),
     ])
     const flow = fixture.createFlow(fetcher)
+    const originalErrorFactory = (flow as any).errorFactory as (code: any) => QoderCnAuthError
+    const produced: QoderCnAuthError[] = []
+    ;(flow as any).errorFactory = (code: any) => {
+      const error = originalErrorFactory(code)
+      produced.push(error)
+      return error
+    }
 
     const started = await flow.start()
     const terminal = await waitForTerminal(flow, started.flowId)
 
     expect(terminal.status).toBe('failed')
     expect(terminal.errorCode).toBe('auth/invalid-response')
+    expect(produced).toHaveLength(1)
+    expect(produced[0]).toBeInstanceOf(QoderCnAuthError)
+    expect(produced[0]?.message).toContain('Qoder 中国版')
+    expect(produced[0]?.message).not.toContain('Qoder 国际版')
     expect(terminal.account).toBeNull()
     expect(fixture.credentials.writes).toHaveLength(0)
     expect(fixture.settingsDouble.getState().qodercn.currentAccountId).toBeNull()

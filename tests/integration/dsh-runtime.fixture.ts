@@ -27,6 +27,7 @@ export const DSH_TEST_EXPECTED_VERSION = process.env.DSH_TEST_EXPECTED_VERSION ?
 export type FixtureMode = 'native' | 'ptc'
 export type FixtureDriver = 'normal' | 'missing' | 'throw' | 'delay'
   | 'contract' | 'unauthorized' | 'rate-limit' | 'bad-response'
+  | 'tencent-secret-http' | 'tencent-secret-cause'
 
 export interface FixtureModelSelection {
   readonly provider: string
@@ -342,11 +343,62 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
         importProjectModule('src/host/drivers/mock-driver.ts'),
         importProjectModule('src/host/settings/service.ts'),
       ])
+      const volatileConfig = createVolatileConfig(enabled, channel)
       const settings = new SettingsService({
         configEditor: { edit: async () => { throw new Error('fixture 不允许写设置') } },
         entry: { id: 'task-3-fixture' },
-        config: createVolatileConfig(enabled, channel),
+        config: volatileConfig,
       })
+      let tencentSecretDrivers: unknown
+      if (driverKind === 'tencent-secret-http' || driverKind === 'tencent-secret-cause') {
+        const [{ createInvocationDriverFactory }, { BuddyAuthFlow }, { AccountStore }] = await Promise.all([
+          importProjectModule('src/host/accounts/invocation.ts'),
+          importProjectModule('src/host/channels/buddy/auth.ts'),
+          importProjectModule('src/host/accounts/store.ts'),
+        ])
+        const records = new Map<string, any>()
+        const store = new AccountStore({
+          credentials: {
+            readRecord: async (key: string) => records.get(key),
+            modifyRecord: async (key: string, mutate: (current: any) => Promise<any>) => {
+              const next = await mutate(records.get(key))
+              if (next === undefined) return records.get(key)
+              records.set(key, next)
+              return next
+            },
+            deleteRecord: async (key: string) => { records.delete(key) },
+            listRecords: async () => [...records.entries()].map(([key, record]) => ({ key, kind: record.kind })),
+          } as any,
+        })
+        const account = await store.saveAccount({
+          channel: 'buddy', vendorAccountId: 'secret-boundary',
+          secret: { accessToken: 'FIXTURE_ACCESS_SENTINEL', refreshToken: 'FIXTURE_REFRESH_SENTINEL' },
+        })
+        volatileConfig.buddy.currentAccountId.get = () => account.accountId
+        settings.refreshFromVolatile()
+        const buddy = new BuddyAuthFlow({
+          store,
+          accounts: {} as any,
+          verifyCapability: async () => {},
+          fetcher: (async () => {
+            if (driverKind === 'tencent-secret-cause') {
+              throw new TypeError('transport echoed FIXTURE_THROWN_CAUSE_SENTINEL')
+            }
+            return new Response('upstream echoed FIXTURE_ACCESS_SENTINEL FIXTURE_REFRESH_SENTINEL', { status: 500 })
+          }) as typeof fetch,
+        })
+        tencentSecretDrivers = createInvocationDriverFactory({
+          flows: { buddy, workbuddy: {} as any, qoder: {} as any, qodercn: {} as any },
+          fetcher: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as { query: string; max_results: number }
+            driverCalls.push({ query: body.query, maxResults: body.max_results })
+            if (driverKind === 'tencent-secret-cause') {
+              throw new TypeError('transport echoed FIXTURE_THROWN_CAUSE_SENTINEL')
+            }
+            return new Response('upstream echoed FIXTURE_ACCESS_SENTINEL FIXTURE_REFRESH_SENTINEL', { status: 500 })
+          }) as typeof fetch,
+        })
+      }
       const mock = new MockSearchDriver()
       const recordingDriver = {
         searchOnce: async (query: string, maxResults: number, signal: AbortSignal) => {
@@ -395,10 +447,10 @@ async function executeScenario(request: DshFixtureRequest): Promise<DshFixtureOb
       const wrongChannelDriver = {
         searchOnce: async () => { throw new Error('selected the wrong channel driver') },
       }
-      const drivers = driverKind === 'missing' ? {} : {
+      const drivers = tencentSecretDrivers ?? (driverKind === 'missing' ? {} : {
         buddy: channel === 'buddy' ? recordingDriver : wrongChannelDriver,
         [channel]: recordingDriver,
-      }
+      })
       const lifecycle = request.lifecycle === true ? {
         track: async <T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> => {
           lifecycleTracks++

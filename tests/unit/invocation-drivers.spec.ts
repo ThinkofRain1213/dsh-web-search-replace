@@ -104,6 +104,44 @@ describe('invocation-bound 四渠道 drivers', () => {
     expect(tokens).toEqual(['Bearer TOKEN_A', 'Bearer TOKEN_A', 'Bearer TOKEN_B'])
   })
 
+  it('I2：query1 在飞时删除并重建同 ID，query2 仍使用 invocation 启动 grant', async () => {
+    const fixture = createAccountFixture()
+    const account = await fixture.store.saveAccount({
+      channel: 'buddy', vendorAccountId: 'account-a', secret: { accessToken: 'OLD', refreshToken: 'R0' },
+    })
+    let enterFirst!: () => void
+    const firstEntered = new Promise<void>((resolve) => { enterFirst = resolve })
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const calls: Array<{ query: string; token: string }> = []
+    const fetcher = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      calls.push({ query: body.query, token: new Headers(init?.headers).get('Authorization') ?? '' })
+      if (body.query === 'q1') {
+        enterFirst()
+        await firstGate
+      }
+      return json(TENCENT_OK)
+    }
+    const driver = makeFactory({ flows: createFlows(fixture), fetcher }).bind({
+      channel: 'buddy', accountId: account.accountId, endpointPreference: 'auto', selectionGeneration: 1,
+    })
+    const first = driver.searchOnce('q1', 10, new AbortController().signal)
+    await firstEntered
+    expect(await fixture.store.deleteAccount('buddy', account.accountId)).toBe(true)
+    const recreated = await fixture.store.saveAccount({
+      channel: 'buddy', vendorAccountId: 'account-a', secret: { accessToken: 'NEW', refreshToken: 'R1' },
+    })
+    expect(recreated.accountId).toBe(account.accountId)
+    try {
+      await driver.searchOnce('q2', 10, new AbortController().signal)
+      expect(calls.find(call => call.query === 'q2')?.token).toBe('Bearer OLD')
+    } finally {
+      releaseFirst()
+      await first
+    }
+  })
+
   it('每 query 各自 401 retry；正常兄弟 query 不被重放且 retry 用刷新后的精确 credential', async () => {
     const fixture = createAccountFixture()
     const account = await fixture.store.saveAccount({

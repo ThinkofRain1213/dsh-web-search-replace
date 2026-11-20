@@ -301,7 +301,7 @@
   min-height: 34px;
   padding: 6px 8px;
   border: 0;
-  border-radius: var(--dsw-radius-sm, 8px);
+  border-radius: var(--dsw-radius-md, 12px);
   background: transparent;
   color: var(--dsw-alias-label-primary, currentColor);
   font-family: inherit;

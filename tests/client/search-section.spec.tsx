@@ -10,9 +10,14 @@ import { createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
+import type { AccountCollection, AccountSummary } from '../../src/shared/accounts.ts'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
-import { routeAccounts } from './support/accounts-harness.ts'
+import {
+  accountSummary,
+  routeAccounts,
+  type AccountHandlers,
+} from './support/accounts-harness.ts'
 import {
   buttonByText,
   click,
@@ -47,6 +52,7 @@ interface RenderOptions {
   readonly snapshot?: SearchSettingsSnapshot
   readonly locale?: TestLocale
   readonly responder?: RpcResponder
+  readonly accounts?: AccountHandlers
   readonly writable?: boolean
 }
 
@@ -64,7 +70,7 @@ async function renderCard(options: RenderOptions = {}) {
   const locale = options.locale ?? 'zh'
   const t = translator(locale)
   const forms = createConfigFormsDouble(snapshot, { writable: options.writable })
-  const accounts = routeAccounts({})
+  const accounts = routeAccounts(options.accounts ?? {})
   const settingsResponder = options.responder ?? (() => ({ ok: true, value: snapshot }))
   const routed: RpcResponder = call => (
     call.method.startsWith('accounts.') || call.method.startsWith('auth.')
@@ -177,6 +183,116 @@ describe('SearchSection（真实 DOM）', () => {
     expect(container.querySelectorAll('[data-channel-config-host]')).toHaveLength(1)
   })
 
+  it('I6 ready 正例由当前账号真源驱动，含渠道、账号与脱敏状态', async () => {
+    const current = accountSummary('workbuddy', 'ready-account', {
+      displayName: 'Ready User', maskedIdentifier: 'r***@example.com', status: 'ready',
+    })
+    const { container, t } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'workbuddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [current] }),
+        'accounts.current': () => ({ ok: true, value: current }),
+      },
+    })
+    const status = query<HTMLElement>(container, '[data-search-status]')
+    expect(status.getAttribute('data-search-status')).toBe('ready')
+    expect(status.textContent).toContain('已开启 · 已就绪')
+    expect(status.textContent).toContain(t('channel.workbuddy.name'))
+    expect(status.textContent).toContain('Ready User')
+    expect(status.textContent).toContain('r***@example.com')
+    expect(status.textContent).toContain('正常')
+  })
+
+  it('I6 OFF 明确交还官方搜索；loading 不假装无账号', async () => {
+    const off = await renderCard({ snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }) })
+    expect(query<HTMLElement>(off.container, '[data-search-status]').getAttribute('data-search-status'))
+      .toBe('off')
+    expect(query<HTMLElement>(off.container, '[data-search-status]').textContent).toContain('官方')
+
+    const pending = deferred<RpcResult<readonly unknown[]>>()
+    const loading = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: { 'accounts.list': () => pending.promise },
+    })
+    const status = query<HTMLElement>(loading.container, '[data-search-status]')
+    expect(status.getAttribute('data-search-status')).toBe('loading')
+    expect(status.textContent).toContain('读取中')
+    expect(status.textContent).not.toContain('未选择当前账号')
+    pending.resolve({ ok: true, value: [] })
+    await flush()
+  })
+
+  it.each([
+    { status: 'reauth_required' as const, expected: 'reauth_required', text: '需要重新登录' },
+    { status: 'temporarily_unavailable' as const, expected: 'temporarily_unavailable', text: '暂时不可用' },
+    { status: 'credential_unavailable' as const, expected: 'credential_error', text: '配置或凭据读取失败' },
+  ])('I6 当前账号 $status 映射到 $expected', async ({ status, expected, text }) => {
+    const current = accountSummary('buddy', 'account-status', { status })
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [current] }),
+        'accounts.current': () => ({ ok: true, value: current }),
+      },
+    })
+    const view = query<HTMLElement>(container, '[data-search-status]')
+    expect(view.getAttribute('data-search-status')).toBe(expected)
+    expect(view.textContent).toContain(text)
+  })
+
+  it('I6 有账号但未选择与读取失败分别映射 no-current 与 credential/config error', async () => {
+    const account = accountSummary('buddy', 'alternative')
+    const noCurrent = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [account] }),
+        'accounts.current': () => ({ ok: true, value: null }),
+      },
+    })
+    expect(query<HTMLElement>(noCurrent.container, '[data-search-status]')
+      .getAttribute('data-search-status')).toBe('no-current')
+
+    const failed = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: { 'accounts.list': () => failure },
+    })
+    const view = query<HTMLElement>(failed.container, '[data-search-status]')
+    expect(view.getAttribute('data-search-status')).toBe('credential_error')
+    expect(view.textContent).toContain('配置或凭据读取失败')
+  })
+
+  it('I6 渠道切换原子性：新渠道为空时不继承旧渠道 ready', async () => {
+    const buddy = accountSummary('buddy', 'buddy-ready')
+    const before = makeSnapshot({ enabled: true, channel: 'buddy' })
+    const after = makeSnapshot({ enabled: true, channel: 'qoder' })
+    const response = deferred<RpcResult<SearchSettingsSnapshot>>()
+    const { container, t } = await renderCard({
+      snapshot: before,
+      responder: () => response.promise,
+      accounts: {
+        'accounts.list': call => ({
+          ok: true,
+          value: (call.payload as { channel?: string }).channel === 'buddy' ? [buddy] : [],
+        }),
+        'accounts.current': call => ({
+          ok: true,
+          value: (call.payload as { channel?: string }).channel === 'buddy' ? buddy : null,
+        }),
+      },
+    })
+    expect(query<HTMLElement>(container, '[data-search-status]').getAttribute('data-search-status'))
+      .toBe('ready')
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    await click(trigger)
+    await click(buttonByText(query(document, '[data-dropdown-menu]'), t('channel.qoder.name')))
+    response.resolve({ ok: true, value: after })
+    await settle()
+    const status = query<HTMLElement>(container, '[data-search-status]')
+    expect(status.getAttribute('data-search-status')).not.toBe('ready')
+    expect(status.getAttribute('data-search-status')).toBe('no-account')
+    expect(status.textContent).not.toContain('buddy-ready')
+  })
+
   it('busy 锁：写入在飞时禁用开关与下拉，重复点击不产生第二个 RPC', async () => {
     const before = makeSnapshot({ enabled: false, channel: 'buddy' })
     const after = makeSnapshot({ enabled: true, channel: 'buddy' })
@@ -206,6 +322,101 @@ describe('SearchSection（真实 DOM）', () => {
     expect(toggle.disabled).toBe(false)
     expect(trigger.disabled).toBe(false)
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
+  })
+
+  it('I7 删除确认锁定主下拉并显示先完成或取消当前操作', async () => {
+    const account = accountSummary('buddy', 'account-a')
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [account] }),
+        'accounts.current': () => ({ ok: true, value: account }),
+      },
+    })
+    await click(query(container, '[data-action="delete"]'))
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    expect(trigger.disabled).toBe(true)
+    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
+      .toContain('先完成或取消当前操作')
+    await click(trigger)
+    expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
+  })
+
+  it('I7 已接受删除排队时锁定主下拉，不能切走并丢弃队列', async () => {
+    const a = accountSummary('buddy', 'account-a')
+    const b = accountSummary('buddy', 'account-b')
+    const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [a, b] }),
+        'accounts.current': () => ({ ok: true, value: a }),
+        'accounts.setCurrent': () => setCurrentResponse.promise,
+      },
+    })
+    await click(query(container, '[data-action="set-current"][data-account-id="account-b"]'))
+    await click(query(container, '[data-action="delete"][data-account-id="account-a"]'))
+    await click(query(container, '[data-delete-confirmation] [data-action="confirm-delete"]'))
+    expect(container.textContent).toContain('排队中')
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    expect(trigger.disabled).toBe(true)
+    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
+      .toContain('先完成或取消当前操作')
+    setCurrentResponse.resolve({ ok: true, value: b })
+    await flush()
+  })
+
+  it('I7 删除执行中锁定主下拉，settle 后才恢复', async () => {
+    const account = accountSummary('buddy', 'account-a')
+    const deletion = deferred<RpcResult<AccountCollection>>()
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [account] }),
+        'accounts.current': () => ({ ok: true, value: account }),
+        'accounts.delete': () => deletion.promise,
+      },
+    })
+    await click(query(container, '[data-action="delete"]'))
+    await click(query(container, '[data-delete-confirmation] [data-action="confirm-delete"]'))
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    expect(trigger.disabled).toBe(true)
+    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
+      .toContain('先完成或取消当前操作')
+    deletion.resolve({ ok: true, value: { accounts: [], current: null } })
+    await flush()
+    expect(trigger.disabled).toBe(false)
+  })
+
+  it('I7 授权完成后的账号刷新也汇入统一 interaction busy', async () => {
+    const account = accountSummary('buddy', 'account-a')
+    const secondList = deferred<RpcResult<readonly AccountSummary[]>>()
+    let listCalls = 0
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => {
+          listCalls += 1
+          return listCalls === 1 ? { ok: true, value: [account] } : secondList.promise
+        },
+        'accounts.current': () => ({ ok: true, value: account }),
+        'auth.start': () => ({
+          ok: true,
+          value: {
+            flowId: 'flow-refresh', channel: 'buddy', status: 'completed', authUrl: null,
+            displayHint: '', account, errorCode: null,
+          },
+        }),
+      },
+    })
+    await click(query(container, '[data-action="add-account"]'))
+    await flush()
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(true)
+    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
+      .toContain('先完成或取消当前操作')
+    secondList.resolve({ ok: true, value: [account] })
+    await flush()
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(false)
   })
 
   it('开关保存失败时保持旧值并显示未被灰化选择器覆盖的错误红字', async () => {

@@ -200,21 +200,52 @@ describe('postTencentSearch HTTP 与传输错误分类', () => {
       )
       const bound = toTencentChannelSearchError(protocolError, 'buddy')
       expect(bound).toMatchObject({ channel: 'buddy', httpStatus: status })
-      expect(bound.cause).toBe(protocolError)
+      expect(bound.cause).toBeUndefined()
     }
   })
 
-  it('非 abort 的网络错误 → SEARCH_FAILED，并保留 cause', async () => {
-    const networkError = new TypeError('network unreachable')
+  it('任意跨渠道异常也只保留结构化 code/status，固定重绑且不泄露', () => {
+    const error = toTencentChannelSearchError(
+      Object.assign(new Error('echo TENCENT_BOUND_SECRET'), { status: 429 }),
+      'buddy',
+    )
+    expect(error).toMatchObject({ code: 'RATE_LIMITED', channel: 'buddy', httpStatus: 429 })
+    expect(error.message).not.toContain('TENCENT_BOUND_SECRET')
+    expect(error.cause).toBeUndefined()
+  })
+
+  it('非 abort 的网络错误 → 固定 SEARCH_FAILED，不透传原文或 cause', async () => {
+    const networkError = new TypeError('network unreachable TENCENT_NETWORK_SECRET')
     const fetcher = vi.fn(async () => {
       throw networkError
     }) as unknown as typeof fetch
 
-    await expect(postTencentSearch(request({ fetcher }))).rejects.toMatchObject({
+    const error = await postTencentSearch(request({ fetcher })).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({
       name: 'TencentSearchProtocolError',
       code: 'SEARCH_FAILED',
-      cause: networkError,
     })
+    expect((error as Error).message).not.toContain('TENCENT_NETWORK_SECRET')
+    expect((error as Error).cause).toBeUndefined()
+  })
+
+  it('HTTP 非 2xx 不读取正文，token/refresh sentinel 不进入消息或 cause', async () => {
+    let bodyReads = 0
+    const response = new Response('upstream TENCENT_ACCESS_SECRET TENCENT_REFRESH_SECRET', { status: 500 })
+    Object.defineProperty(response, 'text', {
+      value: async () => {
+        bodyReads += 1
+        return 'upstream TENCENT_ACCESS_SECRET TENCENT_REFRESH_SECRET'
+      },
+    })
+    const error = await postTencentSearch(request({
+      fetcher: async () => response,
+    })).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', status: 500 })
+    expect(bodyReads).toBe(0)
+    expect((error as Error).message).not.toContain('TENCENT_ACCESS_SECRET')
+    expect((error as Error).message).not.toContain('TENCENT_REFRESH_SECRET')
+    expect((error as Error).cause).toBeUndefined()
   })
 
   it('自己的 20s 预算耗尽 → TIMEOUT，且确实以 20000ms 创建超时信号', async () => {

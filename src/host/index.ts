@@ -93,7 +93,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
   const verifiers = createChannelCapabilityVerifiers({
     ...ctx.fetcher === undefined ? {} : { fetcher: ctx.fetcher },
     getEndpointPreference: () => settings.getSnapshot().qoder.endpointPreference,
-    readLastSuccessfulHost: () => routeStore.read(),
+    readLastSuccessfulHost: (signal: AbortSignal) => routeStore.read(signal),
     writeLastSuccessfulHost: async (host, signal) => {
       const snapshot = settings.getSnapshot()
       return await routeStore.write(host, {
@@ -118,7 +118,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
     const drivers = createInvocationDriverFactory({
       flows: completeFlows,
     ...fetcherOption(ctx),
-    readLastSuccessfulHost: () => routeStore.read(),
+    readLastSuccessfulHost: (signal: AbortSignal) => routeStore.read(signal),
     writeLastSuccessfulHost: async (host, signal, selection) => {
       if (selection === undefined) return 'stale'
       return await routeStore.write(host, selection, signal)

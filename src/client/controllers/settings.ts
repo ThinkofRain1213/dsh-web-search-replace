@@ -402,8 +402,9 @@ export class SettingsController {
       this.actualEndpointHost = null
     } finally {
       if (this.runtimeController === controller) this.runtimeController = undefined
+      if (this.runtimeActive && generation === this.runtimeGeneration) this.publish()
+      // publish 的监听器可能同步 dispose/restart；旧 generation 不得再叠加 timer。
       if (this.runtimeActive && generation === this.runtimeGeneration) {
-        this.publish()
         this.runtimeTimer = setTimeout(() => {
           this.runtimeTimer = null
           void this.pollRuntime(generation)

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import * as bindings from '../../src/host/accounts/bindings.ts'
 import { BuddyAuthFlow } from '../../src/host/channels/buddy/auth.ts'
+import { QoderInternationalAuthFlow } from '../../src/host/channels/qoder/auth.ts'
 import { QoderSigner } from '../../src/host/channels/qoder/signer.ts'
 import { createAccountFixture } from './support/account-fixture.ts'
 
@@ -200,5 +201,95 @@ describe('hung capability probe 的 signal/settle 边界', () => {
       expect(fixture.settings.getSnapshot().buddy.currentAccountId).toBeNull()
       if (mode === 'cancel') await flow.dispose()
     }
+  })
+})
+
+describe('B15 QoderInternationalAuthFlow hung-probe 同形反例', () => {
+  function makeFlow(
+    fixture: ReturnType<typeof createAccountFixture>,
+    authTimeoutMs: number,
+    probe: (signal: AbortSignal) => Promise<void>,
+  ): QoderInternationalAuthFlow {
+    return new QoderInternationalAuthFlow({
+      store: fixture.store,
+      accounts: fixture.service,
+      authTimeoutMs,
+      pollIntervalMs: 1,
+      fetcher: async () => json({ token: 'A', refresh_token: 'R', user_id: 'u', user_name: 'U' }),
+      verifyCapability: async (_credential, signal) => { await probe(signal) },
+    })
+  }
+
+  it('deadline 实际 abort probe 并等待 settle，无账号/当前账号写入', async () => {
+    const fixture = createAccountFixture()
+    let probeSignal: AbortSignal | undefined
+    let probeSettled = false
+    const flow = makeFlow(fixture, 50, async (signal) => {
+      probeSignal = signal
+      await new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => { probeSettled = true; resolve() }, { once: true })
+      })
+    })
+    const started = await flow.start()
+    const outcome = await Promise.race([
+      (async () => {
+        for (let index = 0; index < 100; index += 1) {
+          const status = await flow.status(started.flowId)
+          if (status.status !== 'pending') return status.status
+          await new Promise<void>((resolve) => { setTimeout(resolve, 2) })
+        }
+        return 'still-pending'
+      })(),
+      new Promise<string>((resolve) => { setTimeout(() => resolve('deadline-missing'), 100) }),
+    ])
+    expect(outcome).toBe('timed_out')
+    expect(probeSignal?.aborted).toBe(true)
+    expect(probeSettled).toBe(true)
+    expect(fixture.credentials.keys()).toHaveLength(0)
+    expect(fixture.settings.getSnapshot().qoder.currentAccountId).toBeNull()
+    await flow.dispose()
+  })
+
+  it('cancel/dispose 都实际 abort hung probe 且无写入', async () => {
+    for (const mode of ['cancel', 'dispose'] as const) {
+      const fixture = createAccountFixture()
+      let probeSignal: AbortSignal | undefined
+      let entered!: () => void
+      const enteredPromise = new Promise<void>((resolve) => { entered = resolve })
+      const flow = makeFlow(fixture, 60_000, async (signal) => {
+        probeSignal = signal
+        entered()
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => { resolve() }, { once: true })
+        })
+      })
+      const started = await flow.start()
+      await enteredPromise
+      if (mode === 'cancel') await flow.cancel(started.flowId)
+      else await flow.dispose()
+      expect(probeSignal?.aborted).toBe(true)
+      expect(fixture.credentials.keys()).toHaveLength(0)
+      expect(fixture.settings.getSnapshot().qoder.currentAccountId).toBeNull()
+      if (mode === 'cancel') await flow.dispose()
+    }
+  })
+
+  it('真实 Qoder verifier 的 hung route read 可由 caller abort，fetch 为零', async () => {
+    const verifiers = makeVerifiers({
+      getEndpointPreference: () => 'auto',
+      readLastSuccessfulHost: () => new Promise<null>(() => {}),
+      fetcher: async () => { throw new Error('route read must settle before fetch') },
+    })
+    const caller = new AbortController()
+    const running = verifiers.qoder({
+      channelId: 'qoder', vendorAccountId: 'probe-only',
+      credential: { securityOauthToken: 'QODER_CANDIDATE', machineId: 'QODER_MACHINE' },
+    }, caller.signal).catch((error: unknown) => error)
+    caller.abort(new DOMException('stop', 'AbortError'))
+    const outcome = await Promise.race([
+      running,
+      new Promise<string>((resolve) => { setTimeout(() => resolve('hung'), 50) }),
+    ])
+    expect(outcome).not.toBe('hung')
   })
 })

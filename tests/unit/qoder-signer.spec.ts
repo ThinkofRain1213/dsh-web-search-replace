@@ -622,6 +622,54 @@ describe('QoderSigner：返回值读取重新获取 DataView（I2）', () => {
   })
 })
 
+describe('QoderSigner：requestresult_headers fail-closed', () => {
+  it('B6：非 Map headers 固定失败且不泄露秘密，request result 仍释放', () => {
+    const buffer = new ArrayBuffer(64)
+    const freedResults: number[] = []
+    let nextPtr = 1
+    const glue = {
+      exports: {
+        qodercontext_prepareRequest: () => {},
+        requestresult_headers: () => 99,
+        requestresult_url: (stack: number) => {
+          const view = new DataView(buffer)
+          view.setInt32(stack + 0, 100, true)
+          view.setInt32(stack + 4, 1, true)
+        },
+        requestresult_body: (stack: number) => {
+          const view = new DataView(buffer)
+          view.setInt32(stack + 0, 200, true)
+          view.setInt32(stack + 4, 1, true)
+        },
+        __wbindgen_add_to_stack_pointer: () => 0,
+      },
+      writeString: () => nextPtr++,
+      lastLength: () => 1,
+      callPointer: (invoke: (stack: number) => void) => { invoke(0); return 7 },
+      takeObject: () => ({ Authorization: 'Bearer COSY.HEADER_SECRET' }),
+      view: () => new DataView(buffer),
+      readString: (ptr: number) => ptr === 100
+        ? 'https://gateway.qoder.com.cn/algo/api/v1/webSearch/oneSearch?Encode=1'
+        : 'encrypted',
+      freePointer: (_name: string, ptr: number) => { freedResults.push(ptr) },
+      freeString: () => {},
+      releaseInputString: () => {},
+    }
+    const error = (() => {
+      try {
+        ;(__testing as any).prepareSignedRequest(glue, 1, 'https://gateway.qoder.com.cn', QODER_SEARCH_PATH, BODY)
+        return undefined
+      } catch (caught) {
+        return caught
+      }
+    })()
+    expect(error).toBeInstanceOf(QoderSearchProtocolError)
+    expect(error).toMatchObject({ code: 'SEARCH_FAILED', kind: 'signing' })
+    expect((error as Error).message).not.toContain('HEADER_SECRET')
+    expect(freedResults).toEqual([7])
+  })
+})
+
 describe('QoderSigner：包内批准资产（C1）', () => {
   it('lib 布局只解析包内 assets，不回退到包外同名文件', () => {
     const { pkg, pkgAsset, parentAsset } = makeTempPackage()

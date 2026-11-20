@@ -68,7 +68,7 @@ export interface QoderInternationalDriverDeps {
   readonly resolveEndpointPreference: () => QoderEndpointPreference
     | Promise<QoderEndpointPreference>
   /** R43：读取本机全局最近成功域；fixed 不会调用。 */
-  readonly readLastSuccessfulHost?: () => 'center.qoder.sh' | 'api2.qoder.sh' | null
+  readonly readLastSuccessfulHost?: (signal: AbortSignal) => 'center.qoder.sh' | 'api2.qoder.sh' | null
     | Promise<'center.qoder.sh' | 'api2.qoder.sh' | null>
   /** 真实用户 auto 搜索成功后持久化；capability probe 不提供。 */
   readonly writeLastSuccessfulHost?: (

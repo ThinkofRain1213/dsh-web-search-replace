@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { findHarnessClientValueImports } from './harness-imports.mjs'
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const manifest = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'))
@@ -47,10 +48,8 @@ const checks = [
   }],
   ['lib/client.js 不含 Harness Client 值导入', async () => {
     const code = await readLib('client.js')
-    const requires = [...code.matchAll(/require\(\s*['"]@deepseek-ai\/[^'"]+['"]\s*\)/g)].map((match) => match[0])
-    assert(requires.length === 0, `存在 Harness Client 包值导入：${requires.join(', ')}`)
-    const imports = [...code.matchAll(/from\s*['"]@deepseek-ai\/[^'"]+['"]/g)].map((match) => match[0])
-    assert(imports.length === 0, `存在 Harness Client 包 import 语句：${imports.join(', ')}`)
+    const forbidden = findHarnessClientValueImports(code)
+    assert(forbidden.length === 0, `存在 Harness Client 包值导入：${forbidden.join(', ')}`)
   }],
   ['lib/client.js 不打包第二份 React', async () => {
     const code = await readLib('client.js')

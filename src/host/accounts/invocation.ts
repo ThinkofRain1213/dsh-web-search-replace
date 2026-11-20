@@ -10,8 +10,15 @@ import type { SearchDriver, SearchDriverResult, MockSearchSource } from '../driv
 import { ChannelSearchError } from '../search/errors.ts'
 import { BuddyAuthFlow } from '../channels/buddy/auth.ts'
 import { WorkbuddyAuthFlow } from '../channels/workbuddy/auth.ts'
-import { QoderInternationalAuthFlow } from '../channels/qoder/auth.ts'
+import {
+  QoderInternationalAuthFlow,
+  type QoderAuthInvocation,
+} from '../channels/qoder/auth.ts'
 import { QoderCnAuthFlow } from '../channels/qodercn/auth.ts'
+import {
+  type TencentAuthInvocation,
+  type TencentProductAuthFlow,
+} from '../channels/tencent/product-auth-flow.ts'
 import { BUDDY_SEARCH_HOST, BUDDY_SEARCH_USER_AGENT } from '../channels/buddy/driver.ts'
 import { WORKBUDDY_SEARCH_HOST, WORKBUDDY_SEARCH_USER_AGENT } from '../channels/workbuddy/driver.ts'
 import { QODERCN_SEARCH_HOST, QODERCN_SEARCH_PATH } from '../channels/qodercn/driver.ts'
@@ -47,7 +54,7 @@ export interface InvocationAuthFlows {
 export interface InvocationDriverFactoryDeps {
   readonly flows: InvocationAuthFlows
   readonly fetcher?: typeof fetch
-  readonly readLastSuccessfulHost?: () => QoderInternationalHost | null
+  readonly readLastSuccessfulHost?: (signal: AbortSignal) => QoderInternationalHost | null
     | Promise<QoderInternationalHost | null>
   readonly writeLastSuccessfulHost?: (
     host: QoderInternationalHost,
@@ -74,37 +81,70 @@ export function createInvocationDriverFactory(
   })
   return {
     bind(selection: InvocationSelection): SearchDriver {
-      return {
-        async searchOnce(query, maxResults, signal): Promise<SearchDriverResult> {
-          if (selection.accountId === null || selection.accountId.trim().length === 0) {
-            throw new ChannelSearchError('NO_ACCOUNT', selection.channel, 'no current account for this invocation')
+      const accountId = selection.accountId
+      const missingAccount = () => accountId === null || accountId.trim().length === 0
+      switch (selection.channel) {
+        case 'buddy': {
+          const invocation = missingAccount() ? undefined : deps.flows.buddy.createInvocation(accountId!)
+          return {
+            searchOnce: async (query, maxResults, signal) => {
+              if (invocation === undefined) throw noInvocationAccount(selection.channel)
+              return await searchTencent(
+                deps.flows.buddy, 'buddy', accountId!, query, maxResults, signal, deps, invocation,
+              )
+            },
           }
-          const accountId = selection.accountId
-          switch (selection.channel) {
-            case 'buddy':
-              return await searchTencent('buddy', accountId, query, maxResults, signal, deps)
-            case 'workbuddy':
-              return await searchTencent('workbuddy', accountId, query, maxResults, signal, deps)
-            case 'qodercn':
-              return await searchQoderCn(accountId, query, signal, deps)
-            case 'qoder':
-              return await searchQoderInternational(accountId, query, signal, deps, policy, selection)
+        }
+        case 'workbuddy': {
+          const invocation = missingAccount() ? undefined : deps.flows.workbuddy.createInvocation(accountId!)
+          return {
+            searchOnce: async (query, maxResults, signal) => {
+              if (invocation === undefined) throw noInvocationAccount(selection.channel)
+              return await searchTencent(
+                deps.flows.workbuddy, 'workbuddy', accountId!, query, maxResults, signal, deps, invocation,
+              )
+            },
           }
-        },
+        }
+        case 'qodercn': {
+          const invocation = missingAccount() ? undefined : deps.flows.qodercn.createInvocation(accountId!)
+          return {
+            searchOnce: async (query, maxResults, signal) => {
+              if (invocation === undefined) throw noInvocationAccount(selection.channel)
+              return await searchQoderCn(accountId!, query, signal, deps, invocation)
+            },
+          }
+        }
+        case 'qoder': {
+          const invocation = missingAccount() ? undefined : deps.flows.qoder.createInvocation(accountId!)
+          return {
+            searchOnce: async (query, maxResults, signal) => {
+              if (invocation === undefined) throw noInvocationAccount(selection.channel)
+              return await searchQoderInternational(
+                accountId!, query, signal, deps, policy, selection, invocation,
+              )
+            },
+          }
+        }
       }
     },
   }
 }
 
-async function searchTencent(
-  channel: 'buddy' | 'workbuddy',
+function noInvocationAccount(channel: ChannelId): ChannelSearchError {
+  return new ChannelSearchError('NO_ACCOUNT', channel, 'no current account for this invocation')
+}
+
+async function searchTencent<C extends 'buddy' | 'workbuddy'>(
+  flow: TencentProductAuthFlow<C>,
+  channel: C,
   accountId: string,
   query: string,
   maxResults: number,
   signal: AbortSignal,
   deps: InvocationDriverFactoryDeps,
+  invocation: TencentAuthInvocation<C>,
 ): Promise<SearchDriverResult> {
-  const flow = channel === 'buddy' ? deps.flows.buddy : deps.flows.workbuddy
   try {
     const sources = await flow.runWithAuthRetry(accountId, async (credential, retrySignal) => {
       try {
@@ -123,7 +163,7 @@ async function searchTencent(
         // retry 判定只信精确 ChannelSearchError + HTTP 401；转换发生在 attempt 内。
         throw toTencentChannelSearchError(error, channel)
       }
-    }, signal)
+    }, signal, invocation)
     return { sources, truncated: false }
   } catch (error) {
     throw toTencentChannelSearchError(error, channel)
@@ -135,6 +175,7 @@ async function searchQoderCn(
   query: string,
   signal: AbortSignal,
   deps: InvocationDriverFactoryDeps,
+  invocation: QoderAuthInvocation<'qodercn'>,
 ): Promise<SearchDriverResult> {
   try {
     const sources = await deps.flows.qodercn.runWithAuthRetry(
@@ -154,6 +195,7 @@ async function searchQoderCn(
         }
       },
       signal,
+      invocation,
     )
     return { sources, truncated: false }
   } catch (error) {
@@ -168,6 +210,7 @@ async function searchQoderInternational(
   deps: InvocationDriverFactoryDeps,
   policy: QoderEndpointPolicy,
   selection: InvocationSelection,
+  invocation: QoderAuthInvocation<'qoder'>,
 ): Promise<SearchDriverResult> {
   try {
     const sources = await policy.execute({
@@ -196,6 +239,7 @@ async function searchQoderInternational(
             }
           },
           signal,
+          invocation,
         )
       },
       ...deps.writeLastSuccessfulHost === undefined ? {} : {

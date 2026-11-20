@@ -13,7 +13,7 @@ import type { ManagementRpcConnection } from '../shared/rpc.ts'
 import { AccountList } from './AccountList.tsx'
 import { InlineAuthFlow } from './InlineAuthFlow.tsx'
 import { InlineDeleteConfirmation } from './InlineDeleteConfirmation.tsx'
-import { AccountsController } from './controllers/accounts.ts'
+import { AccountsController, type AccountsState } from './controllers/accounts.ts'
 import styles from './styles/settings-card.module.css'
 
 /** 账号配置区属性。 */
@@ -26,8 +26,12 @@ export interface AccountChannelConfigProps {
   readonly t: (key: string) => string
   /** Host 是否允许写入。 */
   readonly writable: boolean
-  /** 授权 busy 变化通知；设置卡据此锁定主渠道下拉。 */
+  /** 兼容旧名；现在同样报告统一 interaction busy。 */
   readonly onAuthBusyChange?: ((busy: boolean) => void) | undefined
+  /** 确认、授权/刷新、已接受队列/执行中的统一交互锁。 */
+  readonly onInteractionBusyChange?: ((busy: boolean, channel: ChannelId) => void) | undefined
+  /** 同渠道账号只读快照；仅供父级推导 §5.5，不复制为第二真源。 */
+  readonly onAccountsStateChange?: ((state: AccountsState | null, channel: ChannelId) => void) | undefined
   /** 授权轮询间隔；测试可注入。 */
   readonly pollIntervalMs?: number | undefined
 }
@@ -43,6 +47,8 @@ export function AccountChannelConfig({
   t,
   writable,
   onAuthBusyChange,
+  onInteractionBusyChange,
+  onAccountsStateChange,
   pollIntervalMs,
 }: AccountChannelConfigProps): React.ReactElement {
   const [controller] = React.useState(() => new AccountsController({
@@ -63,14 +69,29 @@ export function AccountChannelConfig({
     void controller.reload()
   }, [controller])
 
+  const interactionBusy = state.authBusy
+    || state.refreshBusy
+    || state.busyAccountId !== null
+    || state.clearBusy
+    || state.queue.length > 0
+    || deletingAccountId !== null
+    || confirmingClear
+
   React.useEffect(() => {
-    onAuthBusyChange?.(state.authBusy)
-  }, [onAuthBusyChange, state.authBusy])
+    onInteractionBusyChange?.(interactionBusy, channel)
+    onAuthBusyChange?.(interactionBusy)
+  }, [channel, interactionBusy, onAuthBusyChange, onInteractionBusyChange])
+
+  React.useEffect(() => {
+    onAccountsStateChange?.(state, channel)
+  }, [channel, onAccountsStateChange, state])
 
   React.useEffect(() => () => {
+    onInteractionBusyChange?.(false, channel)
     onAuthBusyChange?.(false)
+    onAccountsStateChange?.(null, channel)
     controller.dispose()
-  }, [controller, onAuthBusyChange])
+  }, [channel, controller, onAccountsStateChange, onAuthBusyChange, onInteractionBusyChange])
 
   const deletingAccount = deletingAccountId === null
     ? null

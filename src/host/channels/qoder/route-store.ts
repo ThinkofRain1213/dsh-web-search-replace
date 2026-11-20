@@ -1,16 +1,18 @@
 /** R44：独立 Host-only 全局最近成功域；不得进入 Config/configForms/账号 grant。 */
 import {
   ACCOUNT_CREDENTIAL_SCOPE,
+  QODER_LAST_SUCCESSFUL_HOST_RECORD_ID,
   buildCredentialKey,
   type AccountCredentialProvider,
 } from '../../accounts/store.ts'
 import { isQoderRuntimeHost, type QoderRuntimeHost } from '../../../shared/runtime.ts'
 import type { InvocationSelection } from '../../accounts/invocation.ts'
 import { SettingsWriteCancelledError } from '../../settings/service.ts'
+import { waitWithAuthAbort } from '../auth-abort.ts'
 
 export const QODER_LAST_SUCCESSFUL_HOST_KEY = buildCredentialKey(
   ACCOUNT_CREDENTIAL_SCOPE,
-  'qoder-last-successful-host',
+  QODER_LAST_SUCCESSFUL_HOST_RECORD_ID,
 )
 
 export type QoderRouteSelection = InvocationSelection
@@ -26,8 +28,11 @@ export type QoderRouteWriteResult = 'written' | 'stale'
 export class QoderRouteStore {
   constructor(private readonly options: QoderRouteStoreOptions) {}
 
-  async read(): Promise<QoderRuntimeHost | null> {
-    const record = await this.options.credentials.readRecord(QODER_LAST_SUCCESSFUL_HOST_KEY)
+  async read(signal?: AbortSignal): Promise<QoderRuntimeHost | null> {
+    const operation = this.options.credentials.readRecord(QODER_LAST_SUCCESSFUL_HOST_KEY)
+    const record = signal === undefined
+      ? await operation
+      : await waitWithAuthAbort(operation, signal, () => new SettingsWriteCancelledError())
     if (record?.kind !== 'grant' || typeof record.payload !== 'object' || record.payload === null) {
       return null
     }

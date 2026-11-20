@@ -8,6 +8,8 @@ import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AccountChannelConfig } from '../../src/client/AccountChannelConfig.tsx'
+import { InlineAuthFlow } from '../../src/client/InlineAuthFlow.tsx'
+import type { AccountsAuthView } from '../../src/client/controllers/accounts.ts'
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
 import type { AccountSummary } from '../../src/shared/accounts.ts'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
@@ -148,6 +150,72 @@ describe('InlineAuthFlow（真实 DOM）', () => {
     await flush()
     expect(container.textContent).toContain('复制失败，请手动选择并复制链接')
     expect(container.textContent).not.toContain('已复制授权链接')
+  })
+
+  it('B11：A→B 同 URL 不同 flow 时，A 的迟到复制结果不得标到 B', async () => {
+    const first = deferred<void>()
+    const second = deferred<void>()
+    const writeText = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const t = translator('zh')
+    const auth = (flowId: string): AccountsAuthView => ({
+      phase: 'pending', flowId, authUrl: AUTH_URLS.buddy, errorCode: null, targetAccountId: null,
+    })
+    const element = (flowId: string) => createElement(InlineAuthFlow, {
+      auth: auth(flowId), accountName: null, t, onCancel: () => {}, onDismiss: () => {},
+    })
+    const root = mount(element('flow-a'))
+    mounted.push(root)
+    await click(query(root.container, '[data-action="copy-auth"]'))
+    await root.rerender(element('flow-b'))
+    await click(query(root.container, '[data-action="copy-auth"]'))
+
+    first.resolve()
+    await flush()
+    expect(query<HTMLElement>(root.container, '[data-copy-state]').getAttribute('data-copy-state'))
+      .not.toBe('copied')
+    second.resolve()
+    await flush()
+    expect(query<HTMLElement>(root.container, '[data-copy-state]').getAttribute('data-copy-state'))
+      .toBe('copied')
+  })
+
+  it('B11：A 的迟到 reject 不把 B 标为失败，卸载后不 setState 或选中旧链接', async () => {
+    const first = deferred<void>()
+    const second = deferred<void>()
+    const writeText = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const t = translator('zh')
+    const auth = (flowId: string): AccountsAuthView => ({
+      phase: 'pending', flowId, authUrl: AUTH_URLS.buddy, errorCode: null, targetAccountId: null,
+    })
+    const element = (flowId: string) => createElement(InlineAuthFlow, {
+      auth: auth(flowId), accountName: null, t, onCancel: () => {}, onDismiss: () => {},
+    })
+    const root = mount(element('flow-a'))
+    mounted.push(root)
+    await click(query(root.container, '[data-action="copy-auth"]'))
+    await root.rerender(element('flow-b'))
+    await click(query(root.container, '[data-action="copy-auth"]'))
+    first.reject(new Error('late denied'))
+    await flush()
+    expect(query<HTMLElement>(root.container, '[data-copy-state]').getAttribute('data-copy-state'))
+      .not.toBe('failed')
+    second.resolve()
+    await flush()
+
+    const late = deferred<void>()
+    writeText.mockImplementationOnce(() => late.promise)
+    await click(query(root.container, '[data-action="copy-auth"]'))
+    const selection = vi.spyOn(window, 'getSelection')
+    root.unmount()
+    late.reject(new Error('unmounted denied'))
+    await flush()
+    expect(selection).not.toHaveBeenCalled()
   })
 
   it('授权链接只读展示：不创建链接、不自动打开、不写存储、不渲染 displayHint', async () => {

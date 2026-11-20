@@ -147,10 +147,11 @@ export interface AuthFlowStartOptions {
 export interface AuthFlowPort {
   /** 固定归属；注册与每次 dispatch 都必须在任何工作前核对。 */
   readonly channel: AuthChannel
-  start(options?: AuthFlowStartOptions): Promise<AuthFlowStatus>
-  cancel(flowId: string): Promise<AuthFlowStatus>
-  status(flowId: string): Promise<AuthFlowStatus>
-  refresh(accountId: string): Promise<AccountSummary>
+  start(options?: AuthFlowStartOptions, callerSignal?: AbortSignal): Promise<AuthFlowStatus>
+  cancel(flowId: string, callerSignal?: AbortSignal): Promise<AuthFlowStatus>
+  status(flowId: string, callerSignal?: AbortSignal): Promise<AuthFlowStatus>
+  /** caller 只取消等待；共享 refresh 的 owner 仍继续并 settle。 */
+  refresh(accountId: string, callerSignal?: AbortSignal): Promise<AccountSummary>
 }
 
 /**
@@ -233,7 +234,7 @@ export function isAuthChannel(value: unknown): value is AuthChannel {
  * 校验某个渠道的授权 URL 是否满足 Client 可见安全边界。
  *
  * 规则与 Host 产品边界一致：绝对 https URL、精确 hostname、无 userinfo、
- * 无显式端口（含 :443）、无 fragment、无原始控制字符、长度不超过 2048。
+ * 仅允许省略端口或显式标准 :443、无 fragment、无原始控制字符、长度不超过 2048。
  * 使用 `new URL` 解析而不是字符串前后缀匹配，避免 `qoder.com.evil`、
  * `notqoder.com` 等伪造域通过。
  *
@@ -260,11 +261,16 @@ export function isAuthUrlForChannel(value: unknown, channel: AuthChannel): value
   if (url.hash !== '') return false
   if (!(AUTH_URL_HOSTS[channel] as readonly string[]).includes(url.hostname)) return false
 
-  // 显式端口（包括 :443）在 URL.port 会被归一化为空；这里从原始 authority
-  // 再拒绝一次。四渠道授权页不需要端口，也不接受 IPv6/端口形态。
+  // URL parser 会把标准 :443 归一化为空 port；原始 authority 只允许这一种
+  // 显式端口。其他端口已由 url.port 拒绝，IPv6/多重冒号仍 fail-closed。
   const afterScheme = value.slice(value.indexOf('://') + 3)
   const authority = afterScheme.split(/[/?#]/, 1)[0] ?? ''
-  if (authority.includes(':')) return false
+  if (authority.includes(':')) {
+    if (!authority.endsWith(':443')) return false
+    const withoutDefaultPort = authority.slice(0, -4)
+    if (withoutDefaultPort.includes(':')) return false
+    if (withoutDefaultPort.toLowerCase() !== url.hostname) return false
+  }
 
   return true
 }

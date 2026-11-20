@@ -35,7 +35,12 @@ import type {
   StoredAccountRecord,
 } from '../../accounts/store.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
-import { combineAuthSignals, waitWithAuthAbort } from '../auth-abort.ts'
+import { combineAuthSignals, forwardAuthAbort, waitWithAuthAbort } from '../auth-abort.ts'
+import {
+  accessNeedsRefresh,
+  readExpiryMs,
+  refreshHasExpired,
+} from '../auth-expiry.ts'
 import { runCapabilityVerifierWithDeadline } from '../capability.ts'
 import {
   SYSTEM_CLOCK,
@@ -53,6 +58,20 @@ export interface TencentAccessCredential<C extends AuthChannel> {
   readonly channelId: C
   readonly accountId: string
   readonly accessToken: string
+}
+
+interface TencentInvocationGrant<C extends AuthChannel> {
+  readonly credential: TencentAccessCredential<C>
+  readonly expiresAtMs?: number
+  readonly refreshExpiresAtMs?: number
+  readonly refreshToken: string
+}
+
+/** 单次 tool invocation 的可推进 grant；只有本 invocation 的刷新可更新它。 */
+export interface TencentAuthInvocation<C extends AuthChannel> {
+  readonly accountId: string
+  current?: TencentInvocationGrant<C>
+  initializing?: Promise<TencentInvocationGrant<C>>
 }
 
 /** 保存前能力探测的输入；不含 refreshToken 或账号秘密。 */
@@ -133,12 +152,14 @@ interface FlowState {
   readonly controller: AbortController
   readonly targetAccountId: string | undefined
   readonly targetVendorAccountId: string | undefined
+  readonly targetRefreshToken: string | undefined
   readonly done: Deferred<void>
   status: AuthFlowState
   account: AccountSummary | null
   errorCode: AuthFlowErrorCode | null
   cancelRequested: boolean
   terminal: boolean
+  detachCallerSignal?: () => void
 }
 
 /**
@@ -210,10 +231,14 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
    *
    * 只由显式用户 RPC 调用；构造与状态查询都不会启动授权。
    */
-  async start(options: AuthFlowStartOptions = {}): Promise<AuthFlowStatus> {
+  async start(
+    options: AuthFlowStartOptions = {},
+    callerSignal?: AbortSignal,
+  ): Promise<AuthFlowStatus> {
     this.assertNotDisposed()
-    if (options.accountId !== undefined) return await this.reauthenticate(options.accountId)
-    return await this.beginFlow(undefined)
+    if (callerSignal?.aborted) throw this.error('auth/cancelled')
+    if (options.accountId !== undefined) return await this.reauthenticate(options.accountId, callerSignal)
+    return await this.beginFlow(undefined, callerSignal)
   }
 
   /**
@@ -222,11 +247,13 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
    * 先验证目标账号存在于本渠道；成功后必须仍是同一厂商身份，否则失败且
    * 不覆盖原记录。重新登录不改变当前账号选择（目标原本是当前则保持）。
    */
-  async reauthenticate(accountId: string): Promise<AuthFlowStatus> {
+  async reauthenticate(accountId: string, callerSignal?: AbortSignal): Promise<AuthFlowStatus> {
     this.assertNotDisposed()
+    if (callerSignal?.aborted) throw this.error('auth/cancelled')
     const controller = new AbortController()
     this.operationControllers.add(controller)
-    const run = this.performReauthenticate(accountId, controller.signal)
+    const signal = combineAuthSignals(controller.signal, callerSignal)
+    const run = this.performReauthenticate(accountId, signal)
     this.pendingOperations.add(run)
     try {
       return await run
@@ -258,13 +285,18 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
     if (signal.aborted) throw this.error('auth/disposed')
     if (entry === undefined) throw this.error('auth/account-not-found')
     if (entry.account === undefined) throw this.error('auth/credential-unavailable')
-    return await this.beginFlow(entry.account)
+    return await this.beginFlow(entry.account, signal)
   }
 
-  /** 查询指定流程的脱敏状态；未知 flowId 返回固定错误。 */
-  async status(flowId: string): Promise<AuthFlowStatus> {
+  /** 查询指定流程的脱敏状态；caller 可放弃等待，不影响 flow 本身。 */
+  async status(flowId: string, callerSignal?: AbortSignal): Promise<AuthFlowStatus> {
     const flow = this.requireFlow(flowId)
-    return this.toStatus(flow)
+    if (callerSignal === undefined) return this.toStatus(flow)
+    return await waitWithAuthAbort(
+      Promise.resolve(this.toStatus(flow)),
+      callerSignal,
+      () => this.error('auth/cancelled'),
+    )
   }
 
   /**
@@ -273,13 +305,17 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
    * 立即把状态置为 cancelled 并 abort；等待后台轮询真正退出后才返回，因此
    * 取消返回后不会再出现本流程的账号/当前账号写入。终态流程幂等返回。
    */
-  async cancel(flowId: string): Promise<AuthFlowStatus> {
+  async cancel(flowId: string, callerSignal?: AbortSignal): Promise<AuthFlowStatus> {
     const flow = this.requireFlow(flowId)
     if (flow.terminal) return this.toStatus(flow)
     flow.cancelRequested = true
     flow.controller.abort()
     this.finishFlow(flow, 'cancelled', 'auth/cancelled')
-    await flow.done.promise
+    if (callerSignal !== undefined) {
+      await waitWithAuthAbort(flow.done.promise, callerSignal, () => this.error('auth/cancelled'))
+    } else {
+      await flow.done.promise
+    }
     return this.toStatus(flow)
   }
 
@@ -326,17 +362,29 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
    * `httpStatus===401` 才触发刷新；超时、限流、403、无 HTTP 证据、跨渠道错误
    * 一律原样抛出，不刷新、不重试。
    */
+  /** 创建只归属一次 tool invocation 的空快照；读取在实际首次 operation 前发生。 */
+  createInvocation(accountId: string): TencentAuthInvocation<C> {
+    return { accountId }
+  }
+
   async runWithAuthRetry<T>(
     accountId: string,
     operation: (credential: TencentAccessCredential<C>, signal: AbortSignal) => Promise<T>,
     callerSignal?: AbortSignal,
+    invocation?: TencentAuthInvocation<C>,
   ): Promise<T> {
     this.assertNotDisposed()
     if (callerSignal?.aborted) throw this.error('auth/cancelled')
     const controller = new AbortController()
     this.operationControllers.add(controller)
     const signal = combineAuthSignals(controller.signal, callerSignal)
-    const run = this.performAuthRetry(accountId, operation, signal, callerSignal)
+    const run = this.performAuthRetry(
+      accountId,
+      operation,
+      signal,
+      callerSignal,
+      invocation ?? this.createInvocation(accountId),
+    )
     this.pendingOperations.add(run)
     try {
       return await run
@@ -346,18 +394,19 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
     }
   }
 
-  /** 401 重试的实际执行；每个 await 后检查 dispose，dispose 会 abort operation。 */
+  /** 临期初始化与 401 重试；只有本 invocation 内的刷新可推进 grant。 */
   private async performAuthRetry<T>(
     accountId: string,
     operation: (credential: TencentAccessCredential<C>, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal,
-    callerSignal?: AbortSignal,
+    callerSignal: AbortSignal | undefined,
+    invocation: TencentAuthInvocation<C>,
   ): Promise<T> {
-    const first = await this.resolveCredential(accountId, signal)
+    const first = await this.prepareInvocationGrant(accountId, invocation, signal, callerSignal)
     this.throwIfOperationAborted(signal)
 
     try {
-      const result = await operation(first, signal)
+      const result = await operation(first.credential, signal)
       this.throwIfOperationAborted(signal)
       return result
     } catch (error) {
@@ -367,11 +416,46 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
 
     await this.refresh(accountId, callerSignal)
     this.throwIfOperationAborted(signal)
-    const second = await this.resolveCredential(accountId, signal)
+    const second = await this.resolveGrant(accountId, signal)
+    invocation.current = second
     this.throwIfOperationAborted(signal)
-    const result = await operation(second, signal)
+    const result = await operation(second.credential, signal)
     this.throwIfOperationAborted(signal)
     return result
+  }
+
+  private async prepareInvocationGrant(
+    accountId: string,
+    invocation: TencentAuthInvocation<C>,
+    signal: AbortSignal,
+    callerSignal: AbortSignal | undefined,
+  ): Promise<TencentInvocationGrant<C>> {
+    if (invocation.accountId !== accountId) throw this.error('auth/invalid')
+    if (invocation.current !== undefined) return invocation.current
+    invocation.initializing ??= this.initializeInvocationGrant(accountId, signal, callerSignal)
+    const grant = await invocation.initializing
+    invocation.current = grant
+    return grant
+  }
+
+  private async initializeInvocationGrant(
+    accountId: string,
+    signal: AbortSignal,
+    callerSignal: AbortSignal | undefined,
+  ): Promise<TencentInvocationGrant<C>> {
+    let grant = await this.resolveGrant(accountId, signal)
+    this.throwIfOperationAborted(signal)
+    if (refreshHasExpired(grant.refreshExpiresAtMs, this.clock.now())) {
+      await this.updateAccountState(accountId, grant.refreshToken, 'reauth_required', signal)
+      throw this.error('auth/reauth-required')
+    }
+    if (!accessNeedsRefresh(grant.expiresAtMs, this.clock.now())) return grant
+    await this.refresh(accountId, callerSignal)
+    this.throwIfOperationAborted(signal)
+    // 成功后只重读同账号一次；不在同一初始化中重复临期刷新。
+    grant = await this.resolveGrant(accountId, signal)
+    this.throwIfOperationAborted(signal)
+    return grant
   }
 
   /**
@@ -406,13 +490,21 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
   }
 
   /** 打开 auth/state 并启动后台轮询。 */
-  private async beginFlow(target: StoredAccountRecord | undefined): Promise<AuthFlowStatus> {
+  private async beginFlow(
+    target: StoredAccountRecord | undefined,
+    callerSignal?: AbortSignal,
+  ): Promise<AuthFlowStatus> {
     this.assertNotDisposed()
     if (this.starting || this.activeFlow !== undefined) throw this.error('auth/flow-active')
     this.starting = true
     const controller = new AbortController()
+    const detachCaller = forwardAuthAbort(controller, callerSignal)
+    let registeredFlow: FlowState | undefined
     this.startController = controller
-    const run = this.openFlow(target, controller)
+    const run = this.openFlow(target, controller, (flow) => {
+      registeredFlow = flow
+      flow.detachCallerSignal = detachCaller
+    })
     this.pendingStarts.add(run)
     try {
       return await run
@@ -420,6 +512,7 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
       if (isAuthFlowError(error)) throw error
       throw this.error('auth/internal')
     } finally {
+      if (registeredFlow === undefined) detachCaller()
       this.pendingStarts.delete(run)
       if (this.startController === controller) this.startController = undefined
       this.starting = false
@@ -430,11 +523,17 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
   private async openFlow(
     target: StoredAccountRecord | undefined,
     controller: AbortController,
+    onFlow: (flow: FlowState) => void,
   ): Promise<AuthFlowStatus> {
     let state: { state: string; authUrl: string }
     try {
-      state = await this.client.fetchAuthState(controller.signal)
+      state = await waitWithAuthAbort(
+        this.client.fetchAuthState(controller.signal),
+        controller.signal,
+        () => this.error(this.disposed ? 'auth/disposed' : 'auth/cancelled'),
+      )
     } catch (error) {
+      if (isAuthFlowError(error)) throw error
       throw this.error(mapStartErrorCode(error, this.disposed))
     }
     if (this.disposed) throw this.error('auth/disposed')
@@ -460,6 +559,9 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
       controller,
       targetAccountId: target?.accountId,
       targetVendorAccountId: target?.vendorAccountId,
+      targetRefreshToken: target === undefined
+        ? undefined
+        : readSecretString(target.secret, 'refreshToken') ?? '',
       done: deferred<void>(),
       status: 'pending',
       account: null,
@@ -469,6 +571,7 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
     }
     this.activeFlow = flow
     this.rememberFlow(flow)
+    onFlow(flow)
     void this.runFlow(flow)
     return this.toStatus(flow)
   }
@@ -525,13 +628,17 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
       if (this.clock.now() >= flow.deadline) throw this.error('auth/timeout')
 
       const displayName = resolveDisplayName(token, account)
-      const hadUsableAccounts = await this.hasUsableAccounts()
+      const hadUsableAccounts = await this.hasUsableAccounts(flow.controller.signal)
       this.ensureFlowActive(flow)
       if (this.clock.now() >= flow.deadline) throw this.error('auth/timeout')
 
       const saved = await this.store.saveAccount({
         channel: this.channel,
         vendorAccountId,
+        ...flow.targetAccountId === undefined ? {} : {
+          expectedAccountId: flow.targetAccountId,
+          expectedRefreshToken: flow.targetRefreshToken ?? '',
+        },
         ...displayName === undefined ? {} : { displayName },
         status: 'ready',
         secret: buildSecret(token),
@@ -682,11 +789,11 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
     }
   }
 
-  /** 读取账号执行期访问令牌。 */
-  private async resolveCredential(
+  /** 读取账号执行期 grant；过期元数据只在 Host 内用于首次临期判断。 */
+  private async resolveGrant(
     accountId: string,
     signal: AbortSignal,
-  ): Promise<TencentAccessCredential<C>> {
+  ): Promise<TencentInvocationGrant<C>> {
     this.throwIfOperationAborted(signal)
     if (!isStableChannelAccountId(accountId)) throw this.error('auth/invalid')
     let entry: StoredAccountEntry | undefined
@@ -703,18 +810,30 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
     if (entry === undefined) throw this.error('auth/account-not-found')
     if (entry.account === undefined) throw this.error('auth/credential-unavailable')
     this.throwIfOperationAborted(signal)
-    const accessToken = readSecretString(entry.account.secret, 'accessToken')
+    const secret = entry.account.secret
+    const accessToken = readSecretString(secret, 'accessToken')
     if (accessToken === undefined) throw this.error('auth/credential-unavailable')
+    const expiresAtMs = readExpiryMs(secret, 'expiresAtMs')
+    const refreshExpiresAtMs = readExpiryMs(secret, 'refreshExpiresAtMs')
     return Object.freeze({
-      channelId: this.channel,
-      accountId,
-      accessToken,
+      credential: Object.freeze({
+        channelId: this.channel,
+        accountId,
+        accessToken,
+      }),
+      ...expiresAtMs === undefined ? {} : { expiresAtMs },
+      ...refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs },
+      refreshToken: readSecretString(secret, 'refreshToken') ?? '',
     })
   }
 
   /** 是否存在本渠道可用账号；损坏记录或缺 accessToken 的记录不算「首个账号」。 */
-  private async hasUsableAccounts(): Promise<boolean> {
-    const entries = await this.store.listEntries(this.channel)
+  private async hasUsableAccounts(signal: AbortSignal): Promise<boolean> {
+    const entries = await waitWithAuthAbort(
+      this.store.listEntries(this.channel, signal),
+      signal,
+      () => this.error(this.disposed ? 'auth/disposed' : 'auth/cancelled'),
+    )
     return entries.some((entry) => entry.account !== undefined
       && readSecretString(entry.account.secret, 'accessToken') !== undefined)
   }
@@ -764,6 +883,8 @@ export class TencentProductAuthFlow<C extends AuthChannel> implements AuthFlowPo
     errorCode: AuthFlowErrorCode | null = null,
   ): void {
     if (flow.terminal) return
+    flow.detachCallerSignal?.()
+    flow.detachCallerSignal = undefined
     flow.terminal = true
     flow.status = status
     flow.errorCode = errorCode
@@ -903,13 +1024,15 @@ function buildSecret(token: TencentToken): Readonly<Record<string, unknown>> {
   }
 }
 
-/** 合并刷新结果；后端未下发的新 refreshToken/domain 保留原值。 */
+/** 合并刷新结果；缺新 access expiry 时清除旧值，避免每次调用立即重复刷新。 */
 function mergeRefreshedSecret(
   current: Readonly<Record<string, unknown>>,
   token: TencentToken,
 ): Readonly<Record<string, unknown>> {
+  const retained: Record<string, unknown> = { ...current }
+  delete retained.expiresAtMs
   return {
-    ...current,
+    ...retained,
     accessToken: token.accessToken,
     ...token.refreshToken.length === 0 ? {} : { refreshToken: token.refreshToken },
     ...token.expiresAtMs === undefined ? {} : { expiresAtMs: token.expiresAtMs },

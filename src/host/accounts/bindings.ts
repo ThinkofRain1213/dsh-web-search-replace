@@ -44,7 +44,7 @@ export interface ChannelBindingOptions {
 
 /** Qoder 国际版绑定依赖；R43 使用 Host 管理的唯一全局路由值。 */
 export interface QoderInternationalBindingOptions extends ChannelBindingOptions {
-  readonly readLastSuccessfulHost?: () => 'center.qoder.sh' | 'api2.qoder.sh' | null
+  readonly readLastSuccessfulHost?: (signal: AbortSignal) => 'center.qoder.sh' | 'api2.qoder.sh' | null
     | Promise<'center.qoder.sh' | 'api2.qoder.sh' | null>
   readonly writeLastSuccessfulHost?: (
     host: 'center.qoder.sh' | 'api2.qoder.sh',

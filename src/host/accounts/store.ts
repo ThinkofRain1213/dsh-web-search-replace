@@ -23,6 +23,7 @@ import type {
 import {
   isChannelId,
   CHANNELS,
+  CHANNEL_IDS,
   type ChannelId,
 } from '../../shared/channels.ts'
 import {
@@ -31,6 +32,7 @@ import {
   type PersistedAccountStatus,
 } from '../../shared/accounts.ts'
 import { isStableChannelAccountId } from '../../shared/contracts.ts'
+import { waitWithAuthAbort } from '../channels/auth-abort.ts'
 import {
   AccountError,
   accountCancelled,
@@ -41,6 +43,9 @@ import {
 
 /** 本插件在 DSH credentials 中的 scope（等于插件注册名）。 */
 export const ACCOUNT_CREDENTIAL_SCOPE = 'dsh-web-search-channels'
+
+/** R43/R44 的非账号路由记录 ID；clearAll 绝不能把它当成账号删除。 */
+export const QODER_LAST_SUCCESSFUL_HOST_RECORD_ID = 'qoder-last-successful-host'
 
 /** credentials key 的 scope/id 两段共用语法。 */
 export const CREDENTIAL_KEY_SEGMENT_PATTERN = /^[a-z][a-z0-9-]*$/
@@ -92,6 +97,10 @@ export interface SaveAccountInput {
   readonly endpointLabel?: string
   readonly status?: PersistedAccountStatus
   readonly secret: Readonly<Record<string, unknown>>
+  /** reauth 乐观并发：目标必须在独占事务内仍存在且 ID 匹配。 */
+  readonly expectedAccountId?: string
+  /** reauth 乐观并发：当前 refresh 版本必须与启动快照匹配。 */
+  readonly expectedRefreshToken?: string
   /**
    * 可选取消信号；在 modifyRecord 的提交回调内、实际写入前再次检查。
    * 取消早于提交时抛 `accounts/cancelled`，不写记录。
@@ -192,10 +201,17 @@ export class AccountStore {
       ? undefined
       : normalizeEndpointLabel(input.endpointLabel, CHANNELS[channel].hosts[0]!)
     const status = input.status === undefined ? 'ready' : requirePersistedStatus(input.status)
-    const existing = await this.findByVendorAccountId(channel, vendorAccountId)
+    const existing = await this.findByVendorAccountId(channel, vendorAccountId, input.signal)
     const accountId = existing?.accountId
       ?? (this.options.generateAccountId ?? generateAccountId)(channel, vendorAccountId)
     const key = accountRecordKey(channel, accountId)
+    const expectedAccountId = input.expectedAccountId === undefined
+      ? undefined
+      : requireAccountId(input.expectedAccountId)
+    if (expectedAccountId !== undefined
+      && (existing?.accountId !== expectedAccountId || existing.account === undefined)) {
+      throw accountConflict()
+    }
 
     let saved: StoredAccountRecord | undefined
     await this.modifyRaw(key, async (current) => {
@@ -204,6 +220,15 @@ export class AccountStore {
       // 伪造记录（payload 声称其他渠道）绝不覆盖；本渠道的损坏记录允许修复，
       // 否则用户重新登录会被一条旧 schema 的脏记录永久卡住。
       if (parsed.kind === 'foreign') throw accountConflict()
+      if (expectedAccountId !== undefined
+        && (parsed.kind !== 'valid' || parsed.record.accountId !== expectedAccountId)) {
+        throw accountConflict()
+      }
+      if (input.expectedRefreshToken !== undefined
+        && (parsed.kind !== 'valid'
+          || (readSecretString(parsed.record.secret, 'refreshToken') ?? '') !== input.expectedRefreshToken)) {
+        throw accountConflict()
+      }
       if (parsed.kind === 'valid' && parsed.record.vendorAccountId !== vendorAccountId) {
         throw accountConflict()
       }
@@ -273,14 +298,17 @@ export class AccountStore {
   }
 
   /** 列出某渠道的全部账号（含损坏记录），按账号 ID 稳定排序。 */
-  async listEntries(channel: ChannelId): Promise<readonly StoredAccountEntry[]> {
+  async listEntries(
+    channel: ChannelId,
+    signal?: AbortSignal,
+  ): Promise<readonly StoredAccountEntry[]> {
     const exactChannel = requireChannel(channel)
-    const entries = await this.listRaw()
+    const entries = await this.waitRead(this.listRaw(), signal)
     const result: StoredAccountEntry[] = []
     for (const entry of entries) {
       const accountId = accountIdFromKey(entry.key, exactChannel)
       if (accountId === undefined) continue
-      const raw = await this.readRaw(entry.key)
+      const raw = await this.waitRead(this.readRaw(entry.key), signal)
       const parsed = parseRecord(raw, exactChannel, accountId)
       if (parsed.kind === 'missing' || parsed.kind === 'foreign') continue
       result.push(parsed.kind === 'invalid'
@@ -333,7 +361,11 @@ export class AccountStore {
     const entries = await this.listRaw()
     const ownKeys = entries
       .map(entry => entry.key)
-      .filter(key => key.startsWith(`${ACCOUNT_CREDENTIAL_SCOPE}/`))
+      .filter(key => key !== buildCredentialKey(
+        ACCOUNT_CREDENTIAL_SCOPE,
+        QODER_LAST_SUCCESSFUL_HOST_RECORD_ID,
+      ))
+      .filter(key => CHANNEL_IDS.some(channel => accountIdFromKey(key, channel) !== undefined))
     for (const key of ownKeys) await this.deleteRaw(key)
     return ownKeys.length
   }
@@ -342,9 +374,17 @@ export class AccountStore {
   private async findByVendorAccountId(
     channel: ChannelId,
     vendorAccountId: string,
+    signal?: AbortSignal,
   ): Promise<StoredAccountEntry | undefined> {
-    const entries = await this.listEntries(channel)
+    const entries = await this.listEntries(channel, signal)
     return entries.find(entry => entry.account?.vendorAccountId === vendorAccountId)
+  }
+
+  /** 只读等待可放弃；原 Promise 的 rejection 始终保留处理器。 */
+  private async waitRead<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+    return signal === undefined
+      ? await operation
+      : await waitWithAuthAbort(operation, signal, accountCancelled)
   }
 
   /** 读取一条原始记录；底层异常转换为固定 storage-failed。 */

@@ -17,11 +17,11 @@ import type { AccountSummary } from '../../shared/accounts.ts'
 import {
   assertAuthRpcPayload,
   AUTH_CHANNELS,
+  AuthFlowError,
   AuthRpcValidationError,
   isAccountSummary,
   isAuthFlowStatusForChannel,
   type AuthChannel,
-  type AuthFlowError,
   type AuthFlowPort,
   type AuthFlowStatus,
   type AuthRpcMethod,
@@ -71,6 +71,7 @@ export async function dispatchChannelAuthRpc(
   method: AuthRpcMethod,
   payload: unknown,
   internalError: () => AuthFlowError,
+  callerSignal?: AbortSignal,
 ): Promise<AuthFlowStatus | AccountSummary> {
   assertAuthRpcPayload(method, payload)
   if (payload.channel !== channel || flow.channel !== channel) {
@@ -81,25 +82,31 @@ export async function dispatchChannelAuthRpc(
       const request = payload as AuthRpcPayloads['auth.start']
       const status = await flow.start(
         request.accountId === undefined ? {} : { accountId: request.accountId },
+        callerSignal,
       )
       if (!isAuthFlowStatusForChannel(status, channel)) throw internalError()
+      if (callerSignal?.aborted && status.status === 'pending') {
+        // 极晚 start 已交出 flowId：用非 caller signal 等 Host 自清真正 settle。
+        await flow.cancel(status.flowId)
+        throw new AuthFlowError('auth/cancelled', '授权已取消')
+      }
       return status
     }
     case 'auth.cancel': {
       const request = payload as AuthRpcPayloads['auth.cancel']
-      const status = await flow.cancel(request.flowId)
+      const status = await flow.cancel(request.flowId, callerSignal)
       if (!isAuthFlowStatusForChannel(status, channel)) throw internalError()
       return status
     }
     case 'auth.status': {
       const request = payload as AuthRpcPayloads['auth.status']
-      const status = await flow.status(request.flowId)
+      const status = await flow.status(request.flowId, callerSignal)
       if (!isAuthFlowStatusForChannel(status, channel)) throw internalError()
       return status
     }
     case 'auth.refresh': {
       const request = payload as AuthRpcPayloads['auth.refresh']
-      const summary = await flow.refresh(request.accountId)
+      const summary = await flow.refresh(request.accountId, callerSignal)
       if (!isAccountSummary(summary) || summary.channelId !== channel) throw internalError()
       return summary
     }

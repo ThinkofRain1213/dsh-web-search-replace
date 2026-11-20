@@ -16,6 +16,9 @@ import {
   type ConfigFormsLike,
 } from './controllers/settings.ts'
 import type { ManagementRpcConnection } from '../shared/rpc.ts'
+import type { ChannelId } from '../shared/channels.ts'
+import type { AccountsState } from './controllers/accounts.ts'
+import { deriveSearchStatus } from './search-status.ts'
 import styles from './styles/settings-card.module.css'
 
 /** 设置卡收到的视图、翻译函数与 Host 服务接缝。 */
@@ -43,13 +46,31 @@ export function SettingsCard({
   const [controller] = React.useState(
     () => new SettingsController({ configForms, connection }),
   )
-  const [authBusy, setAuthBusy] = React.useState(false)
+  const [accountsState, setAccountsState] = React.useState<AccountsState | null>(null)
+  const [interaction, setInteraction] = React.useState<{ readonly channel: ChannelId; readonly busy: boolean } | null>(null)
   React.useEffect(() => { controller.setView(view) }, [controller, view])
   React.useEffect(() => () => { controller.dispose() }, [controller])
   const state = React.useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
     controller.getSnapshot,
+  )
+  const onAccountsStateChange = React.useCallback((next: AccountsState | null, channel: ChannelId) => {
+    setAccountsState((previous) => {
+      if (next === null) return previous?.channel === channel ? null : previous
+      return next
+    })
+  }, [])
+  const onInteractionBusyChange = React.useCallback((busy: boolean, channel: ChannelId) => {
+    setInteraction((previous) => {
+      if (!busy && previous?.channel !== channel) return previous
+      return { channel, busy }
+    })
+  }, [])
+  const interactionBusy = interaction?.channel === state.channel && interaction.busy
+  const searchStatus = deriveSearchStatus(
+    state.enabled,
+    accountsState?.channel === state.channel ? accountsState : undefined,
   )
 
   if (view !== 'page') return null
@@ -60,7 +81,9 @@ export function SettingsCard({
         <SearchSection
           enabled={state.enabled}
           channel={state.channel}
-          busy={state.busy || authBusy}
+          busy={state.busy || interactionBusy}
+          interactionBusy={interactionBusy}
+          status={searchStatus}
           writable={state.writable}
           error={state.errorScope === 'endpoint' ? null : state.error}
           t={t}
@@ -85,7 +108,8 @@ export function SettingsCard({
             connection={connection}
             t={t}
             writable={state.writable}
-            onAuthBusyChange={setAuthBusy}
+            onInteractionBusyChange={onInteractionBusyChange}
+            onAccountsStateChange={onAccountsStateChange}
           />
         </ChannelConfigHost>
       </>

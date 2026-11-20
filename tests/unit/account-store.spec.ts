@@ -22,6 +22,7 @@ import {
   buildCredentialKey,
   CREDENTIAL_KEY_SEGMENT_PATTERN,
 } from '../../src/host/accounts/store.ts'
+import { QODER_LAST_SUCCESSFUL_HOST_KEY } from '../../src/host/channels/qoder/route-store.ts'
 import type { ChannelId } from '../../src/shared/channels.ts'
 import { MemoryCredentials } from './support/memory-credentials.ts'
 
@@ -257,6 +258,24 @@ describe('本插件 scope 边界', () => {
 
     expect(await store.clearAll()).toBe(2)
     expect(credentials.keys()).toEqual(['other-plugin/buddy-a0123456789ab'])
+  })
+
+  it('B1：只有 Qoder route 记录时 clearAll 返回 0 且保留记录', async () => {
+    const { store, credentials } = createStore()
+    credentials.seed(QODER_LAST_SUCCESSFUL_HOST_KEY, { kind: 'grant', payload: { host: 'api2.qoder.sh' } })
+    expect(await store.clearAll()).toBe(0)
+    expect(credentials.raw(QODER_LAST_SUCCESSFUL_HOST_KEY)).toEqual({
+      kind: 'grant', payload: { host: 'api2.qoder.sh' },
+    })
+  })
+
+  it('B1：账号+route 时只删除账号并准确计数，R43/R44 路由保留', async () => {
+    const { store, credentials } = createStore()
+    const account = await saveQoder(store, 'qoder')
+    credentials.seed(QODER_LAST_SUCCESSFUL_HOST_KEY, { kind: 'grant', payload: { host: 'center.qoder.sh' } })
+    expect(await store.clearAll()).toBe(1)
+    expect(await store.readEntry('qoder', account.accountId)).toBeUndefined()
+    expect(credentials.keys()).toEqual([QODER_LAST_SUCCESSFUL_HOST_KEY])
   })
 })
 

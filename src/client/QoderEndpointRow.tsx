@@ -2,9 +2,9 @@
  * Qoder 国际版端点偏好行（Task 14）。
  *
  * 下拉恰好三项：自动 / center.qoder.sh / api2.qoder.sh。`actualHost` 只来自
- * Host 脱敏运行观测，Client 当前没有对应 RPC，因此允许 null/undefined 并显示
- * 本地化“尚无运行观测”；绝不把自动模式的默认 center 冒充实际成功域，也不因
- * 实际观测改写用户 preference。固定 center/api2 只显示用户选择的域。
+ * Task 15 的 `runtime.get` 只读轮询；activation/selection generation 过期回包会被
+ * 丢弃，null/undefined 显示本地化“尚无运行观测”。绝不把自动模式的默认 center
+ * 冒充实际成功域，也不因实际观测改写用户 preference。固定 center/api2 只显示所选域。
  */
 import * as React from 'react'
 

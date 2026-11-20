@@ -50,7 +50,7 @@ interface StaticItem {
   readonly commandTokens: readonly string[]
 }
 
-/** 本任务必须实际执行并记录的静态命令（`pnpm verify` 在跑通后另行补记）。 */
+/** 本任务必须实际执行并记录的静态命令；删除任一聚合证据行都会使门禁失败。 */
 const REQUIRED_STATIC: readonly StaticItem[] = [
   {
     id: 'SC-01',
@@ -66,6 +66,7 @@ const REQUIRED_STATIC: readonly StaticItem[] = [
   { id: 'SC-06', commandTokens: ['node scripts/verify-build.mjs'] },
   { id: 'SC-07', commandTokens: ['node scripts/verify-css-isolation.mjs'] },
   { id: 'SC-08', commandTokens: ['node scripts/verify-package.mjs'] },
+  { id: 'SC-09', commandTokens: ['pnpm verify'] },
   { id: 'SC-10', commandTokens: ['git diff --check'] },
 ]
 

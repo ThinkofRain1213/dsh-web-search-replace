@@ -24,6 +24,7 @@
  */
 import { isQoderEndpointPreference, type QoderEndpointPreference } from '../../../shared/channels.ts'
 import { ChannelSearchError } from '../../search/errors.ts'
+import { waitWithAuthAbort } from '../auth-abort.ts'
 import {
   QoderSearchProtocolError,
   type QoderProtocolFailureCode,
@@ -102,7 +103,7 @@ export interface QoderEndpointExecuteInput<T> {
 
 /** R43：单一本机全局路由值；fixed 不调用这两个依赖。 */
 export interface QoderEndpointPolicyDeps {
-  readonly readLastSuccessfulHost?: () => QoderInternationalHost | null
+  readonly readLastSuccessfulHost?: (signal: AbortSignal) => QoderInternationalHost | null
     | Promise<QoderInternationalHost | null>
   readonly writeLastSuccessfulHost?: (
     host: QoderInternationalHost,
@@ -227,7 +228,7 @@ export class QoderEndpointPolicy {
     const preference = requirePreference(input.preference)
     requireAccountKey(input.accountKey)
     // fixed 不读取持久路由；auto 从本机唯一全局值开始，账号切换不影响它。
-    const hosts = await this.hostsFor(preference)
+    const hosts = await this.hostsFor(preference, input.signal)
     const attempts: QoderEndpointAttempt[] = []
 
     let firstError: unknown
@@ -280,6 +281,7 @@ export class QoderEndpointPolicy {
   /** 本次调用允许的域名顺序；固定模式只有一个且绝不读取持久路由。 */
   private async hostsFor(
     preference: QoderEndpointPreference,
+    signal: AbortSignal,
   ): Promise<readonly QoderInternationalHost[]> {
     if (preference === 'center') return [CENTER_HOST]
     if (preference === 'api2') return [API2_HOST]
@@ -288,8 +290,16 @@ export class QoderEndpointPolicy {
     if (this.deps.writeLastSuccessfulHost !== undefined || !this.routeInitialized) {
       let persisted: QoderInternationalHost | null | undefined
       try {
-        persisted = await this.deps.readLastSuccessfulHost?.()
+        const reading = this.deps.readLastSuccessfulHost?.(signal)
+        persisted = reading === undefined
+          ? undefined
+          : await waitWithAuthAbort(
+            Promise.resolve(reading),
+            signal,
+            () => qoderCancellationFailure(signal),
+          )
       } catch {
+        if (signal.aborted) throw qoderCancellationFailure(signal)
         throw new ChannelSearchError(
           'SEARCH_FAILED',
           'qoder',

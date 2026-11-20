@@ -362,15 +362,20 @@ describe('发布门禁静态验证', () => {
     expect(`${result.stdout}\n${result.stderr}`).toContain('dry-run pack 缺少必需产物：lib/client.js')
   }, 60_000)
 
-  it('Host/Client 值导入与第二份 React 会被抓住且不执行真实 pack', async () => {
-    const importFixture = await createPackageFixture()
-    const importClient = path.join(importFixture, 'lib', 'client.js')
-    await writeFile(
-      importClient,
-      `${await readFile(importClient, 'utf8')}\nrequire("@deepseek-ai/dsh-client-ui-settings");\n`,
-      'utf8',
-    )
-    await expectGateFailureWithoutPack(importFixture, /Harness Client/)
+  it('Host/Client 全形态值导入与第二份 React 会被抓住且不执行真实 pack', async () => {
+    const forbiddenForms = [
+      'require("@deepseek-ai/dsh-client-ui-settings");',
+      'import value from "@deepseek-ai/dsh-client-ui-settings";',
+      'import "@deepseek-ai/dsh-client-ui-settings";',
+      'await import("@deepseek-ai/dsh-client-ui-settings");',
+      'export * from "@deepseek-ai/dsh-client-ui-settings";',
+    ]
+    for (const form of forbiddenForms) {
+      const importFixture = await createPackageFixture()
+      const importClient = path.join(importFixture, 'lib', 'client.js')
+      await writeFile(importClient, `${await readFile(importClient, 'utf8')}\n${form}\n`, 'utf8')
+      await expectGateFailureWithoutPack(importFixture, /Harness Client/)
+    }
 
     const reactFixture = await createPackageFixture()
     const reactClient = path.join(reactFixture, 'lib', 'client.js')

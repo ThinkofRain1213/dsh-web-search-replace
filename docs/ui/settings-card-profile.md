@@ -108,9 +108,11 @@
 - `AccountChannelConfig（Task 14）` 通过 `children` 挂到 `data-account-config-slot`，
   只读取当前渠道的 `accounts.list/current`；添加、轮询、取消、重登、删除确认和
   清除全部数据都在该区内联完成，不使用 Modal/路由。
-- `QoderEndpointRow（Task 14）` 挂到 `data-qoder-endpoint-slot`；实际 host 目前没有
-  Client RPC 提供，因此 prop 为 null 并显示“尚无运行观测”。**不提前实现**真实
-  Host 运行观测接线、真实 external-open 或厂商验收；这些留 Task 15/16。
+- `QoderEndpointRow（Task 14）` 挂到 `data-qoder-endpoint-slot`；Task 15 已通过
+  `runtime.get` 只读轮询提供实际 host：仅 page + qoder + auto 激活，前次 settle 后
+  才等待下一轮，activationId/revision 与 selection generation 过期回包会丢弃，
+  无观测显示“尚无运行观测”。**不提前实现**真实 external-open；真实浏览器计算
+  样式、厂商账号验收仍不由本文件的 jsdom 证据宣称通过。
 - 授权 URL 只在当前流程用于复制/只读展示，不自动打开、不持久化；`machine_id`
   只允许出现在该 authUrl，不进入其他字段、配置或存储。
 - 清除全部数据入口明确影响四个渠道；确认后才调用 `accounts.clearAll`，取消不写。

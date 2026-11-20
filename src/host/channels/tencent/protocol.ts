@@ -42,18 +42,37 @@ export class TencentSearchProtocolError extends Error {
     readonly code: TencentProtocolFailureCode,
     message: string,
     readonly status?: number,
-    cause?: unknown,
   ) {
-    super(message, cause === undefined ? undefined : { cause })
+    super(message)
   }
 }
 
 /** 把共享协议失败绑定到渠道；其他错误走既有 normalize 边界。 */
 export function toTencentChannelSearchError(error: unknown, channel: ChannelId): ChannelSearchError {
   if (error instanceof TencentSearchProtocolError) {
-    return new ChannelSearchError(error.code, channel, error.message, error, error.status)
+    return new ChannelSearchError(error.code, channel, error.message, undefined, error.status)
   }
-  return normalizeChannelSearchError(error, channel)
+  const normalized = normalizeChannelSearchError(error, channel)
+  return new ChannelSearchError(
+    normalized.code,
+    channel,
+    fixedChannelMessage(normalized.code, normalized.httpStatus),
+    undefined,
+    normalized.httpStatus,
+  )
+}
+
+function fixedChannelMessage(code: ChannelSearchErrorCode, status: number | undefined): string {
+  const suffix = status === undefined ? '' : ` (HTTP ${status})`
+  switch (code) {
+    case 'INVALID_ARGUMENTS': return 'tencent search arguments were rejected'
+    case 'NO_ACCOUNT': return 'tencent search account is unavailable'
+    case 'UNAUTHORIZED': return `tencent search credentials were rejected${suffix}`
+    case 'RATE_LIMITED': return `tencent search was rate limited${suffix}`
+    case 'TIMEOUT': return 'tencent search timed out'
+    case 'BAD_RESPONSE': return 'tencent search returned an invalid response'
+    case 'SEARCH_FAILED': return `tencent search request failed${suffix}`
+  }
 }
 
 /**
@@ -90,11 +109,11 @@ export async function postTencentSearch(
       // 不把 Authorization/query/body 随 3xx 转发到任何目标。
       redirect: 'error',
     })
-  } catch (error) {
-    throw transportFailure(error, timeout, composed)
+  } catch {
+    throw transportFailure(timeout, composed)
   }
 
-  if (!response.ok) throw await httpFailure(response)
+  if (!response.ok) throw httpFailure(response)
   const json = await readJson(response, timeout, composed)
   return projectSources(json)
 }
@@ -117,7 +136,6 @@ function abortFailure(signal: AbortSignal): TencentSearchProtocolError {
  * 到期归为宿主预算超时；普通取消归为 SEARCH_FAILED，不能误报成 TIMEOUT。
  */
 function transportFailure(
-  error: unknown,
   timeout: AbortSignal,
   composed: AbortSignal,
 ): TencentSearchProtocolError {
@@ -126,30 +144,22 @@ function transportFailure(
       return new TencentSearchProtocolError(
         'TIMEOUT',
         `tencent search timed out after ${TENCENT_SEARCH_TIMEOUT_MS}ms`,
-        undefined,
-        error,
       )
     }
     if (isTimeoutReason(composed.reason)) {
       return new TencentSearchProtocolError(
         'TIMEOUT',
         'tencent search timed out before this search returned (the host tool budget elapsed)',
-        undefined,
-        error,
       )
     }
     return new TencentSearchProtocolError(
       'SEARCH_FAILED',
       'tencent search aborted by the caller',
-      undefined,
-      error,
     )
   }
   return new TencentSearchProtocolError(
     'SEARCH_FAILED',
-    `tencent search request failed: ${errorMessage(error)}`,
-    undefined,
-    error,
+    'tencent search request failed',
   )
 }
 
@@ -161,10 +171,9 @@ function isTimeoutReason(reason: unknown): boolean {
     || record?.code === 'TOOL_TIMEOUT'
 }
 
-/** HTTP 非 2xx 的可路由分类；响应体只截取一段可读说明，不包含请求头。 */
-async function httpFailure(response: Response): Promise<TencentSearchProtocolError> {
-  const detail = await readErrorDetail(response)
-  const message = `tencent search request failed (HTTP ${response.status})${detail}`
+/** HTTP 非 2xx：只信状态码；绝不读取可能回显秘密的上游正文。 */
+function httpFailure(response: Response): TencentSearchProtocolError {
+  const message = `tencent search request failed (HTTP ${response.status})`
   if (response.status === 401) {
     return new TencentSearchProtocolError('UNAUTHORIZED', message, 401)
   }
@@ -174,15 +183,6 @@ async function httpFailure(response: Response): Promise<TencentSearchProtocolErr
   return new TencentSearchProtocolError('SEARCH_FAILED', message, response.status)
 }
 
-async function readErrorDetail(response: Response): Promise<string> {
-  try {
-    const text = (await response.text()).trim().slice(0, 300)
-    return text.length > 0 ? `: ${text}` : ''
-  } catch {
-    return ''
-  }
-}
-
 async function readJson(
   response: Response,
   timeout: AbortSignal,
@@ -190,13 +190,11 @@ async function readJson(
 ): Promise<unknown> {
   try {
     return await response.json()
-  } catch (error) {
-    if (composed.aborted) throw transportFailure(error, timeout, composed)
+  } catch {
+    if (composed.aborted) throw transportFailure(timeout, composed)
     throw new TencentSearchProtocolError(
       'BAD_RESPONSE',
       'tencent search returned a non-JSON response',
-      undefined,
-      error,
     )
   }
 }
@@ -234,8 +232,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
