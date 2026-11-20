@@ -11,21 +11,29 @@
  *    无 Host Client 值导入、无第二份 React/ReactDOM、保留 external react；
  * 4. 产物与 locale 中不存在 `web_fetch`、Fetch 配置键或 Fetch UI（0.1.0 不实现
  *    Fetch）；
- * 5. 全部待发布文本中不存在凭据/秘密；
+ * 5. 秘密扫描从**真实 pack 清单**派生待扫描文件（含 `package.json`、`icon.svg`），
+ *    不再维护一份会漂移的手写列表；WASM 等二进制按可打印 ASCII 序列策略扫描；
  * 6. README/locale 如实披露数据发送对象、OFF 行为、自动端点第二次请求/配额、
- *    最近成功域持久化、JetHub 互斥、0.1.0 不含 Fetch，且不再保留骨架旧文案。
+ *    最近成功域持久化与换网后旧域一次失败自动纠正、JetHub 互斥、0.1.0 不含
+ *    Fetch，且不再保留骨架旧文案。
  *
- * 用法：node scripts/verify-package.mjs [--root <dir>]
- * `--root` 只服务于门禁自身的变异测试（临时副本），默认当前仓库根。
+ * 进程模型：真实 pack 通过异步 `runWithTimeout`（`shell:false`）调用 Node 自带的
+ * npm CLI；超时终止完整进程树，不再使用同步 shell 调用。若静态检查已经失败，
+ * 默认跳过真实 pack 与依赖其清单的秘密扫描；只有 `--force-pack`（仅供“非法
+ * 打包”变异）会在静态失败后仍执行真实 pack。
+ *
+ * 用法：node scripts/verify-package.mjs [--root <dir>] [--force-pack]
  */
-import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
+import { runWithTimeout } from './process-tree.mjs'
+
 const SELF_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const PACK_TIMEOUT_MS = 60_000
 
 /** 解析 `--root`。 */
 function parseRoot(argv) {
@@ -37,11 +45,12 @@ function parseRoot(argv) {
 }
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
-  console.log('用法：node scripts/verify-package.mjs [--root <dir>]')
+  console.log('用法：node scripts/verify-package.mjs [--root <dir>] [--force-pack]')
   process.exit(0)
 }
 
 const ROOT = parseRoot(process.argv.slice(2))
+const FORCE_PACK = process.argv.includes('--force-pack')
 const manifestPath = path.join(ROOT, 'package.json')
 
 /** 必须出现在 package.json `files` 中的发布内容。 */
@@ -101,6 +110,9 @@ const SECRET_PATTERNS = [
   },
 ]
 
+/** 文本文件的扩展名；其余按二进制策略扫描。 */
+const TEXT_FILE = /\.(?:md|markdown|json|ya?ml|js|mjs|cjs|css|svg|txt)$/i
+
 /** README 必须披露的内容。 */
 const README_TOKENS = [
   'web_search',
@@ -125,7 +137,19 @@ const README_TOKENS = [
 const STALE_TOKENS = ['Task 1 骨架', '骨架当前', '尚未接管搜索', 'skeleton']
 
 /** zh locale 必须披露的内容。 */
-const ZH_TOKENS = ['web_search', '接管', '厂商', 'OFF', '第二次', '配额', '最近成功域', '持久', 'JetHub', 'Fetch']
+const ZH_TOKENS = [
+  'web_search',
+  '接管',
+  '厂商',
+  'OFF',
+  '第二次请求',
+  '配额',
+  '最近成功域',
+  '持久',
+  '换网络后旧优选域可能先失败一次再自动纠正',
+  'JetHub',
+  'Fetch',
+]
 
 /** en locale 必须披露的内容。 */
 const EN_TOKENS = [
@@ -136,6 +160,7 @@ const EN_TOKENS = [
   'quota',
   'last successful host',
   'persisted',
+  'after a network change the old preferred host may fail once before auto-correction',
   'JetHub',
   'Fetch',
 ]
@@ -145,32 +170,25 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
-/** 读取文本。 */
+/** 读取根目录下的文本。 */
 async function readText(relativePath) {
   return readFile(path.join(ROOT, relativePath), 'utf8')
 }
 
-/** 运行真实 dry-run pack。 */
-function runDryRunPack() {
-  const isWindows = process.platform === 'win32'
-  const npm = isWindows ? 'npm.cmd' : 'npm'
-  const first = spawnSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    timeout: 120_000,
-    shell: isWindows,
-  })
-  if (first.error === undefined) return first
-  const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm'
-  return spawnSync(pnpm, ['pack', '--dry-run', '--json'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    timeout: 120_000,
-    shell: isWindows,
-  })
+/** 定位 Node 自带的 npm CLI，避免经过 shell。 */
+function locateNpmCli() {
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].filter(candidate => typeof candidate === 'string' && candidate.endsWith('npm-cli.js'))
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  throw new Error('找不到 npm CLI（需要 node 自带 npm；门禁不使用 shell 或 pnpm 回退）')
 }
 
-/** 从 pack 输出中解析文件清单（兼容 npm/pnpm 两种 JSON 形状）。 */
+/** 从 npm pack --json 输出解析文件清单。 */
 function parsePackOutput(stdout) {
   const start = stdout.indexOf('[')
   const end = stdout.lastIndexOf(']')
@@ -185,8 +203,84 @@ function parsePackOutput(stdout) {
   })
 }
 
-/** 各项检查；每个检查失败都会被收集，最后统一以非零码退出。 */
-const checks = [
+/** 执行一次真实 dry-run pack；失败时抛出可归因错误。 */
+async function executePack() {
+  const npmCli = locateNpmCli()
+  packCalls += 1
+  const result = await runWithTimeout(
+    process.execPath,
+    [npmCli, 'pack', '--dry-run', '--json', '--ignore-scripts'],
+    {
+      cwd: ROOT,
+      timeoutMs: PACK_TIMEOUT_MS,
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+    },
+  )
+  if (result.timedOut) {
+    throw new Error(`真实 pack 超过 ${PACK_TIMEOUT_MS}ms，已终止完整进程树`)
+  }
+  if (result.error !== undefined) throw new Error(`无法启动真实 pack：${result.error.message}`)
+  assert(
+    result.status === 0,
+    `pack --dry-run 失败（exit ${String(result.status)}）：${(result.stderr ?? '').trim()}`,
+  )
+  return parsePackOutput(result.stdout ?? '')
+}
+
+/** 二进制策略：提取长度 ≥8 的可打印 ASCII 序列后按文本规则扫描。 */
+function extractPrintableStrings(buffer) {
+  return [...buffer.toString('latin1').matchAll(/[\x20-\x7E]{8,}/g)].map(match => match[0]).join('\n')
+}
+
+/** 从真实 pack 清单派生并执行秘密扫描。 */
+async function checkPackedSecrets(files) {
+  const textFiles = []
+  const binaryFiles = []
+  for (const file of files) {
+    const absolute = path.join(ROOT, file.path)
+    if (TEXT_FILE.test(file.path)) {
+      const text = await readFile(absolute, 'utf8')
+      for (const { name, pattern } of SECRET_PATTERNS) {
+        assert(pattern.exec(text) === null, `发现疑似秘密（${name}）：${file.path}`)
+      }
+      textFiles.push(file.path)
+    } else {
+      const buffer = await readFile(absolute)
+      const printable = extractPrintableStrings(buffer)
+      for (const { name, pattern } of SECRET_PATTERNS) {
+        assert(pattern.exec(printable) === null, `发现疑似秘密（${name}）：${file.path}（二进制可打印 ASCII 序列）`)
+      }
+      binaryFiles.push(file.path)
+    }
+  }
+  console.log(
+    `  scan  ${textFiles.length} 个文本文件 + ${binaryFiles.length} 个二进制文件` +
+      `（WASM 可打印 ASCII ≥8 字符序列策略）：${[...textFiles, ...binaryFiles].join(', ')}`,
+  )
+}
+
+/** 统计。 */
+let packCalls = 0
+let passed = 0
+let failed = 0
+let skipped = 0
+
+/** 执行一个检查并收集结果。 */
+async function runCheck(name, run) {
+  try {
+    await run()
+    passed += 1
+    console.log(`  ok  ${name}`)
+    return true
+  } catch (error) {
+    failed += 1
+    console.error(`  FAIL ${name}: ${error instanceof Error ? error.message : String(error)}`)
+    return false
+  }
+}
+
+/** 静态检查（不需要真实 pack）。 */
+const staticChecks = [
   ['package.json 清单与验证聚合', async () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     assert(manifest.name === 'dsh-web-search-channels', `包名应为 dsh-web-search-channels，实际 ${manifest.name}`)
@@ -280,23 +374,6 @@ const checks = [
       assert(found.length === 0, `产物含 Fetch 配置键或 UI 标记：${file} → ${found.join(', ')}`)
     }
   }],
-  ['待发布文本无凭据/秘密', async () => {
-    const files = [
-      'README.md',
-      'cordis.patch.yml',
-      'locale/zh.json',
-      'locale/en.json',
-      'lib/index.js',
-      'lib/client.js',
-    ]
-    for (const file of files) {
-      const text = await readText(file)
-      for (const { name, pattern } of SECRET_PATTERNS) {
-        const match = pattern.exec(text)
-        assert(match === null, `发现疑似秘密（${name}）：${file}`)
-      }
-    }
-  }],
   ['README 披露真实功能与未验证边界', async () => {
     const readme = await readText('README.md')
     for (const token of README_TOKENS) {
@@ -333,42 +410,57 @@ const checks = [
     const readme = await readText('README.md')
     assert(readme.trim().length > 500, 'README 内容过短')
   }],
-  ['真实 dry-run pack 内容', async () => {
-    const result = runDryRunPack()
-    assert(result.error === undefined, `无法运行 pack：${result.error?.message ?? ''}`)
-    assert(result.status === 0, `pack --dry-run 失败：${(result.stderr ?? '').trim()}`)
-    const files = parsePackOutput(result.stdout ?? '')
-    const paths = files.map(file => file.path).sort()
-    for (const expected of EXPECTED_PACK) {
-      const file = files.find(entry => entry.path === expected)
-      assert(file !== undefined, `dry-run pack 缺少必需产物：${expected}`)
-      assert(file.size > 0, `dry-run pack 产物为空：${expected}`)
-      console.log(`  pack  ${expected} (${file.size} bytes)`)
-    }
-    for (const entry of paths) {
-      assert(!FORBIDDEN_PACK_PREFIXES.some(prefix => entry.startsWith(prefix)), `发布包夹带禁止内容：${entry}`)
-    }
-    const unexpected = paths.filter(entry => !EXPECTED_PACK.includes(entry))
-    assert(unexpected.length === 0, `发布包出现未登记文件：${unexpected.join(', ')}`)
-    console.log(`  pack  文件数=${files.length}`)
-  }],
 ]
 
-const failures = []
-for (const [name, run] of checks) {
-  try {
-    await run()
-    console.log(`  ok  ${name}`)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    failures.push({ name, message })
-    console.error(`  FAIL ${name}: ${message}`)
-  }
+for (const [name, run] of staticChecks) {
+  await runCheck(name, run)
 }
 
-if (failures.length > 0) {
-  console.error(`\nverify-package: ${failures.length}/${checks.length} 项失败`)
+if (failed > 0 && !FORCE_PACK) {
+  skipped += 2
+  console.log(
+    `  skip 真实 dry-run pack 内容: 已有 ${failed} 项静态检查失败，跳过真实 pack` +
+      '（--force-pack 仅供“非法打包”变异）',
+  )
+  console.log('  skip 待发布文本与二进制内容无凭据/秘密: 需要先获得真实 pack 清单')
+  console.log(`  pack 调用：0 次（静态检查失败，异步 pack 已跳过）`)
+  console.error(`\nverify-package: ${failed}/${passed + failed} 项失败（跳过 ${skipped} 项）`)
   process.exit(1)
 }
 
-console.log(`\nverify-package: ${checks.length}/${checks.length} 项通过`)
+let packFiles = null
+const packOk = await runCheck('真实 dry-run pack 内容', async () => {
+  const files = await executePack()
+  for (const expected of EXPECTED_PACK) {
+    const file = files.find(entry => entry.path === expected)
+    assert(file !== undefined, `dry-run pack 缺少必需产物：${expected}`)
+    assert(file.size > 0, `dry-run pack 产物为空：${expected}`)
+    console.log(`  pack  ${expected} (${file.size} bytes)`)
+  }
+  const paths = files.map(file => file.path).sort()
+  for (const entry of paths) {
+    assert(!FORBIDDEN_PACK_PREFIXES.some(prefix => entry.startsWith(prefix)), `发布包夹带禁止内容：${entry}`)
+  }
+  const unexpected = paths.filter(entry => !EXPECTED_PACK.includes(entry))
+  assert(unexpected.length === 0, `发布包出现未登记文件：${unexpected.join(', ')}`)
+  console.log(`  pack  文件数=${files.length}`)
+  packFiles = files
+})
+
+if (packOk && packFiles !== null) {
+  await runCheck('待发布文本与二进制内容无凭据/秘密（pack 清单派生）', async () => {
+    await checkPackedSecrets(packFiles)
+  })
+} else {
+  skipped += 1
+  console.log('  skip 待发布文本与二进制内容无凭据/秘密: 真实 pack 清单不完整')
+}
+
+console.log(`  pack 调用：${packCalls} 次（异步、shell=false、timeout=${PACK_TIMEOUT_MS}ms）`)
+
+if (failed > 0) {
+  console.error(`\nverify-package: ${failed}/${passed + failed} 项失败（跳过 ${skipped} 项）`)
+  process.exit(1)
+}
+
+console.log(`\nverify-package: ${passed}/${passed} 项通过（跳过 ${skipped} 项，pack 调用 ${packCalls} 次）`)

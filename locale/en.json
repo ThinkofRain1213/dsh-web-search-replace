@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Web search channels",
-    "description": "Run web_search through an independent CodeBuddy, WorkBuddy, Qoder International or Qoder China account; queries are sent to the selected vendor. OFF returns the official search before any account or network work. Qoder auto mode may issue a second request with extra quota on limited failures; the last successful host is persisted on this machine and preferred after a restart. 0.1.0 has no Fetch and must not run alongside JetHub search takeover; real release acceptance is NOT RUN / PENDING."
+    "description": "Run web_search through an independent CodeBuddy, WorkBuddy, Qoder International or Qoder China account; queries are sent to the selected vendor. OFF returns the official search before any account or network work. Qoder auto mode may issue a second request with extra quota on limited failures; after a network change the old preferred host may fail once before auto-correction. The last successful host is persisted on this machine and preferred after a restart. 0.1.0 has no Fetch and must not run alongside JetHub search takeover; real release acceptance is NOT RUN / PENDING."
   }
 }

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "网页搜索渠道",
-    "description": "用 CodeBuddy、WorkBuddy、Qoder 国际版或 Qoder 中国版独立账号接管 web_search，查询会发送给所选厂商。OFF 时在任何账号或网络工作前完整交还官方搜索。Qoder 自动模式在限定故障下可能发出第二次请求并产生额外配额；最近成功域在本机持久保存并在重启后优先使用。0.1.0 不含 Fetch，且与 JetHub 搜索接管互斥；真实发布验收尚未完成（NOT RUN / PENDING）。"
+    "description": "用 CodeBuddy、WorkBuddy、Qoder 国际版或 Qoder 中国版独立账号接管 web_search，查询会发送给所选厂商。OFF 时在任何账号或网络工作前完整交还官方搜索。Qoder 自动模式在限定故障下可能发出第二次请求并产生额外配额；换网络后旧优选域可能先失败一次再自动纠正。最近成功域在本机持久保存并在重启后优先使用。0.1.0 不含 Fetch，且与 JetHub 搜索接管互斥；真实发布验收尚未完成（NOT RUN / PENDING）。"
   }
 }
