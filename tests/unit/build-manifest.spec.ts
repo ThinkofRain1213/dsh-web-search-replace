@@ -106,11 +106,16 @@ describe('package manifest', () => {
     ]))
   })
 
-  it('通过 esbuild 脚本构建 Client，并提供产物校验脚本', () => {
+  it('通过 esbuild 脚本构建 Client，并提供聚合发布门禁', () => {
     const { scripts } = manifest()
     expect(scripts.build).toBe('node scripts/build-client.mjs')
-    expect(scripts.verify).toBe('node scripts/verify-build.mjs')
     expect(scripts.test).toBe('vitest run')
+    expect(scripts['test:integration']).toBe('vitest run tests/integration')
+    expect(scripts.verify).toBe(
+      'pnpm run typecheck && pnpm run build && pnpm run test && pnpm run test:integration'
+        + ' && node scripts/verify-build.mjs && node scripts/verify-css-isolation.mjs'
+        + ' && node scripts/verify-package.mjs',
+    )
   })
 })
 

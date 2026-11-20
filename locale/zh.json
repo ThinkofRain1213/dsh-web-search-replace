@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "网页搜索渠道",
-    "description": "用所选渠道的凭据替换 DSH 网页搜索。0.1.0 骨架当前只注册这张设置卡，尚未接管搜索；关闭插件时完整交还官方 web_search。"
+    "description": "用 CodeBuddy、WorkBuddy、Qoder 国际版或 Qoder 中国版独立账号接管 web_search，查询会发送给所选厂商。OFF 时在任何账号或网络工作前完整交还官方搜索。Qoder 自动模式在限定故障下可能发出第二次请求并产生额外配额；最近成功域在本机持久保存并在重启后优先使用。0.1.0 不含 Fetch，且与 JetHub 搜索接管互斥；真实发布验收尚未完成（NOT RUN / PENDING）。"
   }
 }

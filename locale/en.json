@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Web search channels",
-    "description": "Replace DSH web search with the credentials of a channel you choose. The 0.1.0 skeleton only registers this settings card and does not take over search yet; while off, the official web_search is returned unchanged."
+    "description": "Run web_search through an independent CodeBuddy, WorkBuddy, Qoder International or Qoder China account; queries are sent to the selected vendor. OFF returns the official search before any account or network work. Qoder auto mode may issue a second request with extra quota on limited failures; the last successful host is persisted on this machine and preferred after a restart. 0.1.0 has no Fetch and must not run alongside JetHub search takeover; real release acceptance is NOT RUN / PENDING."
   }
 }
