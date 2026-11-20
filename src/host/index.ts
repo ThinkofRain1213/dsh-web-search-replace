@@ -36,7 +36,6 @@ export interface HostContext {
   readonly fiber: { readonly entry: unknown }
   /** 测试只通过注入 fetcher 替换厂商边界；生产不提供时使用全局 fetch。 */
   readonly fetcher?: typeof fetch
-  readonly activationId?: string
   on(
     name: 'tools/execute',
     listener: (
@@ -57,6 +56,10 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
     throw new TypeError('web-search-channels requires the active Loader entry')
   }
 
+  // 每次 apply 就是一代 activation；ID 由本插件生成。真实 Cordis plugin
+  // 上下文没有 activationId 服务，直接读取未声明属性会抛 missing-inject。
+  const activationId = globalThis.crypto.randomUUID()
+
   // 构造顺序严格保持：lifecycle → settings → accounts → runtime/WASM →
   // flows → activation drivers → invocation facade → subscriptions/RPC/override。
   const lifecycle = new PluginLifecycle()
@@ -76,7 +79,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
   })
   const store = new AccountStore({ credentials: ctx.credentials })
   const accounts = new AccountService({ store, settings })
-    runtime = new RuntimeObservationStore(ctx.activationId ?? globalThis.crypto.randomUUID())
+    runtime = new RuntimeObservationStore(activationId)
     const routeStore = new QoderRouteStore({
     credentials: ctx.credentials,
     readSelection: () => {
@@ -91,7 +94,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
   })
     wasmLease = acquireQoderWasmOwnerLease()
   const verifiers = createChannelCapabilityVerifiers({
-    ...ctx.fetcher === undefined ? {} : { fetcher: ctx.fetcher },
+    ...fetcherOption(ctx),
     getEndpointPreference: () => settings.getSnapshot().qoder.endpointPreference,
     readLastSuccessfulHost: (signal: AbortSignal) => routeStore.read(signal),
     writeLastSuccessfulHost: async (host, signal) => {
@@ -215,7 +218,19 @@ async function rollbackConstruction(input: {
 }
 
 function fetcherOption(ctx: HostContext): { readonly fetcher?: typeof fetch } {
-  return ctx.fetcher === undefined ? {} : { fetcher: ctx.fetcher }
+  const fetcher = optionalFetcher(ctx)
+  return fetcher === undefined ? {} : { fetcher }
+}
+
+/**
+ * 测试注入的可选 fetcher 不是 Cordis 服务。
+ *
+ * 真实 plugin fiber 上下文读取未声明属性会抛
+ * `cannot get property "fetcher" without inject`；这里先判断属性是否存在，
+ * 只有测试替身或宿主 accessor 真正提供时才读取，否则回退到全局 fetch。
+ */
+function optionalFetcher(ctx: HostContext): typeof fetch | undefined {
+  return 'fetcher' in ctx ? ctx.fetcher : undefined
 }
 
 function asDisposer(registration: unknown): () => void {
