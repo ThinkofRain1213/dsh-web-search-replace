@@ -50,21 +50,25 @@ describe('真实 credentials provider（隔离临时文件）', () => {
       expect(await provider.readRecord(key)).toBeUndefined()
 
       let releaseFirst!: () => void
+      let notifyFirstEntered!: () => void
+      const firstEnteredPromise = new Promise<void>((resolve) => { notifyFirstEntered = resolve })
       const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
       let firstEntered = 0
       let secondEntered = 0
       const first = provider.modifyRecord(key, async () => {
         firstEntered += 1
+        notifyFirstEntered()
         await firstGate
         return { kind: 'grant', payload: { sequence: 1 } }
       })
-      await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+      await firstEnteredPromise
       const second = provider.modifyRecord(key, async (current) => {
         secondEntered += 1
         expect(current).toEqual({ kind: 'grant', payload: { sequence: 1 } })
         return { kind: 'grant', payload: { sequence: 2 } }
       })
-      await new Promise<void>((resolve) => { setTimeout(resolve, 10) })
+      // 第二个调用已发起，但真实 provider 的排他队列不得让它进入 mutate。
+      await Promise.resolve()
       expect(firstEntered).toBe(1)
       expect(secondEntered).toBe(0)
       releaseFirst()

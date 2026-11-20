@@ -200,7 +200,7 @@ async function searchQoderInternational(
       },
       ...deps.writeLastSuccessfulHost === undefined ? {} : {
         writeLastSuccessfulHost: async (host, writeSignal) => {
-          await deps.writeLastSuccessfulHost!(host, writeSignal, selection)
+          return await deps.writeLastSuccessfulHost!(host, writeSignal, selection)
         },
       },
       signal,

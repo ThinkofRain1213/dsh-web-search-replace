@@ -22,6 +22,8 @@ function connection() {
   const routes = new Map<string, ManagementRpcRoute>()
   let blockedDispose: { entered: () => void; promise: Promise<void> } | undefined
   let failNext = false
+  let registrationSequence = 0
+  const disposeGates = new Map<number, { entered: () => void; promise: Promise<void> }>()
   const connection: ManagementRpcConnection = {
     fetch: {
       register(route) {
@@ -29,8 +31,16 @@ function connection() {
           failNext = false
           throw new Error('injected register failure')
         }
+        registrationSequence += 1
+        const registrationIndex = registrationSequence
         routes.set(route.path, route)
         return async () => {
+          const indexedGate = disposeGates.get(registrationIndex)
+          if (indexedGate !== undefined) {
+            disposeGates.delete(registrationIndex)
+            indexedGate.entered()
+            await indexedGate.promise
+          }
           if (blockedDispose !== undefined) {
             const gate = blockedDispose
             blockedDispose = undefined
@@ -52,6 +62,14 @@ function connection() {
       const enteredPromise = new Promise<void>((resolve) => { entered = resolve })
       const promise = new Promise<void>((resolve) => { release = resolve })
       blockedDispose = { entered, promise }
+      return { entered: enteredPromise, release }
+    },
+    blockDispose(index: number) {
+      let release!: () => void
+      let entered!: () => void
+      const enteredPromise = new Promise<void>((resolve) => { entered = resolve })
+      const promise = new Promise<void>((resolve) => { release = resolve })
+      disposeGates.set(index, { entered, promise })
       return { entered: enteredPromise, release }
     },
     failNextRegister() { failNext = true },
@@ -114,6 +132,60 @@ describe('generation-safe management route broker', () => {
     }))
     expect((await response.json() as any).result.value.search.channel).toBe('qoder')
     await current()
+    expect(routes.has('/api/web-search-channels')).toBe(false)
+  })
+
+  it('A/B/C/D：第二个 queued operation 正 await 时，后续 register 不得绕过完整 queue tail', async () => {
+    const { connection: conn, routes, blockDispose } = connection()
+    const a = registerManagementRpc(conn, service(false, 'buddy'))
+    await a.ready
+
+    const gateA = blockDispose(1)
+    const b = registerManagementRpc(conn, service(false, 'buddy'))
+    const c = registerManagementRpc(conn, service(true, 'qoder'))
+    gateA.release()
+    await b.ready
+
+    const gateB = blockDispose(2)
+    await gateB.entered
+    const disposingC = c()
+
+    const d = registerManagementRpc(conn, service(true, 'qoder'))
+    let dReady = false
+    const dReadyPromise = d.ready.then(() => { dReady = true })
+    await Promise.resolve()
+    expect(dReady).toBe(false)
+
+    gateB.release()
+    await dReadyPromise
+    await disposingC
+    const route = routes.get('/api/web-search-channels')
+    expect(route).toBeDefined()
+    const response = await route!.fetch(new Request('http://local/api/web-search-channels', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'client-request', rpcId: 'd', method: 'web-search-channels',
+        payload: { method: 'settings.get', payload: {} },
+      }),
+    }))
+    expect((await response.json() as any).result.value.search.channel).toBe('qoder')
+    await d()
+    expect(routes.has('/api/web-search-channels')).toBe(false)
+  })
+
+  it('失败 settle 后仍 drain 后续 queued register/dispose，bucket 与底层 route 一致', async () => {
+    const { connection: conn, routes, failNextRegister } = connection()
+    const first = registerManagementRpc(conn, service(false, 'buddy'))
+    await first.ready
+
+    failNextRegister()
+    const failed = registerManagementRpc(conn, service(true, 'qoder'))
+    await expect(failed.ready).rejects.toThrow('injected register failure')
+    const recovered = registerManagementRpc(conn, service(true, 'qoder'))
+    await recovered.ready
+    expect(routes.has('/api/web-search-channels')).toBe(true)
+    await first()
+    await recovered()
     expect(routes.has('/api/web-search-channels')).toBe(false)
   })
 

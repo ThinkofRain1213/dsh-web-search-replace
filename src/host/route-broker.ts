@@ -17,7 +17,8 @@ interface RouteBucket {
   currentHandler?: ManagementRpcRoute['fetch']
   underlying?: UnderlyingRoute
   queue: Promise<void>
-  busy: boolean
+  /** 全部 pending/在飞 operation；只有为 0 才允许同步快路径。 */
+  pending: number
 }
 
 const buckets = new WeakMap<ManagementRpcConnection, Map<string, RouteBucket>>()
@@ -33,7 +34,7 @@ export function registerGenerationRoute(
 ): GenerationRouteRegistration {
   const byPath = buckets.get(connection) ?? new Map<string, RouteBucket>()
   buckets.set(connection, byPath)
-  const bucket = byPath.get(route.path) ?? { queue: Promise.resolve(), busy: false }
+  const bucket = byPath.get(route.path) ?? { queue: Promise.resolve(), pending: 0 }
   byPath.set(route.path, bucket)
   const registration: Registration = {
     token: Symbol(route.path),
@@ -97,23 +98,15 @@ async function retireUnderlying(
 }
 
 function enqueue(bucket: RouteBucket, operation: () => Promise<void>): Promise<void> {
-  if (bucket.busy) {
-    const result = bucket.queue.then(operation, operation)
-    bucket.queue = result.then(() => undefined, () => undefined)
-    return result
-  }
-  bucket.busy = true
-  let result: Promise<void>
-  try {
-    // 空队列时保留 DSH 同步注册语义；异步函数在首个真正 await 前同步执行。
-    result = operation()
-  } catch (error) {
-    bucket.busy = false
-    return Promise.reject(error)
-  }
+  bucket.pending += 1
+  // pending>0 表示完整 tail 尚未 drain；后续 operation 只能排在 tail 后。
+  // 仅空队列保留 DSH 同步注册语义，async operation 在首个真正 await 前同步执行。
+  const result = bucket.pending === 1
+    ? operation()
+    : bucket.queue.then(operation, operation)
   bucket.queue = result.then(
-    () => { bucket.busy = false },
-    () => { bucket.busy = false },
+    () => { bucket.pending -= 1 },
+    () => { bucket.pending -= 1 },
   )
   return result
 }
