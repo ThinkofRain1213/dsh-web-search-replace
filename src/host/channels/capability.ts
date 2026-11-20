@@ -21,7 +21,7 @@ export interface CapabilityVerifierDeps {
   readonly writeLastSuccessfulHost?: (
     host: QoderInternationalHost,
     signal: AbortSignal,
-  ) => Promise<void>
+  ) => Promise<'written' | 'stale' | void>
 }
 
 export interface ChannelCapabilityVerifiers {

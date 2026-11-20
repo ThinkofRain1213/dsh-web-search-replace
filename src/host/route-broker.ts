@@ -1,11 +1,23 @@
-/** DSH 按 path 无条件 delete 的缺口由本插件的 generation-aware 稳定 route 代理闭合。 */
+/** per-path 串行 route broker：handler 代际与底层 registration 分轨管理。 */
 import type { ManagementRpcConnection, ManagementRpcRoute } from '../shared/rpc.ts'
 
+interface Registration {
+  readonly token: symbol
+  readonly handler: ManagementRpcRoute['fetch']
+  active: boolean
+}
+
+interface UnderlyingRoute {
+  readonly owner: Registration
+  readonly disposer: () => Promise<void>
+}
+
 interface RouteBucket {
-  currentToken?: symbol
+  current?: Registration
   currentHandler?: ManagementRpcRoute['fetch']
-  underlyingDisposer?: () => Promise<void>
+  underlying?: UnderlyingRoute
   queue: Promise<void>
+  busy: boolean
 }
 
 const buckets = new WeakMap<ManagementRpcConnection, Map<string, RouteBucket>>()
@@ -21,43 +33,87 @@ export function registerGenerationRoute(
 ): GenerationRouteRegistration {
   const byPath = buckets.get(connection) ?? new Map<string, RouteBucket>()
   buckets.set(connection, byPath)
-  const bucket = byPath.get(route.path) ?? { queue: Promise.resolve() }
+  const bucket = byPath.get(route.path) ?? { queue: Promise.resolve(), busy: false }
   byPath.set(route.path, bucket)
-  const token = Symbol(route.path)
-
-  // DSH 本体的 register 同步返回 disposer；同步建立稳定代理可保持既有注册语义，
-  // ready/queue 负责后续 async setup 与代际串行化。
-  if (bucket.underlyingDisposer === undefined) {
-    bucket.underlyingDisposer = connection.fetch.register({
-      ...route,
-      fetch: async (request) => {
-        const handler = bucket.currentHandler
-        if (handler === undefined) return new Response('route generation is unavailable', { status: 503 })
-        return await handler(request)
-      },
-    })
+  const registration: Registration = {
+    token: Symbol(route.path),
+    handler: route.fetch,
+    active: true,
   }
-  bucket.currentToken = token
-  bucket.currentHandler = route.fetch
-  const ready = Promise.resolve()
+
+  // 新 handler 可立即接管稳定代理，保持旧调用方同步语义；底层 route 的
+  // register/dispose 仍严格按同一 per-path 队列执行，ready 只在其真正完成后兑现。
+  bucket.current = registration
+  bucket.currentHandler = registration.handler
+  const ready = enqueue(bucket, async () => {
+    if (!registration.active) return
+    if (bucket.underlying !== undefined) await retireUnderlying(bucket)
+    if (!registration.active) return
+    try {
+      const disposer = connection.fetch.register({
+        ...route,
+        fetch: async (request) => {
+          const handler = bucket.currentHandler
+          if (handler === undefined) return new Response('route generation is unavailable', { status: 503 })
+          return await handler(request)
+        },
+      })
+      bucket.underlying = { owner: registration, disposer }
+      if (!registration.active) await retireUnderlying(bucket, registration)
+    } catch (error) {
+      if (bucket.current === registration) {
+        bucket.current = undefined
+        bucket.currentHandler = undefined
+      }
+      throw error
+    }
+  })
 
   return {
     ready,
-    dispose: () => enqueue(bucket, async () => {
-      // 新代已接管时旧代 disposer 是 no-op，绝不调用底层按 path delete。
-      if (bucket.currentToken !== token) return
-      bucket.currentToken = undefined
-      bucket.currentHandler = undefined
-      const disposer = bucket.underlyingDisposer
-      bucket.underlyingDisposer = undefined
-      await disposer?.()
-      if (bucket.currentToken === undefined) byPath.delete(route.path)
-    }),
+    dispose: () => {
+      registration.active = false
+      return enqueue(bucket, async () => {
+        if (bucket.current === registration) {
+          bucket.current = undefined
+          bucket.currentHandler = undefined
+        }
+        await retireUnderlying(bucket, registration)
+      })
+    },
   }
 }
 
+/** 必须只在 per-path queue 内调用；owner 不匹配时旧 disposer 是 no-op。 */
+async function retireUnderlying(
+  bucket: RouteBucket,
+  owner?: Registration,
+): Promise<void> {
+  const underlying = bucket.underlying
+  if (underlying === undefined) return
+  if (owner !== undefined && underlying.owner !== owner) return
+  bucket.underlying = undefined
+  await underlying.disposer()
+}
+
 function enqueue(bucket: RouteBucket, operation: () => Promise<void>): Promise<void> {
-  const result = bucket.queue.then(operation, operation)
-  bucket.queue = result.then(() => undefined, () => undefined)
+  if (bucket.busy) {
+    const result = bucket.queue.then(operation, operation)
+    bucket.queue = result.then(() => undefined, () => undefined)
+    return result
+  }
+  bucket.busy = true
+  let result: Promise<void>
+  try {
+    // 空队列时保留 DSH 同步注册语义；异步函数在首个真正 await 前同步执行。
+    result = operation()
+  } catch (error) {
+    bucket.busy = false
+    return Promise.reject(error)
+  }
+  bucket.queue = result.then(
+    () => { bucket.busy = false },
+    () => { bucket.busy = false },
+  )
   return result
 }

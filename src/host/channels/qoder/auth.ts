@@ -342,8 +342,13 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
     if (!isStableChannelAccountId(accountId)) throw this.error('auth/invalid')
     let entry: StoredAccountEntry | undefined
     try {
-      entry = await this.store.readEntry(this.channel, accountId)
-    } catch {
+      entry = await waitWithAuthAbort(
+        this.store.readEntry(this.channel, accountId),
+        signal,
+        () => this.error(this.disposed ? 'auth/disposed' : 'auth/cancelled'),
+      )
+    } catch (error) {
+      if (this.disposed || signal.aborted) this.throwIfOperationAborted(signal)
       throw this.error('auth/credential-unavailable')
     }
     this.assertNotDisposed()
@@ -385,6 +390,7 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
   async refresh(accountId: string, callerSignal?: AbortSignal): Promise<AccountSummary> {
     this.assertNotDisposed()
     if (!isStableChannelAccountId(accountId)) throw this.error('auth/invalid')
+    if (callerSignal?.aborted) throw this.error('auth/cancelled')
     const existing = this.inFlightRefreshes.get(accountId)
     if (existing !== undefined) {
       return callerSignal === undefined
@@ -394,19 +400,18 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
 
     const controller = new AbortController()
     this.refreshControllers.set(accountId, controller)
-    const signal = combineAuthSignals(controller.signal, callerSignal)
-    const run = this.performRefresh(accountId, signal, callerSignal)
+    const run = this.performRefresh(accountId, controller.signal)
     this.inFlightRefreshes.set(accountId, run)
-    try {
-      return callerSignal === undefined
-        ? await run
-        : await waitWithAuthAbort(run, callerSignal, () => this.error('auth/cancelled'))
-    } finally {
+    const cleanup = () => {
       if (this.inFlightRefreshes.get(accountId) === run) this.inFlightRefreshes.delete(accountId)
       if (this.refreshControllers.get(accountId) === controller) {
         this.refreshControllers.delete(accountId)
       }
     }
+    void run.then(cleanup, cleanup)
+    return callerSignal === undefined
+      ? await run
+      : await waitWithAuthAbort(run, callerSignal, () => this.error('auth/cancelled'))
   }
 
   /**
@@ -443,7 +448,7 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
     signal: AbortSignal,
     callerSignal?: AbortSignal,
   ): Promise<T> {
-    const first = await this.resolveCredential(accountId, signal, callerSignal)
+    const first = await this.resolveCredential(accountId, signal)
     this.throwIfOperationAborted(signal)
 
     try {
@@ -457,7 +462,7 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
 
     await this.refresh(accountId, callerSignal)
     this.throwIfOperationAborted(signal)
-    const second = await this.resolveCredential(accountId, signal, callerSignal)
+    const second = await this.resolveCredential(accountId, signal)
     this.throwIfOperationAborted(signal)
     const result = await operation(second, signal)
     this.throwIfOperationAborted(signal)
@@ -668,18 +673,15 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
   private async performRefresh(
     accountId: string,
     signal: AbortSignal,
-    callerSignal?: AbortSignal,
   ): Promise<AccountSummary> {
     if (this.disposed) throw this.error('auth/disposed')
     let entry: StoredAccountEntry | undefined
     try {
-      entry = callerSignal === undefined
-        ? await this.store.readEntry(this.channel, accountId)
-        : await waitWithAuthAbort(
-          this.store.readEntry(this.channel, accountId),
-          callerSignal,
-          () => this.error('auth/cancelled'),
-        )
+      entry = await waitWithAuthAbort(
+        this.store.readEntry(this.channel, accountId),
+        signal,
+        () => this.error(this.disposed ? 'auth/disposed' : 'auth/cancelled'),
+      )
     } catch (error) {
       if (this.disposed || signal.aborted) this.throwIfOperationAborted(signal)
       throw this.error('auth/refresh-failed')
@@ -738,7 +740,11 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
     // 当前记录已被更新（重新登录/另一次刷新/删除）：返回当前值，绝不覆盖。
     let current: StoredAccountEntry | undefined
     try {
-      current = await this.store.readEntry(this.channel, accountId)
+      current = await waitWithAuthAbort(
+        this.store.readEntry(this.channel, accountId),
+        signal,
+        () => this.error(this.disposed ? 'auth/disposed' : 'auth/cancelled'),
+      )
     } catch {
       throw this.error('auth/refresh-failed')
     }
@@ -781,19 +787,16 @@ export class QoderProductAuthFlow<C extends AuthChannel> implements AuthFlowPort
   private async resolveCredential(
     accountId: string,
     signal: AbortSignal,
-    callerSignal?: AbortSignal,
   ): Promise<QoderAuthCredential<C>> {
     this.throwIfOperationAborted(signal)
     if (!isStableChannelAccountId(accountId)) throw this.error('auth/invalid')
     let entry: StoredAccountEntry | undefined
     try {
-      entry = callerSignal === undefined
-        ? await this.store.readEntry(this.channel, accountId)
-        : await waitWithAuthAbort(
-          this.store.readEntry(this.channel, accountId),
-          callerSignal,
-          () => this.error('auth/cancelled'),
-        )
+      entry = await waitWithAuthAbort(
+        this.store.readEntry(this.channel, accountId),
+        signal,
+        () => this.error(this.disposed ? 'auth/disposed' : 'auth/cancelled'),
+      )
     } catch (error) {
       if (this.disposed || signal.aborted) this.throwIfOperationAborted(signal)
       throw this.error('auth/credential-unavailable')

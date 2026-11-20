@@ -74,7 +74,7 @@ describe('真实 ConfigEditor（隔离临时 profile）', () => {
     const first = await createFixture()
     const before = new AbortController()
     before.abort()
-    await expect(first.settings.updateLastSuccessfulHost('api2.qoder.sh', before.signal))
+    await expect(first.settings.updateSearch({ enabled: true }, before.signal))
       .rejects.toMatchObject({ code: 'settings/cancelled' })
     await expect(readFile(join(first.root, 'cordis.patch.yml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 
@@ -86,10 +86,11 @@ describe('真实 ConfigEditor（隔离临时 profile）', () => {
       // change 已返回，进入真实 ConfigEditor 的后续校验/物理提交阶段。
       after.abort()
     }
-    await second.settings.updateLastSuccessfulHost('api2.qoder.sh', after.signal)
+    await second.settings.updateSearch({ enabled: true }, after.signal)
     expect(after.signal.aborted).toBe(true)
     const document = await readFile(join(second.root, 'cordis.patch.yml'), 'utf8')
-    expect(document).toContain('lastSuccessfulHost: api2.qoder.sh')
+    expect(document).toContain('enabled: true')
+    expect(document).not.toContain('lastSuccessfulHost')
     expect(JSON.stringify(second.settings.getSnapshot())).not.toContain('lastSuccessfulHost')
   })
 })

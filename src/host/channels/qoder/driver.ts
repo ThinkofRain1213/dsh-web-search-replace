@@ -74,7 +74,7 @@ export interface QoderInternationalDriverDeps {
   readonly writeLastSuccessfulHost?: (
     host: 'center.qoder.sh' | 'api2.qoder.sh',
     signal: AbortSignal,
-  ) => Promise<void>
+  ) => Promise<'written' | 'stale' | void>
   /** 测试注入；生产默认使用全局 fetch。 */
   readonly fetcher?: typeof fetch
   /** 脱敏观察钩子：实际域名、耗时与错误类别；不含 query 或凭据。 */

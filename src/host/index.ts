@@ -12,6 +12,7 @@ import { AccountService } from './accounts/service.ts'
 import { PluginLifecycle } from './lifecycle.ts'
 import { RuntimeObservationStore } from './runtime.ts'
 import { acquireQoderWasmOwnerLease } from './channels/qoder/signer.ts'
+import { QoderRouteStore } from './channels/qoder/route-store.ts'
 import { BuddyAuthFlow } from './channels/buddy/auth.ts'
 import { WorkbuddyAuthFlow } from './channels/workbuddy/auth.ts'
 import { QoderInternationalAuthFlow } from './channels/qoder/auth.ts'
@@ -50,7 +51,7 @@ export interface HostContext {
   ): unknown
 }
 
-export function apply(ctx: HostContext, config: SearchConfig): void {
+export function apply(ctx: HostContext, config: SearchConfig): void | Promise<void> {
   const entry = ctx.fiber.entry
   if (!isLoaderEntry(entry)) {
     throw new TypeError('web-search-channels requires the active Loader entry')
@@ -59,44 +60,71 @@ export function apply(ctx: HostContext, config: SearchConfig): void {
   // 构造顺序严格保持：lifecycle → settings → accounts → runtime/WASM →
   // flows → activation drivers → invocation facade → subscriptions/RPC/override。
   const lifecycle = new PluginLifecycle()
-  const settings = new SettingsService({
+  let runtime: RuntimeObservationStore | undefined
+  let wasmLease: ReturnType<typeof acquireQoderWasmOwnerLease> | undefined
+  const flows: {
+    buddy?: BuddyAuthFlow
+    workbuddy?: WorkbuddyAuthFlow
+    qoder?: QoderInternationalAuthFlow
+    qodercn?: QoderCnAuthFlow
+  } = {}
+  try {
+    const settings = new SettingsService({
     configEditor: ctx.configEditor,
     entry: entry as SettingsServiceOptions['entry'],
     config,
   })
   const store = new AccountStore({ credentials: ctx.credentials })
   const accounts = new AccountService({ store, settings })
-  const runtime = new RuntimeObservationStore(ctx.activationId ?? globalThis.crypto.randomUUID())
-  const wasmLease = acquireQoderWasmOwnerLease()
+    runtime = new RuntimeObservationStore(ctx.activationId ?? globalThis.crypto.randomUUID())
+    const routeStore = new QoderRouteStore({
+    credentials: ctx.credentials,
+    readSelection: () => {
+      const snapshot = settings.getSnapshot()
+      return {
+        channel: snapshot.search.channel,
+        accountId: snapshot.qoder.currentAccountId,
+        endpointPreference: snapshot.qoder.endpointPreference,
+        selectionGeneration: runtime!.captureSelection(snapshot),
+      }
+    },
+  })
+    wasmLease = acquireQoderWasmOwnerLease()
   const verifiers = createChannelCapabilityVerifiers({
     ...ctx.fetcher === undefined ? {} : { fetcher: ctx.fetcher },
     getEndpointPreference: () => settings.getSnapshot().qoder.endpointPreference,
-    readLastSuccessfulHost: () => settings.getLastSuccessfulHost(),
+    readLastSuccessfulHost: () => routeStore.read(),
     writeLastSuccessfulHost: async (host, signal) => {
-      await settings.updateLastSuccessfulHost(host, signal)
+      const snapshot = settings.getSnapshot()
+      return await routeStore.write(host, {
+        channel: 'qoder',
+        accountId: snapshot.qoder.currentAccountId,
+        endpointPreference: snapshot.qoder.endpointPreference,
+        selectionGeneration: runtime!.captureSelection(snapshot),
+      }, signal)
     },
   })
-  const flows = {
-    buddy: new BuddyAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.buddy }),
-    workbuddy: new WorkbuddyAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.workbuddy }),
-    qoder: new QoderInternationalAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.qoder }),
-    qodercn: new QoderCnAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.qodercn }),
-  }
-  const authFlows = createAuthFlowRegistry(flows)
-  const drivers = createInvocationDriverFactory({
-    flows,
+    flows.buddy = new BuddyAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.buddy })
+    flows.workbuddy = new WorkbuddyAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.workbuddy })
+    flows.qoder = new QoderInternationalAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.qoder })
+    flows.qodercn = new QoderCnAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.qodercn })
+    const completeFlows = {
+      buddy: flows.buddy!,
+      workbuddy: flows.workbuddy!,
+      qoder: flows.qoder!,
+      qodercn: flows.qodercn!,
+    }
+    const authFlows = createAuthFlowRegistry(completeFlows)
+    const drivers = createInvocationDriverFactory({
+      flows: completeFlows,
     ...fetcherOption(ctx),
-    readLastSuccessfulHost: () => settings.getLastSuccessfulHost(),
+    readLastSuccessfulHost: () => routeStore.read(),
     writeLastSuccessfulHost: async (host, signal, selection) => {
-      if (selection !== undefined) {
-        const snapshot = settings.getSnapshot()
-        if (snapshot.qoder.endpointPreference !== 'auto') return
-        if (runtime.captureSelection(snapshot) !== selection.selectionGeneration) return
-      }
-      await settings.updateLastSuccessfulHost(host, signal)
+      if (selection === undefined) return 'stale'
+      return await routeStore.write(host, selection, signal)
     },
     onObservation: (observation, selection) => {
-      runtime.observe(selection, settings.getSnapshot(), observation)
+      runtime!.observe(selection, settings.getSnapshot(), observation)
     },
   })
 
@@ -116,20 +144,20 @@ export function apply(ctx: HostContext, config: SearchConfig): void {
       unsubscribe()
       const routeDisposal = registration?.()
       const lifecycleDisposal = lifecycle.abortAllAndSettle()
-      const flowDisposals = Object.values(flows).map(flow => flow.dispose())
+      const flowDisposals = Object.values(completeFlows).map(flow => flow.dispose())
       await Promise.allSettled([
         ...routeReady === undefined ? [] : [routeReady],
         ...routeDisposal === undefined ? [] : [routeDisposal],
         lifecycleDisposal,
         ...flowDisposals,
       ])
-      await wasmLease.dispose()
-      runtime.dispose()
+      await wasmLease?.dispose()
+      runtime?.dispose()
     }
     try {
       unsubscribe = asDisposer(ctx.on('loader/volatile-update', () => {
         const snapshot = settings.refreshFromVolatile()
-        runtime.captureSelection(snapshot)
+        runtime!.captureSelection(snapshot)
       }))
       registration = registerManagementRpc(
         ctx.connection,
@@ -140,8 +168,8 @@ export function apply(ctx: HostContext, config: SearchConfig): void {
           lifecycle,
           runtime: {
             getSnapshot: () => {
-              runtime.captureSelection(settings.getSnapshot())
-              return runtime.getSnapshot()
+              runtime!.captureSelection(settings.getSnapshot())
+              return runtime!.getSnapshot()
             },
           },
         },
@@ -159,7 +187,31 @@ export function apply(ctx: HostContext, config: SearchConfig): void {
       await cleanup()
       throw error
     }
-  }, 'web-search-channels: activation')
+    }, 'web-search-channels: activation')
+  } catch (error) {
+    return rollbackConstruction({ lifecycle, runtime, wasmLease, flows, error })
+  }
+}
+
+async function rollbackConstruction(input: {
+  lifecycle: PluginLifecycle
+  runtime: RuntimeObservationStore | undefined
+  wasmLease: ReturnType<typeof acquireQoderWasmOwnerLease> | undefined
+  flows: {
+    buddy?: BuddyAuthFlow
+    workbuddy?: WorkbuddyAuthFlow
+    qoder?: QoderInternationalAuthFlow
+    qodercn?: QoderCnAuthFlow
+  }
+  error: unknown
+}): Promise<never> {
+  input.lifecycle.stopAccepting()
+  const flowDisposals = Object.values(input.flows).reverse().map(flow => flow?.dispose())
+  const lifecycleDisposal = input.lifecycle.abortAllAndSettle()
+  await Promise.allSettled([...flowDisposals, lifecycleDisposal])
+  await input.wasmLease?.dispose()
+  input.runtime?.dispose()
+  throw input.error
 }
 
 function fetcherOption(ctx: HostContext): { readonly fetcher?: typeof fetch } {

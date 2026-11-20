@@ -95,7 +95,7 @@ export interface QoderEndpointExecuteInput<T> {
   readonly writeLastSuccessfulHost?: (
     host: QoderInternationalHost,
     signal: AbortSignal,
-  ) => Promise<void>
+  ) => Promise<'written' | 'stale' | void>
   /** invocation-bound observation；闭包携带 Host 内部选择代际，不进入 DTO。 */
   readonly onObservation?: (observation: QoderEndpointObservation) => void
 }
@@ -107,7 +107,7 @@ export interface QoderEndpointPolicyDeps {
   readonly writeLastSuccessfulHost?: (
     host: QoderInternationalHost,
     signal: AbortSignal,
-  ) => Promise<void>
+  ) => Promise<'written' | 'stale' | void>
   /** 脱敏观察钩子；抛错会被吞掉，绝不影响搜索本身。 */
   readonly onObservation?: (observation: QoderEndpointObservation) => void
 }
@@ -311,16 +311,20 @@ export class QoderEndpointPolicy {
     if (input.preference !== 'auto' || input.rememberSuccess === false) return
     const write = input.writeLastSuccessfulHost ?? this.deps.writeLastSuccessfulHost
     if (write === undefined) {
+      if (input.signal.aborted) throw qoderCancellationFailure(input.signal)
       this.lastSuccessfulHost = host
       return
     }
+    let result: 'written' | 'stale' | void
     try {
-      await write(host, input.signal)
-      this.lastSuccessfulHost = host
+      result = await write(host, input.signal)
     } catch {
-      // 路由持久化失败不能把已成功的真实搜索结果改写成失败；保留旧值，
-      // 后续真实搜索可再次尝试。configEditor 物理提交边界由调用方 await settle。
+      // 只吞普通非取消持久化失败；caller/root cancellation 必须继续归因。
+      if (input.signal.aborted) throw qoderCancellationFailure(input.signal)
+      return
     }
+    if (input.signal.aborted) throw qoderCancellationFailure(input.signal)
+    if (result !== 'stale') this.lastSuccessfulHost = host
   }
 
   /** 一次尝试：计时、记录脱敏结果，然后把原始错误继续抛出。 */
@@ -379,6 +383,20 @@ function aggregateFailureMessage(attempts: readonly QoderEndpointAttempt[]): str
     })
     .join('; ')
   return `qoder search failed on both endpoints (${details})`
+}
+
+function qoderCancellationFailure(signal: AbortSignal): QoderSearchProtocolError {
+  const reason = signal.reason as { name?: unknown; code?: unknown } | undefined
+  const timeout = reason?.name === 'TimeoutReason'
+    || reason?.name === 'TimeoutError'
+    || reason?.code === 'TOOL_TIMEOUT'
+  return new QoderSearchProtocolError(
+    timeout ? 'TIMEOUT' : 'SEARCH_FAILED',
+    timeout
+      ? 'qoder search timed out before this search returned (the host tool budget elapsed)'
+      : 'qoder search aborted by the caller',
+    'aborted',
+  )
 }
 
 function elapsedSince(startedAt: number): number {

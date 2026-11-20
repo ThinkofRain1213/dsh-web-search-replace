@@ -22,7 +22,6 @@ import {
   type SearchSettingsSnapshot,
 } from '../../shared/contracts.ts'
 import type { SearchConfig } from '../config.ts'
-import { isQoderRuntimeHost, type QoderRuntimeHost } from '../../shared/runtime.ts'
 
 /** 普通配置的原始嵌套对象。 */
 type RawConfig = Record<string, unknown>
@@ -95,34 +94,6 @@ export class SettingsService {
       return next
     })
     return this.publish()
-  }
-
-  /** Host-only：读取本机全局最近成功域；fixed 与 Client 快照都不会读取它。 */
-  getLastSuccessfulHost(): QoderRuntimeHost | null {
-    const value = this.options.config.qoder.lastSuccessfulHost.get()
-    return isQoderRuntimeHost(value) ? value : null
-  }
-
-  /**
-   * Host-only：真实用户 auto 搜索成功后经 configEditor 持久化唯一全局路由值。
-   * 不发布普通设置快照，也不把该字段传入任何 Client DTO。
-   */
-  async updateLastSuccessfulHost(
-    host: QoderRuntimeHost,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    if (!isQoderRuntimeHost(host)) {
-      throw new SearchSettingsValidationError('非法 Qoder 最近成功域')
-    }
-    if (signal?.aborted) throw new SettingsWriteCancelledError()
-    await this.options.configEditor.edit(this.options.entry, (current) => {
-      // callback 返回后的物理提交只能由调用方 await settle，不能伪称回滚。
-      if (signal?.aborted) throw new SettingsWriteCancelledError()
-      const base = isRecord(current) ? current : {}
-      const qoder = isRecord(base.qoder) ? { ...base.qoder } : {}
-      qoder.lastSuccessfulHost = host
-      return { ...base, qoder }
-    })
   }
 
   /**

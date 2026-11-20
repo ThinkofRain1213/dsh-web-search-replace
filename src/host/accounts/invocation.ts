@@ -53,7 +53,7 @@ export interface InvocationDriverFactoryDeps {
     host: QoderInternationalHost,
     signal: AbortSignal,
     context?: InvocationSelection,
-  ) => Promise<void>
+  ) => Promise<'written' | 'stale' | void>
   readonly onObservation?: (
     observation: QoderEndpointObservation,
     context: InvocationSelection,

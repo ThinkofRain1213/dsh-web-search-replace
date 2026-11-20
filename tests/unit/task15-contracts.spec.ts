@@ -60,10 +60,10 @@ function makeFlow(channel: AuthChannel, calls: string[]): AuthFlowPort {
   } as AuthFlowPort
 }
 
-describe('R43 Host 全局路由状态与普通设置快照隔离', () => {
-  it('Config 缺省 lastSuccessfulHost=null，但普通快照不含该字段', () => {
+describe('R44 Host 全局路由状态与普通设置快照隔离', () => {
+  it('导出 Config 不含 lastSuccessfulHost，普通快照只含批准字段', () => {
     const config = Config({}) as any
-    expect(config.qoder.lastSuccessfulHost.get()).toBeNull()
+    expect(config.qoder.lastSuccessfulHost).toBeUndefined()
     const { service } = createService()
     expect(service.getSnapshot().qoder).toEqual({
       currentAccountId: null,
@@ -72,41 +72,17 @@ describe('R43 Host 全局路由状态与普通设置快照隔离', () => {
     expect(JSON.stringify(service.getSnapshot())).not.toContain('lastSuccessfulHost')
   })
 
-  it('经 configEditor 持久化单一全局域，换账号不清空且重建设置服务后仍读取', async () => {
+  it('updateSearch 在 configEditor change callback 内响应 abort', async () => {
     const { service, double } = createService()
-    const persist = (service as any).updateLastSuccessfulHost
-    expect(typeof persist).toBe('function')
-
-    await persist.call(service, 'api2.qoder.sh')
-    expect(double.getState().qoder.lastSuccessfulHost).toBe('api2.qoder.sh')
-    expect((service as any).getLastSuccessfulHost()).toBe('api2.qoder.sh')
-
-    await service.setCurrentAccount('qoder', 'account-b')
-    expect((service as any).getLastSuccessfulHost()).toBe('api2.qoder.sh')
-
-    const restarted = new SettingsService({
-      configEditor: double.editor,
-      entry: { id: 'dsh-web-search-channels' } as never,
-      config: double.config,
-    })
-    expect((restarted as any).getLastSuccessfulHost()).toBe('api2.qoder.sh')
-    expect(JSON.stringify(restarted.getSnapshot())).not.toContain('lastSuccessfulHost')
-  })
-
-  it('updateSearch 与 updateLastSuccessfulHost 都在 configEditor change callback 内响应 abort', async () => {
-    const { service, double } = createService()
-    for (const method of ['updateSearch', 'updateLastSuccessfulHost'] as const) {
-      const controller = new AbortController()
-      const originalEdit = double.editor.edit.bind(double.editor)
-      double.editor.edit = async (_entry, change) => {
-        controller.abort()
-        return await originalEdit(_entry, change)
-      }
-      const argument = method === 'updateSearch' ? { enabled: true } : 'api2.qoder.sh'
-      await expect((service as any)[method](argument, controller.signal)).rejects.toMatchObject({
-        code: 'settings/cancelled',
-      })
+    const controller = new AbortController()
+    const originalEdit = double.editor.edit.bind(double.editor)
+    double.editor.edit = async (_entry, change) => {
+      controller.abort()
+      return await originalEdit(_entry, change)
     }
+    await expect(service.updateSearch({ enabled: true }, controller.signal)).rejects.toMatchObject({
+      code: 'settings/cancelled',
+    })
     expect(double.edits).toHaveLength(0)
   })
 })

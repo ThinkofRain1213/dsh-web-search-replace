@@ -129,3 +129,40 @@ describe('R37 第二域错误与 redirect 分类', () => {
     })
   })
 })
+
+describe('R44 writer 普通失败与取消分类', () => {
+  it('普通非取消持久化失败保留成功搜索与 observation', async () => {
+    const observations: unknown[] = []
+    const policy = new QoderEndpointPolicy({
+      readLastSuccessfulHost: () => null,
+      writeLastSuccessfulHost: async () => { throw new Error('ordinary write failure') },
+    })
+    const result = await policy.execute({
+      preference: 'auto', accountKey: 'account-a',
+      operation: async () => 'search-ok', signal: signal(),
+      onObservation: (observation) => { observations.push(observation) },
+    })
+    expect(result).toBe('search-ok')
+    expect(observations).toHaveLength(1)
+  })
+
+  it('post-callback abort 不得吞取消或发布 success observation', async () => {
+    const controller = new AbortController()
+    const observations: unknown[] = []
+    const policy = new QoderEndpointPolicy({
+      readLastSuccessfulHost: () => null,
+      writeLastSuccessfulHost: async () => {
+        controller.abort()
+        await Promise.resolve()
+      },
+    })
+    const result = await policy.execute({
+      preference: 'auto', accountKey: 'account-a',
+      operation: async () => 'must-not-return-success', signal: controller.signal,
+      onObservation: (observation) => { observations.push(observation) },
+    }).catch(caught => caught)
+    expect(result).not.toBe('must-not-return-success')
+    expect(observations).toHaveLength(1)
+    expect(observations[0]).toMatchObject({ outcome: 'failed' })
+  })
+})

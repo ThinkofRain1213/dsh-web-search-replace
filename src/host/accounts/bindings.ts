@@ -49,7 +49,7 @@ export interface QoderInternationalBindingOptions extends ChannelBindingOptions 
   readonly writeLastSuccessfulHost?: (
     host: 'center.qoder.sh' | 'api2.qoder.sh',
     signal: AbortSignal,
-  ) => Promise<void>
+  ) => Promise<'written' | 'stale' | void>
   /** 端点偏好；每次搜索解析一次。 */
   readonly resolveEndpointPreference: () => QoderEndpointPreference
     | Promise<QoderEndpointPreference>

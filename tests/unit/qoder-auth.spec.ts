@@ -1118,7 +1118,7 @@ describe('Qoder 取消、超时与卸载', () => {
     })
   })
 
-  it('dispose 等待 reauthenticate 的预读 settle，且不启动新流程', async () => {
+  it('R45：dispose 对 reauthenticate 纯读预读停止等待，且不启动新流程', async () => {
     const fixture = createQoderAuthFixture()
     const account = await seedAccount(fixture)
     const originalRead = fixture.store.readEntry.bind(fixture.store)
@@ -1144,7 +1144,7 @@ describe('Qoder 取消、超时与卸载', () => {
     let disposed = false
     const disposing = flow.dispose().then(() => { disposed = true })
     await flush()
-    expect(disposed).toBe(false)
+    expect(disposed).toBe(true)
 
     release.resolve()
     await disposing
@@ -1153,7 +1153,7 @@ describe('Qoder 取消、超时与卸载', () => {
     expect(fixture.credentials.writes).toHaveLength(writesBefore)
   })
 
-  it('dispose 等待 runWithAuthRetry 的首次 credential resolve，且不启动 operation', async () => {
+  it('R45：dispose 对 runWithAuthRetry 首次纯读 credential resolve 停止等待，且不启动 operation', async () => {
     const fixture = createQoderAuthFixture()
     const account = await seedAccount(fixture)
     const originalRead = fixture.store.readEntry.bind(fixture.store)
@@ -1180,7 +1180,7 @@ describe('Qoder 取消、超时与卸载', () => {
     let disposed = false
     const disposing = flow.dispose().then(() => { disposed = true })
     await flush()
-    expect(disposed).toBe(false)
+    expect(disposed).toBe(true)
 
     release.resolve()
     await disposing
@@ -1218,7 +1218,7 @@ describe('Qoder 取消、超时与卸载', () => {
     expect(operationCalls).toBe(1)
   })
 
-  it('dispose 等待 401 刷新后的第二次 credential resolve，且不启动第二次 operation', async () => {
+  it('R45：dispose 对 401 刷新后的第二次纯读 credential resolve 停止等待，且不启动第二次 operation', async () => {
     const fixture = createQoderAuthFixture()
     const account = await seedAccount(fixture)
     const { fetcher } = createScriptedFetcher([refreshRoute(() => okRefresh())])
@@ -1255,7 +1255,7 @@ describe('Qoder 取消、超时与卸载', () => {
     let disposed = false
     const disposing = flow.dispose().then(() => { disposed = true })
     await flush()
-    expect(disposed).toBe(false)
+    expect(disposed).toBe(true)
 
     release.resolve()
     await disposing

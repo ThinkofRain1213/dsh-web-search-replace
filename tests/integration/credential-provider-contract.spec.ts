@@ -12,6 +12,7 @@ import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildCredentialKey } from '../../src/host/accounts/store.ts'
+import { QoderRouteStore } from '../../src/host/channels/qoder/route-store.ts'
 
 const roots: string[] = []
 
@@ -20,9 +21,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function createProvider() {
-  const root = await mkdtemp(join(tmpdir(), 'task15-credentials-'))
-  roots.push(root)
+async function createProviderAt(root: string) {
   const ctx = new Context()
   const fiber = ctx.plugin(LocalCredentialProvider, {
     path: join(root, 'credentials.yaml'),
@@ -35,6 +34,12 @@ async function createProvider() {
     path: join(root, 'credentials.yaml'),
     dispose: async () => { await fiber.dispose() },
   }
+}
+
+async function createProvider() {
+  const root = await mkdtemp(join(tmpdir(), 'task15-credentials-'))
+  roots.push(root)
+  return await createProviderAt(root)
 }
 
 describe('真实 credentials provider（隔离临时文件）', () => {
@@ -110,6 +115,30 @@ describe('真实 credentials provider（隔离临时文件）', () => {
       })
     } finally {
       await dispose()
+    }
+  })
+
+  it('独立 QoderRouteStore 经真实 provider 持久化并在重启后读取全局 host', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task15-route-store-'))
+    roots.push(root)
+    const selection = {
+      channel: 'qoder', accountId: 'account-a', endpointPreference: 'auto', selectionGeneration: 1,
+    } as const
+    const first = await createProviderAt(root)
+    const store = new QoderRouteStore({ credentials: first.provider, readSelection: () => selection })
+    expect(await store.write('api2.qoder.sh', selection)).toBe('written')
+    await first.dispose()
+
+    const restarted = await createProviderAt(root)
+    try {
+      const reread = new QoderRouteStore({ credentials: restarted.provider, readSelection: () => selection })
+      expect(await reread.read()).toBe('api2.qoder.sh')
+      expect(await restarted.provider.listRecords()).toContainEqual({
+        key: buildCredentialKey('dsh-web-search-channels', 'qoder-last-successful-host'),
+        kind: 'grant',
+      })
+    } finally {
+      await restarted.dispose()
     }
   })
 })

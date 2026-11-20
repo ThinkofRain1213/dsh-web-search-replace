@@ -184,7 +184,9 @@ describe('真实 Host 根组合', () => {
     })
     const result = await fixture.executeTool({ queries: ['qoder auto'] })
     expect(result.result.value.sources).toEqual([{ url: 'https://root.test/qoder' }])
-    expect(fixture.double.getState().qoder.lastSuccessfulHost).toBe('api2.qoder.sh')
+    expect(fixture.credentials.raw('dsh-web-search-channels/qoder-last-successful-host')).toEqual({
+      kind: 'grant', payload: { host: 'api2.qoder.sh' },
+    })
 
     const runtime = await fixture.runtimeGet()
     expect(runtime.result.ok).toBe(true)
@@ -225,7 +227,7 @@ describe('真实 Host 根组合', () => {
     fixture.volatile()
     release()
     await running
-    expect(fixture.double.getState().qoder.lastSuccessfulHost ?? null).toBeNull()
+    expect(fixture.credentials.raw('dsh-web-search-channels/qoder-last-successful-host')).toBeUndefined()
     const runtime = await fixture.runtimeGet()
     expect(runtime.result.value.qoder.autoActualHost).toBeNull()
     await fixture.dispose()

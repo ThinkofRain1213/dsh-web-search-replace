@@ -8,7 +8,6 @@
  * 写入失败时不改动任何引用，用于验证「失败保留旧快照」。
  */
 import type { ChannelId, QoderEndpointPreference } from '../../../src/shared/channels.ts'
-import type { QoderRuntimeHost } from '../../../src/shared/runtime.ts'
 import type { SearchConfig, VolatileConfigValue } from '../../../src/host/config.ts'
 
 /** 普通配置的完整形状（快照与写入共用）。 */
@@ -19,8 +18,6 @@ export interface SettingsState {
   qoder: {
     currentAccountId: string | null
     endpointPreference: QoderEndpointPreference
-    /** 仅在已有/写入该 Host-only 字段时出现在 raw state；Client 快照始终不含。 */
-    lastSuccessfulHost?: QoderRuntimeHost | null
   }
   qodercn: { currentAccountId: string | null }
 }
@@ -75,7 +72,6 @@ export function createSettingsDouble(initial?: Partial<SettingsState>): Settings
     workbuddy: ref(state.workbuddy.currentAccountId),
     qoder: ref(state.qoder.currentAccountId),
     endpointPreference: ref(state.qoder.endpointPreference),
-    lastSuccessfulHost: ref(state.qoder.lastSuccessfulHost ?? null),
     qodercn: ref(state.qodercn.currentAccountId),
   }
   const config: SearchConfig = {
@@ -85,7 +81,6 @@ export function createSettingsDouble(initial?: Partial<SettingsState>): Settings
     qoder: {
       currentAccountId: refs.qoder,
       endpointPreference: refs.endpointPreference,
-      lastSuccessfulHost: refs.lastSuccessfulHost,
     },
     qodercn: { currentAccountId: refs.qodercn },
   }
@@ -106,7 +101,6 @@ export function createSettingsDouble(initial?: Partial<SettingsState>): Settings
       refs.workbuddy.set(current.workbuddy.currentAccountId)
       refs.qoder.set(current.qoder.currentAccountId)
       refs.endpointPreference.set(current.qoder.endpointPreference)
-      refs.lastSuccessfulHost.set(current.qoder.lastSuccessfulHost ?? null)
       refs.qodercn.set(current.qodercn.currentAccountId)
       edits.push(structuredClone(current))
     },
