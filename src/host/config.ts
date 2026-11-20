@@ -42,14 +42,16 @@ export interface SearchConfig {
 /**
  * 允许为 null 的字符串账号 ID。
  *
- * Schemastery 把 `null` 也视为可空，`.default(null)` 会被当作「没有默认值」
- * 而对缺失值返回 `undefined`。这里用一个非空哨兵默认值触发 transform，再
- * 把哨兵归一化为 `null`，保证快照中的 `currentAccountId` 精确为 `null`。
+ * 不要用 `Schema.transform` 归一化 `undefined`：Host `settings.describe` 会
+ * 经过 `volatileForm` 的 `new Schema(schema.toJSON())` 重建后再次序列化，
+ * callback 此时被 JSON 丢弃，客户端反序列化后 validate 会得到
+ * “callback is not a function”，整张设置卡永远 loading。
+ *
+ * 这里只声明普通 string/null 联合：显式 null 保持 null；缺省值按 Schemastery
+ * 语义得到 undefined，由 Host 快照读取用 `?? null` 归一化。
  */
-const nullableAccountId = () => Schema.transform(
-  Schema.union([Schema.string(), Schema.const(null)]),
-  (value: string | null | undefined) => value === undefined || value === '' ? null : value,
-).default('').volatile()
+const nullableAccountId = () =>
+  Schema.union([Schema.string(), Schema.const(null)]).default(null).volatile()
 
 /**
  * 插件行配置。

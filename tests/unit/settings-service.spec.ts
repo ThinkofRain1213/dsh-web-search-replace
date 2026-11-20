@@ -25,16 +25,18 @@ function createService() {
 }
 
 describe('SettingsService 初始快照', () => {
-  it('真实 volatile Config 模式解析出默认开关与四个 null 当前账号', () => {
+  it('真实 volatile Config 模式解析出默认开关；缺省账号由快照归一化为 null', () => {
     const config = Config({}) as unknown as SearchConfig
 
     expect(config.search.enabled.get()).toBe(false)
     expect(config.search.channel.get()).toBe('buddy')
-    expect(config.buddy.currentAccountId.get()).toBeNull()
-    expect(config.workbuddy.currentAccountId.get()).toBeNull()
-    expect(config.qoder.currentAccountId.get()).toBeNull()
+    // 普通 string/null 联合在缺失值上按 Schemastery 语义得到 undefined；
+    // SettingsService.readSnapshot 用 `?? null` 归一化（见下一个用例）。
+    expect(config.buddy.currentAccountId.get()).toBeUndefined()
+    expect(config.workbuddy.currentAccountId.get()).toBeUndefined()
+    expect(config.qoder.currentAccountId.get()).toBeUndefined()
     expect(config.qoder.endpointPreference.get()).toBe('auto')
-    expect(config.qodercn.currentAccountId.get()).toBeNull()
+    expect(config.qodercn.currentAccountId.get()).toBeUndefined()
   })
 
   it('默认关闭搜索、CodeBuddy，四个渠道均无当前账号', () => {

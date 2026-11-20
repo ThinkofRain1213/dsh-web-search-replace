@@ -24,7 +24,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { SettingsCard, type SettingsCardProps } from '../../src/client/SettingsCard.tsx'
 import * as clientModule from '../../src/client/index.ts'
+import { Config } from '../../src/host/config.ts'
 import { isAccountOrAuthMethod, routeAccounts } from './support/accounts-harness.ts'
+import { clientSchemaFailure, hostDescribedForm } from '../unit/support/host-settings-schema.ts'
 import {
   createConfigFormsDouble,
   createConnectionDouble,
@@ -262,6 +264,45 @@ describe('Client 服务注入（真实 Cordis）', () => {
     expect(config.textContent).toContain('需要账号')
     expect(mountedRoot.container.querySelector('[role="alert"]')).toBeNull()
     expect(locale.namespaces.get(clientModule.NS)?.zh['settings.title']).toBe('网页搜索渠道')
+  })
+
+  it('真实 Host schema 投影值与服务作用域注入组合后卡片 ready', async () => {
+    // 真实 Config 经 rc.5 Host `settings.describe` 投影：schema 信封与表单值
+    // 都来自真实 Schemastery 序列化，而不是手写 plain object。
+    const described = hostDescribedForm(Config)
+    const value = described.project(Config({}))
+    // 对应客户端 ConfigFormController.decode 的 schema 校验步骤；失败时
+    // 整个表单被判为不可用（loading）。
+    expect(clientSchemaFailure(described.wire, value)).toBeUndefined()
+
+    const { root, slots } = await createClientHarness()
+    const forms = createConfigFormsDouble(value, { status: 'ready', writable: true })
+    const accounts = routeAccounts({})
+    const rpc = createConnectionDouble(call => (
+      isAccountOrAuthMethod(call.method)
+        ? accounts(call)
+        : { ok: true, value: value as never }
+    ), { ignoredMethods: ['accounts.list', 'accounts.current'] })
+
+    await provide(root, 'configForms', forms.configForms)
+    await provide(root, 'connection', rpc.connection)
+    await settle()
+    expect(slots.cards).toHaveLength(1)
+
+    const mountedRoot = mount(createElement(SettingsCard, {
+      view: 'page',
+      ...injectedFace(slots.cards[0]),
+    } as unknown as SettingsCardProps))
+    mounted.push(mountedRoot)
+    await flush()
+
+    const stack = query<HTMLElement>(mountedRoot.container, '[data-dsh-web-search-channels="settings-card"]')
+    expect(stack.getAttribute('data-settings-status')).toBe('ready')
+    const toggle = query<HTMLButtonElement>(mountedRoot.container, '[role="switch"]')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    const config = query<HTMLElement>(mountedRoot.container, '[data-channel-config-host]')
+    expect(query(config, '[data-account-state]').getAttribute('data-account-state')).toBe('required')
+    expect(config.textContent).toContain('需要账号')
   })
 
   it('运行时 inject 只声明 apply 真正直接使用的服务', () => {

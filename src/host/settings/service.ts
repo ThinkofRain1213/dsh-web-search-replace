@@ -148,13 +148,13 @@ export class SettingsService {
         enabled: config.search.enabled.get(),
         channel: config.search.channel.get(),
       },
-      buddy: { currentAccountId: config.buddy.currentAccountId.get() },
-      workbuddy: { currentAccountId: config.workbuddy.currentAccountId.get() },
+      buddy: { currentAccountId: config.buddy.currentAccountId.get() ?? null },
+      workbuddy: { currentAccountId: config.workbuddy.currentAccountId.get() ?? null },
       qoder: {
-        currentAccountId: config.qoder.currentAccountId.get(),
+        currentAccountId: config.qoder.currentAccountId.get() ?? null,
         endpointPreference: config.qoder.endpointPreference.get(),
       },
-      qodercn: { currentAccountId: config.qodercn.currentAccountId.get() },
+      qodercn: { currentAccountId: config.qodercn.currentAccountId.get() ?? null },
     })
   }
 }
