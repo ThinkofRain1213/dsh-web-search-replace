@@ -292,7 +292,7 @@ qoder.lastSuccessfulHost: "center.qoder.sh" | "api2.qoder.sh" | null = null
 - 可热修改字段使用当前 DSH 的 volatile 配置机制；执行时读取每次调用的配置快照。
 - 不保存任何 Fetch 配置键。
 - 只有 `qoder` 保存 `endpointPreference`；另外三个渠道没有端点偏好字段。`auto / center / api2` 是用户意图，自动模式实际选中的域名和最近成功域属于运行状态，不改写用户下拉值。
-- 自动模式只在本机全局保存一个最近成功域，所有 Qoder 国际版账号共用；它是非秘密路由状态，通过 Host 管理的 `qoder.lastSuccessfulHost` 运行时字段持久化，不是账号 grant 字段，也不是用户 endpointPreference。没有记录时才从 center 开始，后续调用及插件重启后优先最近成功域，换账号不清空。它不是网络出口 ID，也不进入 Client 的普通设置快照；网络环境变化后若旧优选域失效，按 §9.6 的限定规则切换并在成功后更新记录。
+- 自动模式只在本机全局保存一个最近成功域，所有 Qoder 国际版账号共用；它是通过 Host `configEditor` 持久化保存的 `qoder.lastSuccessfulHost` 非秘密路由状态，不是账号 grant 字段，也不是用户 endpointPreference；DSH 重启后仍读取并优先使用该值。没有记录时才从 center 开始，后续调用及插件重启后优先最近成功域，换账号不清空。它不是网络出口 ID，也不进入 Client 的普通设置快照；网络环境变化后若旧优选域失效，按 §9.6 的限定规则切换并在成功后更新记录。
 - 账号显示所需的非秘密元数据可放入渠道配置或账号公开投影；秘密只能放 credentials。
 - 配置写入通过 `configEditor` / `configForms`，不自行读取和改写 profile 的 `cordis.patch.yml`。
 
