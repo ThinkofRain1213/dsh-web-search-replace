@@ -1,0 +1,130 @@
+// @vitest-environment jsdom
+/** NB-1：用最终 lib/client.js 的真实组件与类名验证跨 CSS Module 选择器。 */
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
+import * as React from 'react'
+import * as ReactDOM from 'react-dom'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+
+import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
+import { routeAccounts } from './support/accounts-harness.ts'
+import {
+  createConfigFormsDouble,
+  createConnectionDouble,
+  flush,
+  makeSnapshot,
+  mount,
+  query,
+  translator,
+  type MountedRoot,
+} from './support/settings-harness.ts'
+
+const ROOT = path.resolve(process.cwd())
+const mounted: MountedRoot[] = []
+let artifact = ''
+let settingsClasses: Record<string, string> = {}
+let menuClasses: Record<string, string> = {}
+let builtComponent: React.ComponentType<Record<string, unknown>> | null = null
+
+/** 从最终 Client 构建产物读取一张 CSS Module 的原始类→哈希类映射。 */
+function readMapping(name: string): Record<string, string> {
+  const match = artifact.match(new RegExp(`var ${name} = (\\{[^;]+\\});`))
+  if (match === null) throw new Error(`最终 Client 产物缺少 CSS Module 映射 ${name}`)
+  return JSON.parse(match[1]) as Record<string, string>
+}
+
+beforeAll(() => {
+  execFileSync(process.execPath, [path.join(ROOT, 'scripts/build-client.mjs')], {
+    cwd: ROOT,
+    stdio: 'ignore',
+  })
+  artifact = readFileSync(path.join(ROOT, 'lib/client.js'), 'utf8')
+  settingsClasses = readMapping('settings_card_default')
+  menuClasses = readMapping('Menu_default')
+
+  let factory: ((require: (specifier: string) => unknown) => {
+    apply: (ctx: Record<string, unknown>) => void
+  }) | undefined
+  Object.assign(window, {
+    __ModuleLoader__: {
+      load: (record: { factory: typeof factory }) => { factory = record.factory },
+    },
+  })
+  new Function('window', artifact)(window)
+  if (factory === undefined) throw new Error('最终 Client 未注册 lazy factory')
+  const client = factory(specifier => {
+    if (specifier === 'react') return React
+    if (specifier === 'react-dom') return ReactDOM
+    throw new Error(`测试不允许最终 Client 的运行时依赖 ${specifier}`)
+  })
+  const t = translator('zh')
+  const scope: Record<string, unknown> = {
+    locale: {
+      register: () => () => {},
+      bind: () => t,
+    },
+    slots: {
+      inject: (_name: string, callback: () => unknown) => callback(),
+      register: (_options: Record<string, unknown>, component: React.ComponentType<Record<string, unknown>>) => {
+        builtComponent = component
+        return () => {}
+      },
+    },
+    effect: (callback: () => unknown) => callback(),
+    inject: (_deps: readonly string[], callback: (scope: Record<string, unknown>) => void) => {
+      callback(scope)
+    },
+  }
+  client.apply(scope)
+  if (builtComponent === null) throw new Error('最终 Client 未注册 SettingsCard')
+})
+
+afterEach(() => {
+  for (const root of mounted.splice(0)) root.unmount()
+  document.body.innerHTML = ''
+  delete (window as { __ModuleLoader__?: unknown }).__ModuleLoader__
+})
+
+/** 用最终构建的 SettingsCard 和真实 Host 接缝挂载一个渠道。 */
+function renderBuiltChannel(channel: SearchSettingsSnapshot['search']['channel']) {
+  const snapshot = makeSnapshot({ enabled: true, channel })
+  const forms = createConfigFormsDouble(snapshot)
+  const rpc = createConnectionDouble(routeAccounts({}))
+  const t = translator('zh')
+  const root = mount(React.createElement(builtComponent as React.ComponentType<Record<string, unknown>>, {
+    view: 'page',
+    t,
+    configForms: forms.configForms,
+    connection: rpc.connection,
+  }))
+  mounted.push(root)
+  return root
+}
+
+describe('Qoder 跨 CSS Module 全宽规则（NB-1 RED）', () => {
+  it('最终 Menu 根同时持有官方类与 settings-card 类，命中最终 fieldControl 选择器', async () => {
+    const root = renderBuiltChannel('qoder')
+    await flush()
+    const fieldControl = query<HTMLElement>(root.container, '[data-qoder-endpoint-row] [class*="fieldControl"]')
+    const menuRoot = query<HTMLElement>(fieldControl, ':scope > [data-menu-root]')
+    const officialRoot = menuClasses.menuRoot
+    const settingsRoot = settingsClasses.menuRoot
+    const fieldControlClass = settingsClasses.fieldControl
+    expect(officialRoot).not.toBe(settingsRoot)
+    expect(menuRoot.classList.contains(officialRoot)).toBe(true)
+    expect(menuRoot.classList.contains(settingsRoot)).toBe(true)
+    expect(fieldControl.classList.contains(fieldControlClass)).toBe(true)
+    expect(artifact).toContain(`.${fieldControlClass} > .${settingsRoot}`)
+  })
+
+  it('SearchSection 不传附加类，保持官方 Menu 根且不受 Qoder 全宽规则影响', async () => {
+    const root = renderBuiltChannel('buddy')
+    await flush()
+    const menuRoot = query<HTMLElement>(root.container, '[data-search-section] [data-menu-root]')
+    expect(menuRoot.classList.contains(menuClasses.menuRoot)).toBe(true)
+    expect(menuRoot.classList.contains(settingsClasses.menuRoot)).toBe(false)
+    expect(menuRoot.parentElement?.classList.contains(settingsClasses.fieldControl)).toBe(false)
+  })
+})

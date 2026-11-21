@@ -21,6 +21,8 @@ export interface DropdownProps {
   readonly label?: string
   readonly describedBy?: string
   readonly id?: string
+  /** 透传到 Menu 根的可选附加类，用于跨 CSS Module 的布局接缝。 */
+  readonly className?: string
 }
 
 /** 渲染受控锚点与 rc5 Menu；保存与渠道切换仍由调用方负责。 */
@@ -34,6 +36,7 @@ export function Dropdown({
   label,
   describedBy,
   id,
+  className,
 }: DropdownProps): React.ReactElement {
   const generatedId = React.useId().replaceAll(':', '')
   const triggerId = id ?? `dsh-web-search-channels-dropdown-${generatedId}`
@@ -138,6 +141,7 @@ export function Dropdown({
       onSelect={select}
       onClose={closeMenu}
       returnFocus={returnFocus}
+      className={className}
       portal
       autoFocus
       minWidthFromAnchor

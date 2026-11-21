@@ -78,6 +78,7 @@ export function QoderEndpointRow({
           labelledBy={labelId}
           label={t('channel.endpoint.label')}
           describedBy={describedBy}
+          className={styles.menuRoot}
         />
       </div>
       <p

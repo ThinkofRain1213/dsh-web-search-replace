@@ -106,8 +106,9 @@
 │ │   div.labelGroup flex:1 min-width:0 padding:0 gap:4                     │ │
 │ │   label.label[for=qoder endpoint trigger] flex:0 1 auto 13/500/1.5      │ │
 │ │ ┆ .field ▸ gap ················································· 6px │
-│ │ div.fieldControl padding:0 › span.menuRoot padding:0                    │ │
+│ │ div.fieldControl padding:0 › span.menuRoot padding:0；同时持有官方与 settings 类 │ │
 │ │ button.selector 34px / 0 12px；选项仅 auto/center.qoder.sh/api2         │ │
+│ │ .fieldControl > .menuRoot 与 width:100% 命中同一最终 DOM；SearchSection 不附加该类 │ │
 │ │ 条件 open：body 下 portal menuSurface，结构与搜索渠道菜单完全相同       │ │
 │ │ ┆ .field ▸ gap ················································· 6px │
 │ │ p.hint[data-endpoint-status] margin: 0 font:12/400 line-height:1.5       │ │
