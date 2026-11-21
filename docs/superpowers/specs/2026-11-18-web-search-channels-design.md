@@ -2,7 +2,7 @@
 
 - 日期：2026-11-18
 - 状态：已于 2026-11-18 获用户批准；builder 可实施性审查、四渠道与运行/验收支持矩阵、Qoder 国际版端点策略均已纳入
-- 目标运行环境：DeepSeek Harness Desktop / Web，`0.2.2-rc.3`
+- 目标运行环境：DeepSeek Harness Desktop / Web，`0.2.2-rc.5`
 - 首个交付版本：`0.1.0`（完整 Search 产品）
 - 后续版本：`0.2.0`（CodeBuddy / WorkBuddy Fetch 备选能力，默认关闭）
 - 项目目录当前仅包含本设计文档；未初始化 Git、未搭建产品工程、未编写产品代码
@@ -397,7 +397,7 @@ search.enabled = true
 
 ### 9.2 参数与执行契约
 
-以当前 DSH `0.2.2-rc.3` 为基线：
+以当前 DSH `0.2.2-rc.5` 为基线：
 
 - `queries` 为非空字符串数组，默认最多 10 条。
 - 空白字符串拒绝；按当前官方规则做精确字符串去重，不沿用 JetHub 先 trim 再去重的偏差。
@@ -430,7 +430,7 @@ OFF `next()` 后，官方原始注册和执行链继续：
 
 `0.1.0` 的最低必支持矩阵明确限定为：
 
-- 当前打包的 Desktop `0.2.2-rc.3` 及其自带 Web GUI；不包含 standalone Web、Headless、SDK、ACP 等组合的支持承诺。
+- 当前打包的 Desktop `0.2.2-rc.5` 及其自带 Web GUI；不包含 standalone Web、Headless、SDK、ACP 等组合的支持承诺。
 - Native 与 PTC 两种 Agent 执行模式。
 - 用户实际使用的 Magpie / WPS 灵犀路由，以 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash 两个代表模型覆盖大小两类模型；具体 model ID 不得成为渠道选择条件。
 - DeepSeek 官方路由用于 OFF 差分对照，验证插件关闭后官方准入、执行和费用行为不变。

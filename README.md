@@ -6,7 +6,7 @@ DeepSeek 模型渠道上。`0.1.0` 只接管 `web_search`；`web_fetch` 保持�
 
 - 包名：`dsh-web-search-channels`
 - 当前版本：`0.1.0`
-- 目标运行环境：DeepSeek Harness Desktop `0.2.2-rc.3` 及其自带 Web GUI
+- 目标运行环境：DeepSeek Harness Desktop `0.2.2-rc.5` 及其自带 Web GUI
 
 ## 当前状态
 
@@ -102,13 +102,19 @@ node scripts/verify-package.mjs          # 真实 pack --dry-run 内容、导入
 pnpm verify                              # 聚合以上静态门禁
 ```
 
-本机当前安装的是开发环境 `0.2.2-rc.5`，完整测试需显式声明：
+默认（不设置该变量）按当前基线 `0.2.2-rc.5` 校验：
 
 ```powershell
-$env:DSH_TEST_EXPECTED_VERSION='0.2.2-rc.5'; pnpm test
+pnpm test
 ```
 
-默认（不设置该变量）仍按目标 `0.2.2-rc.3` 校验，最终真实验收必须在 rc.3 完成。
+如需在其他兼容版本上做对照验证，可显式覆盖期望版本：
+
+```powershell
+$env:DSH_TEST_EXPECTED_VERSION='0.2.2-rc.3'; pnpm test
+```
+
+显式覆盖只影响本次测试断言，不改变 `0.2.2-rc.5` 的基线与最终验收目标。
 
 `verify-css-isolation` 直接读取同级现有只读构建产物
 `dsh-project-groups/lib/client.js`、`dsh-auto-expand/lib/client.js`；反向对照只在
@@ -129,7 +135,7 @@ pnpm 回退，也不会为了规避环境要求而恢复可能执行安装脚本
 
 ## 已知边界
 
-- 真实 `0.2.2-rc.3` Desktop、Web GUI、Native/PTC、Kimi-K3.1 Pro、
+- 真实 `0.2.2-rc.5` Desktop、Web GUI、Native/PTC、Kimi-K3.1 Pro、
   DeepSeek V4.1 Flash、四渠道真实账号与浏览器计算样式/截图均未验收。
 - 多插件同时接管 `web_search` 时不自动协调；必须手动关闭 JetHub 的搜索接管。
 - Qoder 自动端点依赖厂商网络可达性；换网络后可能需要一次失败才能纠正优选域，
@@ -142,7 +148,7 @@ pnpm 回退，也不会为了规避环境要求而恢复可能执行安装脚本
 package.json                          # 包身份、exports、dsh.bundle / dsh.client
 cordis.patch.yml                      # 插入 id = name = dsh-web-search-channels 的插件行
 src/host/                             # Host：tools/execute 接管、渠道驱动、账号、生命周期
-src/client/                           # Client：设置卡、账号/授权 UI、自有 rc3 控件
+src/client/                           # Client：设置卡、账号/授权 UI、自有无依赖控件
 src/shared/                           # 共享契约、渠道注册表、RPC 类型
 locale/zh.json, locale/en.json        # meta.title / meta.description
 scripts/build-client.mjs              # esbuild：Host ESM + Client lazy-CJS 包装

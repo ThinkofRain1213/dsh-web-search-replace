@@ -10,7 +10,7 @@
 
 **Spec:**
 - 产品设计：`docs/superpowers/specs/2026-11-18-web-search-channels-design.md`
-- 设置页规范：`C:\Users\Think\Desktop\项目\DSH-插件设置页UI规范.md`（DSH `0.2.2-rc.3`，SHA256 `787F9807B1960B19B996196272DD6B0BC30020FC0506300665A3DA035F525AF6`）
+- 设置页规范：`C:\Users\Think\Desktop\项目\DSH-插件设置页UI规范.md`（规范原文基于 DSH `0.2.2-rc.3`，SHA256 `787F9807B1960B19B996196272DD6B0BC30020FC0506300665A3DA035F525AF6`；原文不改，当前基线为 rc.5，其中 UI 数值只有经 rc.5 复核后才沿用）
 - JetHub 参考实现：`C:\Users\Think\Desktop\项目\deepseek-harness-codearts`（只提取协议与测试经验，不复制聊天账号池）
 
 ## Global Constraints
@@ -23,9 +23,10 @@
 - Qoder 国际版端点偏好为 `auto / center / api2`，默认 `auto`；无最近成功记录时自动从 center 开始，仅在 DNS/TCP/TLS/连接失败、明显超时或 5xx 时在两个国际版域名间切换一次，并在本机全局持久保存最近成功域供后续与重启后优先使用，固定模式不切换且忽略该记录。`qoder.lastSuccessfulHost` 是通过本插件 Host-only 全局持久记录保存的非秘密路由状态，DSH 重启后仍读取并优先使用；它不是账号 grant、普通 Config/configForms 字段或用户偏好，也不进入 Client 普通设置快照。不得并行双发、后台测速、虚构网络出口 ID 或使用 `gateway.qoder.com.cn`。
 - 普通配置只保存非秘密用户意图；token、刷新材料和签名秘密只进入本插件 Host credentials。Client 只接收脱敏 DTO。登录、授权、重新登录、删除和清除数据不开放 Agent tool。
 - Qoder `machine_id` 是每次登录新生成的随机、非秘密设备标识（不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密）；设备绑定协议要求它出现在授权 URL 中，因此只允许它作为该次授权 URL 的 `machine_id` 查询参数进入发起流程的 Client 可见 `authUrl`。它仍保存于对应 qoder grant 供签名和续期使用，但不得进入日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化，此例外不适用于 token、刷新材料或其他签名秘密。
-- 最低验收矩阵：Desktop `0.2.2-rc.3` 及其 Web GUI、Native + PTC、Magpie/WPS 灵犀的 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash、DeepSeek 官方路由 OFF 对照。任一声明项失败阻断发布，不得从报告中删项。
+- 最低验收矩阵：Desktop `0.2.2-rc.5` 及其 Web GUI、Native + PTC、Magpie/WPS 灵犀的 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash、DeepSeek 官方路由 OFF 对照。任一声明项失败阻断发布，不得从报告中删项。
+- 当前验收基线：`0.2.2-rc.5`（用户于 2026-11-21 明确“全部改为 rc5”，rc.3 不再是发布阻断）。rc.3 时期记录的设置页 UI 数值只有经 rc.5 复核后才沿用到实现与验收；测试仍保留 `DSH_TEST_EXPECTED_VERSION` 显式覆盖能力。
 - 第三方设置卡只用 `plugins.bundle.config`，key 必须等于 npm 包名 `dsh-web-search-channels`；该 slot 只请求 `view:'page'`，不使用 `plugins.item`，不期待 Host 传 `form`。
-- 设置页严格使用复审后的 rc3 规范：下拉锚点 `34px / 0 12px`；Menu 项 `min-height:34px; padding:6px 8px; gap:6px`；Switch 轨道 `36×20`、thumb `16×16`、`translateX(16px)`、`120ms`；`.fieldSlot { padding:0; min-width:0 }`，内部 `.field` 才是 `padding:12px 0; gap:6px`。
+- 设置页以 rc.5 为当前基线，沿用复审后的规范数值（经 rc.5 复核后生效）：下拉锚点 `34px / 0 12px`；Menu 项 `min-height:34px; padding:6px 8px; gap:6px`；Switch 轨道 `36×20`、thumb `16×16`、`translateX(16px)`、`120ms`；`.fieldSlot { padding:0; min-width:0 }`，内部 `.field` 才是 `padding:12px 0; gap:6px`。
 - section 的 `h3` 不命中首末 `−12px`；只有 `.row/.group` 自身 12px padding 或 `.fieldSlot` 内部 `.field`/`.hintRow` 才应用对应补偿。section 直接末孩子为 `.hintRow` 时才用 `.section > .hintRow:last-child`。
 - 不得运行时值导入任何 Harness Client 包；只允许 `import type`。不得打入第二份 React/ReactDOM 或 Host Client 包。所有可见文案至少提供 zh/en。
 - 所有最终样式表必须参与跨插件类名交集检查和双向反向对照；真实页面必须量取计算样式，不能用源码字符串断言代替。
@@ -150,7 +151,7 @@ git commit -m "feat: add channel registry and settings management"
 
 - [ ] **Step 1: 先写真实工具管道失败测试**
 
-用当前 DSH `0.2.2-rc.3` 的真实 Cordis、tool-web、tools pipeline 和 output render，不用手写 waterfall 替身代替整个宿主。断言：Native/PTC 均可解析 `web_search`；安装前 ON 无拦截时走官方 spy；安装后 OFF `next()`；ON 返回 `{value}` 经官方 schema/render；ON 无账号错误不调用官方。
+用当前 DSH `0.2.2-rc.5` 的真实 Cordis、tool-web、tools pipeline 和 output render，不用手写 waterfall 替身代替整个宿主。断言：Native/PTC 均可解析 `web_search`；安装前 ON 无拦截时走官方 spy；安装后 OFF `next()`；ON 返回 `{value}` 经官方 schema/render；ON 无账号错误不调用官方。
 
 - [ ] **Step 2: 运行集成测试，确认拦截器缺失导致失败**
 
@@ -513,7 +514,7 @@ git add src/host/channels/qodercn/auth.ts src/host/channels/qodercn/auth-rpc.ts 
 git commit -m "feat: add Qoder CN authorization lifecycle"
 ```
 
-### Task 13: SearchSection、动态 ChannelConfigHost 与 rc3 控件
+### Task 13: SearchSection、动态 ChannelConfigHost 与 rc5 控件
 
 **Files:**
 - Create: `docs/ui/settings-card-profile.md`
@@ -542,9 +543,9 @@ git commit -m "feat: add Qoder CN authorization lifecycle"
 Run: `pnpm vitest run tests/client/search-section.spec.tsx tests/client/channel-config-host.spec.tsx tests/unit/settings-card-profile.spec.ts`
 Expected: FAIL，提示组件或完整剖面不存在。
 
-- [ ] **Step 3: 实现 rc3 自有控件与动态搜索区**
+- [ ] **Step 3: 实现 rc5 自有控件与动态搜索区**
 
-Switch 必须 `role=switch/aria-checked/aria-label`，36×20、thumb16、120ms、disabled .5。Dropdown 锚点 34px/`0 12px`，Menu 项 34/6 8/gap6/13 20，portal+autoFocus+minWidthFromAnchor，选择后焦点回 trigger。不得运行时 import Host Client 包。设置控制器用 `configForms.get('dsh-web-search-channels')` 读取与订阅快照，写入只走 Task 2 的 settings RPC；slot props 不读取 `form`，因为 bundle.config 在 rc3 不传它。
+Switch 必须 `role=switch/aria-checked/aria-label`，36×20、thumb16、120ms、disabled .5。Dropdown 锚点 34px/`0 12px`，Menu 项 34/6 8/gap6/13 20，portal+autoFocus+minWidthFromAnchor，选择后焦点回 trigger。不得运行时 import Host Client 包。设置控制器用 `configForms.get('dsh-web-search-channels')` 读取与订阅快照，写入只走 Task 2 的 settings RPC；slot props 不读取 `form`（rc.3 实测 bundle.config 不传 `form`，该结论需在 rc.5 复核后沿用）。
 
 - [ ] **Step 4: 实现动态配置与精确布局**
 
@@ -559,7 +560,7 @@ Expected: 全部 PASS；动态配置与运行渠道一致，无双重 padding �
 
 ```bash
 git add docs/ui src/client tests/client tests/unit/settings-card-profile.spec.ts
-git commit -m "feat: add dynamic search settings and rc3 controls"
+git commit -m "feat: add dynamic search settings and rc5 controls"
 ```
 
 ### Task 14: 四渠道账号 UI、内联授权与国际版端点行
@@ -681,7 +682,7 @@ Expected: 全部 PASS；反向对照按预期 FAIL 后被门禁识别；所有�
 
 - [ ] **Step 4: 主会话完成真实 DSH 运行矩阵**
 
-在真实 Desktop 0.2.2-rc.3 中分别创建 Native 与 PTC 测试 Session，使用 Magpie/WPS 灵犀的 Kimi-K3.1 Pro 和 DeepSeek V4.1 Flash，验证 ON/OFF、无账号 fail-closed、官方 output 和 PTC binding。DeepSeek 官方路由只做 OFF 差分；任何真实 DeepSeek 付费搜索必须另行征得用户当次确认，不能用 mock 结果冒充真实免费。
+在真实 Desktop 0.2.2-rc.5 中分别创建 Native 与 PTC 测试 Session，使用 Magpie/WPS 灵犀的 Kimi-K3.1 Pro 和 DeepSeek V4.1 Flash，验证 ON/OFF、无账号 fail-closed、官方 output 和 PTC binding。DeepSeek 官方路由只做 OFF 差分；任何真实 DeepSeek 付费搜索必须另行征得用户当次确认，不能用 mock 结果冒充真实免费。
 
 - [ ] **Step 5: 主会话与用户配合完成四渠道真实账号验收**
 

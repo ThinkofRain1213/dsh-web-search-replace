@@ -28,7 +28,7 @@ interface RuntimeItem {
 
 /** Global Constraints 最低验收矩阵的必测项；缺任一项都阻断发布。 */
 const REQUIRED_RUNTIME: readonly RuntimeItem[] = [
-  { id: 'RM-01', keywords: ['0.2.2-rc.3', 'Web GUI'] },
+  { id: 'RM-01', keywords: ['0.2.2-rc.5', 'Web GUI'] },
   { id: 'RM-02', keywords: ['Native'] },
   { id: 'RM-03', keywords: ['PTC'] },
   { id: 'RM-04', keywords: ['Kimi-K3.1 Pro'] },
