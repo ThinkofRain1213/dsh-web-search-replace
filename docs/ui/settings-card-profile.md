@@ -62,17 +62,26 @@
 │ │ span.menuRoot padding:0 anchor-name:--dsh-web-search-channels-menu-trigger-*               │ │
 │ │ button.selector height:34px padding:0 12px gap:12 radius-md            │ │
 │ │ span.selectorLabel → svg.chevron 14px aria-hidden                      │ │
-│ │ 条件 open：body 下 portal menuSurface，逻辑归属本 trigger，不占 stack  │ │
+│ │ 条件 open：body 下 portal A = div.menuSurface，逻辑归属 trigger，不占 stack │ │
 │ │   padding:4 border:0 radius-lg elevation-prominent z-index:1100        │ │
 │ │   min-width:min(144px,100vw-24px) max-width:min(360px,100vw-24px)      │ │
 │ │   width:max-content positionAnchor 与 trigger anchor-name 相同         │ │
 │ │   data-match-anchor-width min-width:min(anchor-size(width),100vw-24px) │ │
 │ │   position-try-fallbacks + viewport overflow-y:auto                    │ │
-│ │   div.menuMaterial padding:0 → div.menuViewport padding:0 → MenuRow            │ │
-│ │   button.menuItem min-height:34px padding:6px 8px gap:6 font:13/20         │ │
-│ │   span.menuItemLabel flex:1 → 仅 selected 时 trailing svg.menuCheck 14×14      │ │
-│ │   selected background:transparent；focus-visible background hover      │ │
-│ │   focus-visible outline:none；disabled opacity:.4 cursor:not-allowed   │ │
+│ │   div.menuMaterial padding:0 → div.menuViewport padding:0 → MenuRow    │ │
+│ │   button.menuItem min-height:34px padding:6px 8px gap:6 font:13/20     │ │
+│ │   span.menuItemLabel flex:1 → 仅 selected+check 时 trailing svg.menuCheck 14×14 │ │
+│ │   selected+check background:transparent；selection=fill 才用 selectedFill │ │
+│ │   focus-visible background hover + outline:none；disabled opacity:.4   │ │
+│ │ 条件 open：body 下独立 portal B = div.menuBacking[data-menu-backing]   │ │
+│ │   padding:0 radius-lg，与 surface 同 anchor/phase；非 darwin display:none │ │
+│ │   darwin 才固定定位绘制 bg-base；不进 stack，也不是 surface 的 border  │ │
+│ │ 条件 contextual：surface+backing data-menu-phase=enter/dismiss/replace │ │
+│ │   reduced-motion 时 phase animation-duration:0ms；标准 Dropdown 无 phase │ │
+│ │ 条件 entry.submenu：独立 menuSubmenu portal，side/page 只选一种布局    │ │
+│ │   ArrowRight 进入、Escape/ArrowLeft 先回父菜单，第二次 Escape 才关闭   │ │
+│ │ 条件 anchor 祖先 inert/hidden 或 trigger 失联：MutationObserver 关闭   │ │
+│ │ 条件 Host modal 在前台：isBehindModal 阻止幕后方向键/Tab/Escape       │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
 │ ┆ .row[data-row="channel"] ▸ padding-bottom ······················· 12px │
 │ ┆ .section > .row:last-child ▸ margin-bottom ······················ −12px │
@@ -103,6 +112,7 @@
 │ │ ┆ .field ▸ gap ················································· 6px │
 │ │ p.hint[data-endpoint-status] margin: 0 font:12/400 line-height:1.5       │ │
 │ │ 条件 auto 且无观测：尚无运行观测；auto 有观测：实际 host；fixed：所选域 │ │
+│ │ 所有分支 statusText 均为纯字符串；data-actual/selected-host 在 p 上，无 code │ │
 │ │ ┆ .field ▸ gap ················································· 6px │
 │ │ p.hint「仅支持搜索，不支持服务端网页抓取。」 margin: 0                  │ │
 │ │ 条件 endpoint error：p.error[data-endpoint-error][role=alert] margin: 0 │ │
@@ -145,13 +155,17 @@
 │ │ │   div.confirmActions padding:0 gap:8 [复制/取消/关闭]               │ │
 │ │ │ ┆ .field ▸ gap ············································· 6px │ │
 │ │ │ 条件 accounts.length>0：div.accountList padding:0 gap:0             │ │
-│ │ │   每个账号 div.accountRow padding:12px 0 gap:8                      │ │
+│ │ │ ┆ 前一 field 孩子与 accountList 的父 field gap ··············· 6px │ │
+│ │ │   首 div.accountRow:first-child padding-top:0，不再形成 6+12=18px  │ │
+│ │ │   每个账号 div.accountRow 基础 padding:12px 0 gap:8                │ │
 │ │ │     div.accountRowText flex:1 padding:0 gap:6                       │ │
 │ │ │       div.accountRowHead padding:0 gap:8 + Tag + 显示名 + 脱敏标识  │ │
 │ │ │       div.accountStatusLine padding:0 gap:8 + 状态/排队/处理中      │ │
 │ │ │     div.accountActions flex:none padding:0 gap:8                    │ │
 │ │ │       [设为当前使用] 仅备选 + [重新登录] + [删除]                   │ │
-│ │ │   相邻账号内容间距 = 前行 padding-bottom 12 + 后行 padding-top 12   │ │
+│ │ │   相邻账号间：.accountRow + .accountRow border-top:0.5px margin:0  │ │
+│ │ │   相邻账号内容间距 = 前行 padding-bottom 12 + 后行 padding-top 12 = 24px │ │
+│ │ │   末 div.accountRow:last-child padding-bottom:0，不再形成 12+12+12=36px │ │
 │ │ │ 条件 deletingAccount：div.confirmBox padding:0 gap:6                │ │
 │ │ │   span.confirmTitle「确认删除账号」 13/500/19.5                     │ │
 │ │ │   span.warning[data-delete-impact] state-warn-primary 12/400/18     │ │
@@ -211,7 +225,7 @@
 | Menu 定位 | portal 到 body；trigger `anchor-name` 与 surface `positionAnchor` 对应；`data-match-anchor-width` 以 `anchor-size(width)` 提供最小宽度；完整 `position-try-fallbacks`；viewport 独立滚动，不手写 left/top rect |
 | Dropdown 键盘 / 焦点 | autoFocus；方向键/Home/End 跳过 disabled；Escape、Shift+Tab、普通 Tab、outside pointer 按 rc5；选择后回 trigger；保留慢保存最终回焦 R30，用户竞争焦点时不抢 |
 | 字段 | `.field` gap 6 / padding `12px 0`；`head > labelGroup`，labelGroup flex 1，组内 label flex `0 1 auto`；hint 为独立 p，错误与警告 token 分离；fieldSlot padding 0 |
-| 账号 / 操作 | 账号 head 的 labelGroup flex 1，右侧 badges/accountActions 自然靠右，不用外层 justify 补偿；账号行 padding `12px 0`；按钮复制 rc5 small outline，Tag 复制官方几何/tone |
+| 账号 / 操作 | 账号 head 的 labelGroup flex 1，右侧 badges/accountActions 自然靠右，不用外层 justify 补偿；账号行基础 padding `12px 0`，首行 top 0、末行 bottom 0，行间 hairline 0.5px；按钮复制 rc5 small outline，Tag 复制官方几何/tone |
 | 展示框 | 授权 URL padding 12、0.5px border-l2、radius-lg、bg-base、code font、12/18、pre-wrap/anywhere；只读，不自动打开、不持久化 |
 | 状态与警告 | OFF 只锁渠道选择且保值；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
 | 业务边界 | 不提前实现真实 external-open；删除当前账号默认“暂不指定”替代；清除全部必须就地二次确认；不改变 settings.update、accounts/auth RPC 或 generation/queue 语义 |
@@ -220,7 +234,7 @@
 
 当前只以静态源码、构建产物与 jsdom 验证真实 React DOM、事件、焦点、portal 结构、授权轮询/generation 与 RPC 调用形状。主会话随后仅在独立 `DSH_HOME` 中验收：
 
-- 真实计算样式（首末 −12px、hintRow −6px、34px、36 × 20、账号行 12px 等）、明暗主题与窄宽度；
+- 真实计算样式（首末 −12px、hintRow −6px、34px、36 × 20、账号行基础 12px 与首末 0、行间 hairline、独立 backing portal 等）、明暗主题与窄宽度；
 - CSS anchor positioning 在滚动详情列中的实际位置、`position-try` fallback 与 portal 不裁剪；
 - zh/en 切换不重挂载、live slot key、Theme token、控制台无 slot entry crash；
 - 真实 Host configForms、实际运行观测 host、四渠道真实账号授权/搜索；

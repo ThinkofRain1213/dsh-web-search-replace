@@ -52,6 +52,11 @@ export function QoderEndpointRow({
     ? t('channel.endpoint.auto')
     : ENDPOINT_HOSTS[preference]
   const describedBy = [statusId, descriptionId, error === null ? '' : errorId].filter(Boolean).join(' ')
+  const statusText = preference === 'auto'
+    ? observedHost === null
+      ? t('channel.endpoint.noObservation')
+      : `${t('channel.endpoint.actual')}${observedHost}`
+    : `${t('channel.endpoint.fixed')}${ENDPOINT_HOSTS[preference]}`
 
   return (
     <div className={styles.field} data-qoder-endpoint-row="" data-preference={preference}>
@@ -80,22 +85,10 @@ export function QoderEndpointRow({
         className={styles.hint}
         data-endpoint-status=""
         data-state={preference === 'auto' ? (observedHost === null ? 'unobserved' : 'observed') : 'fixed'}
+        data-actual-host={preference === 'auto' && observedHost !== null ? '' : undefined}
+        data-selected-host={preference === 'auto' ? undefined : ''}
       >
-        {preference === 'auto'
-          ? observedHost === null
-            ? t('channel.endpoint.noObservation')
-            : (
-              <>
-                {t('channel.endpoint.actual')}
-                <code data-actual-host="">{observedHost}</code>
-              </>
-            )
-          : (
-            <>
-              {t('channel.endpoint.fixed')}
-              <code data-selected-host="">{ENDPOINT_HOSTS[preference]}</code>
-            </>
-          )}
+        {statusText}
       </p>
       <p id={descriptionId} className={styles.hint} data-endpoint-description="">
         {t('channel.endpoint.description')}

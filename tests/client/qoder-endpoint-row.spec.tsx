@@ -130,7 +130,10 @@ describe('QoderEndpointRow（真实 DOM）', () => {
 
     const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(trigger.textContent).toContain(t('channel.endpoint.auto'))
-    expect(query<HTMLElement>(row, '[data-actual-host]').textContent).toBe('api2.qoder.sh')
+    const status = query<HTMLElement>(row, '[data-actual-host]')
+    expect(status.textContent).toBe(`${t('channel.endpoint.actual')}api2.qoder.sh`)
+    expect(status.children).toHaveLength(0)
+    expect(status.querySelector('code')).toBeNull()
     expect(query<HTMLElement>(row, '[data-endpoint-status]').textContent)
       .toContain(t('channel.endpoint.actual'))
     expect(onChange).not.toHaveBeenCalled()
@@ -140,16 +143,20 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     const center = renderRow({ preference: 'center', actualHost: 'api2.qoder.sh' })
     expect(query<HTMLButtonElement>(center.row, '[data-dropdown-trigger]').textContent)
       .toContain('center.qoder.sh')
-    expect(query<HTMLElement>(center.row, '[data-selected-host]').textContent)
-      .toBe('center.qoder.sh')
+    const centerStatus = query<HTMLElement>(center.row, '[data-selected-host]')
+    expect(centerStatus.textContent).toBe(`${center.t('channel.endpoint.fixed')}center.qoder.sh`)
+    expect(centerStatus.children).toHaveLength(0)
+    expect(centerStatus.querySelector('code')).toBeNull()
     expect(center.row.querySelector('[data-actual-host]')).toBeNull()
     expect(center.row.textContent).not.toContain('api2.qoder.sh')
 
     const api2 = renderRow({ preference: 'api2', actualHost: 'center.qoder.sh' })
     expect(query<HTMLButtonElement>(api2.row, '[data-dropdown-trigger]').textContent)
       .toContain('api2.qoder.sh')
-    expect(query<HTMLElement>(api2.row, '[data-selected-host]').textContent)
-      .toBe('api2.qoder.sh')
+    const api2Status = query<HTMLElement>(api2.row, '[data-selected-host]')
+    expect(api2Status.textContent).toBe(`${api2.t('channel.endpoint.fixed')}api2.qoder.sh`)
+    expect(api2Status.children).toHaveLength(0)
+    expect(api2Status.querySelector('code')).toBeNull()
     expect(api2.row.textContent).not.toContain('center.qoder.sh')
   })
 
@@ -216,6 +223,9 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     expect(error.tagName).toBe('P')
     const describedBy = trigger.getAttribute('aria-describedby')?.split(' ') ?? []
     expect(describedBy).toEqual(expect.arrayContaining([status.id, description.id, error.id]))
+    for (const hint of row.querySelectorAll('p[class*="hint"]')) {
+      expect(hint.children, '字段 hint 必须是纯字符串，不允许嵌入 code 等元素').toHaveLength(0)
+    }
   })
 
   it('英文文案覆盖端点行，自动无观测不会出现中文', () => {

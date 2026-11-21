@@ -1,5 +1,5 @@
 /**
- * 自有 Switch：复制 rc3 primitives 的 markup、ARIA、几何与状态。
+ * 自有 Switch：复制 rc5 primitives 的 markup、ARIA、几何与状态。
  *
  * 不导入任何 Harness Client 控件；类名由本插件 CSS Modules 隔离。
  */

@@ -42,7 +42,7 @@ const SIBLINGS = [
 ]
 
 const CSS_LITERAL = /(?:const\s+css(?:\$\w+)?\s*=\s*|style\.textContent\s*=\s*)("(?:[^"\\]|\\.)*")/g
-const STYLE_ID = /(?:tagId|styleId)(?:\$\w+)?\s*=\s*"([^"]+)"/g
+const STYLE_ID = /(?:tagId|styleId)(?:\$\w+|\d+)?\s*=\s*"([^"]+)"/g
 const MAPPING_OBJECT = /var\s+([A-Za-z0-9_$]+_default)\s*=\s*(\{(?:\s*"(?:[^"\\]|\\.)*"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?)*\}\s*);/g
 const CSS_CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g
 

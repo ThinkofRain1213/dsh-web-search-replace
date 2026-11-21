@@ -14,6 +14,12 @@ import { describe, expect, it } from 'vitest'
 const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const PROFILE_PATH = 'docs/ui/settings-card-profile.md'
 const CSS_PATH = 'src/client/styles/settings-card.module.css'
+const MENU_CSS_PATHS = [
+  'src/client/components/Menu.module.css',
+  'src/client/components/MenuSurface.module.css',
+  'src/client/components/Tooltip.module.css',
+  'src/client/components/ShortcutKeys.module.css',
+]
 
 /** 读取仓库相对路径的 UTF-8 文件。 */
 function readText(relativePath: string): string {
@@ -32,10 +38,10 @@ function escapeRegExp(value: string): string {
  * @returns 花括号内的声明。
  */
 function cssBlock(css: string, selector: string): string {
-  const pattern = new RegExp(`(?:^|\\n)\\s*${escapeRegExp(selector)}\\s*\\{([^{}]*)\\}`, 'm')
-  const match = css.match(pattern)
-  expect(match, `CSS 缺少规则 ${selector}`).not.toBeNull()
-  return match?.[1] ?? ''
+  const pattern = new RegExp(`(?:^|\\n)\\s*${escapeRegExp(selector)}\\s*(?:,\\s*[^,{]+)?\\s*\\{([^{}]*)\\}`, 'gm')
+  const blocks = [...css.matchAll(pattern)].map(match => match[1] ?? '').join('\n')
+  expect(blocks, `CSS 缺少规则 ${selector}`).not.toBe('')
+  return blocks
 }
 
 /**
@@ -118,11 +124,14 @@ describe('完整设置卡剖面', () => {
     expect(profile).toContain('34px')
     expect(profile).toContain('36 × 20')
     expect(profile).toContain('0.5px')
+    expect(profile).toContain('data-menu-backing')
+    expect(profile).toContain('.accountRow + .accountRow')
   })
 })
 
 describe('设置卡 CSS 契约', () => {
-  const css = readText(CSS_PATH)
+  const layoutCss = readText(CSS_PATH)
+  const css = [CSS_PATH, ...MENU_CSS_PATHS].map(readText).join('\n')
 
   it('.stack 不依赖容器 gap，section/row/field 使用规范间距', () => {
     expect(cssBlock(css, '.stack')).toMatch(/display:\s*flex;/)
@@ -185,8 +194,8 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.menu')).toMatch(/padding:\s*4px;/)
     expect(cssBlock(css, '.menu')).toMatch(/border:\s*0;/)
     expect(cssBlock(css, '.menu')).toMatch(/box-shadow:\s*var\(--dsw-elevation-prominent\)/)
-    expect(cssBlock(css, '.menu')).toMatch(/min-width:\s*min\(144px, calc\(100vw - 24px\)\);/)
-    expect(cssBlock(css, '.menu')).toMatch(/max-width:\s*min\(360px, calc\(100vw - 24px\)\);/)
+    expect(css).toMatch(/\.menu\s*\{[^}]*min-width:\s*min\(144px, calc\(100vw - 24px\)\);/)
+    expect(css).toMatch(/\.menu\s*\{[^}]*max-width:\s*min\(360px, calc\(100vw - 24px\)\);/)
     expect(cssBlock(css, '.menuPortal')).toMatch(/position:\s*fixed;/)
     expect(cssBlock(css, '.menuPortal')).toMatch(/width:\s*max-content;/)
     expect(cssBlock(css, '.menuPortal')).toMatch(/z-index:\s*1100;/)
@@ -206,6 +215,8 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.menuCheck')).toMatch(/height:\s*14px;/)
     expect(cssBlock(css, '.menuCheck')).toMatch(/color:\s*var\(--dsw-alias-label-primary\)/)
     expect(cssBlock(css, '.menuSelected')).toMatch(/background:\s*transparent;/)
+    expect(cssBlock(css, '.menuSelectedFill')).toMatch(/background:\s*var\(--dsw-alias-interactive-bg-hover\);/)
+    expect(cssBlock(css, '.menuSurface[data-menu-phase] > *, .menuBacking[data-menu-phase]')).toMatch(/animation-duration:\s*0ms;/)
     expect(css).toMatch(/\.menuItem:disabled,\s*\.menuItem\[aria-disabled='true'\]\s*\{[^}]*opacity:\s*0\.4;/)
     expect(css).toContain('@position-try --dsh-web-search-channels-menu-above')
     expect(css).toContain('@position-try --dsh-web-search-channels-menu-wide-window')
@@ -226,6 +237,8 @@ describe('设置卡 CSS 契约', () => {
     }
     expect(cssBlock(css, '.accountRow')).toMatch(/padding:\s*12px 0;/)
     expect(cssBlock(css, '.accountRow')).not.toMatch(/justify-content:/)
+    expect(cssBlock(css, '.accountRow:first-child')).toMatch(/padding-top:\s*0;/)
+    expect(cssBlock(css, '.accountRow:last-child')).toMatch(/padding-bottom:\s*0;/)
     expect(cssBlock(css, '.accountRowText')).toMatch(/flex:\s*1 1 auto;/)
     expect(cssBlock(css, '.accountRowText')).toMatch(/gap:\s*6px;/)
     expect(cssBlock(css, '.accountActions')).toMatch(/flex:\s*0 0 auto;/)
@@ -243,9 +256,22 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.accountBadge')).toMatch(/padding:\s*1px 8px;/)
   })
 
+  it('disabledReason 所需官方 Tooltip/ShortcutKeys 样式也保持同构与 reduced-motion', () => {
+    expect(cssBlock(css, '.bubble')).toMatch(/position:\s*fixed;/)
+    expect(cssBlock(css, '.bubble')).toMatch(/border-radius:\s*var\(--dsw-radius-sm\)/)
+    expect(cssBlock(css, '.bubble')).toMatch(/background:\s*var\(--dsw-alias-tooltip-bg\)/)
+    expect(cssBlock(css, '.bubble')).toMatch(/animation:\s*dsh-web-search-channels-tooltip-in 150ms var\(--ds-ease-in-out\)/)
+    expect(cssBlock(css, '.bubble[data-portal]')).toMatch(/z-index:\s*1100;/)
+    expect(cssBlock(css, '.keys')).toMatch(/display:\s*inline-flex;/)
+    expect(cssBlock(css, '.keys')).toMatch(/font-size:\s*12px;/)
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.bubble\s*\{[\s\S]*?animation:\s*none;/)
+  })
+
   it('保持既有构建约束：CSS Modules 子集、无第二套样式与 font 简写', () => {
-    expect(css).not.toMatch(/:global|composes|@keyframes|url\(/)
-    expect(css).not.toMatch(/\bfont:\s*inherit/)
+    expect(css).not.toMatch(/:global|composes|url\(/)
+    expect(css).not.toMatch(/@keyframes\s+(?!dsh-web-search-channels-(?:menu-(?:in|out)|tooltip-in)\b)/)
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation-duration:\s*0ms;/)
+    expect(layoutCss).not.toMatch(/\bfont:\s*inherit/)
     expect(css).toContain('--dsw-alias-label-primary')
     expect(css).toContain('--dsw-alias-border-l4')
     expect(css).toContain('--dsw-alias-state-error-primary')

@@ -1,0 +1,65 @@
+.menuSurface,
+.menuBacking {
+  border-radius: var(--dsw-radius-lg);
+}
+
+.menuCompact {
+  border-radius: var(--dsw-radius-md);
+}
+
+:where(.menuSurface) {
+  position: relative;
+}
+
+.menuSurface {
+  anchor-name: var(--dsh-web-search-channels-menu-anchor);
+  isolation: isolate;
+}
+
+/* Filtering only the background keeps nested menus and fixed overlays free of
+ * an ancestor backdrop root or a new fixed-position containing block. */
+.menuMaterial {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--dsw-menu-surface-fill);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  pointer-events: none;
+}
+
+.menuBacking {
+  display: none;
+}
+
+/* Chromium needs opaque pixels behind the page content to blur it over native
+ * vibrancy. Body isolation keeps this backing above the native window and below
+ * the page; CSS anchors limit it to this menu without a layout observer. */
+html[data-platform='darwin'] .menuBacking {
+  display: block;
+  position: fixed;
+  position-anchor: var(--dsh-web-search-channels-menu-anchor);
+  top: anchor(top);
+  left: anchor(left);
+  width: anchor-size(width, 0px);
+  height: anchor-size(height, 0px);
+  z-index: -1;
+  background: var(--dsw-alias-bg-base);
+  pointer-events: none;
+}
+
+/* Opacity on the container would prevent its material from blurring the page.
+ * Enter animations release their compositing layers so nested menus can blur too. */
+.menuSurface[data-menu-phase='enter'] > *,
+.menuBacking[data-menu-phase='enter'] { animation: dsh-web-search-channels-menu-in var(--dsh-web-search-channels-menu-enter) ease-out; }
+.menuSurface[data-menu-phase='dismiss'] > *,
+.menuBacking[data-menu-phase='dismiss'],
+.menuSurface[data-menu-phase='replace'] > *,
+.menuBacking[data-menu-phase='replace'] { animation: dsh-web-search-channels-menu-out var(--dsh-web-search-channels-menu-dismiss) ease-in both; }
+.menuSurface[data-menu-phase='replace'] > *,
+.menuBacking[data-menu-phase='replace'] { animation-duration: var(--dsh-web-search-channels-menu-replace); }
+@keyframes dsh-web-search-channels-menu-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dsh-web-search-channels-menu-out { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .menuSurface[data-menu-phase] > *, .menuBacking[data-menu-phase] { animation-duration: 0ms; }
+}

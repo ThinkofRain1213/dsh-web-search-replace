@@ -250,14 +250,7 @@
   transform: translateX(16px);
 }
 
-/* rc5 WebSearch trigger 与标准 Menu。 */
-.menuRoot {
-  position: relative;
-  display: inline-flex;
-  max-width: 100%;
-  padding: 0;
-}
-
+/* rc5 WebSearch trigger。 */
 .selector {
   box-sizing: border-box;
   display: inline-flex;
@@ -308,200 +301,6 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.menu {
-  box-sizing: border-box;
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 100;
-  min-width: min(144px, calc(100vw - 24px));
-  max-width: min(360px, calc(100vw - 24px));
-}
-
-.menuPortal {
-  --dsh-web-search-channels-menu-window-top: max(12px, var(--dsh-frame-overlay-top, 12px));
-  position: fixed;
-  position-area: none;
-  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
-  bottom: 12px;
-  left: max(12px, anchor(left));
-  right: 12px;
-  justify-self: start;
-  align-self: start;
-  margin: 0;
-  position-try-fallbacks: --dsh-web-search-channels-menu-wide-below, --dsh-web-search-channels-menu-above, --dsh-web-search-channels-menu-wide-above, --dsh-web-search-channels-menu-window, --dsh-web-search-channels-menu-wide-window;
-  width: max-content;
-  height: fit-content;
-  z-index: 1100;
-}
-
-.menuPortal[data-match-anchor-width] {
-  min-width: min(anchor-size(width), calc(100vw - 24px));
-}
-
-@position-try --dsh-web-search-channels-menu-wide-below {
-  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
-  bottom: 12px;
-  left: 12px;
-  right: 12px;
-  align-self: start;
-  justify-self: safe end;
-}
-
-@position-try --dsh-web-search-channels-menu-above {
-  top: var(--dsh-web-search-channels-menu-window-top);
-  bottom: max(12px, calc(anchor(top) + 4px));
-  align-self: end;
-}
-
-@position-try --dsh-web-search-channels-menu-wide-above {
-  top: var(--dsh-web-search-channels-menu-window-top);
-  bottom: max(12px, calc(anchor(top) + 4px));
-  left: 12px;
-  right: 12px;
-  align-self: end;
-  justify-self: safe end;
-}
-
-@position-try --dsh-web-search-channels-menu-window {
-  top: var(--dsh-web-search-channels-menu-window-top);
-  bottom: 12px;
-  align-self: safe start;
-}
-
-@position-try --dsh-web-search-channels-menu-wide-window {
-  top: var(--dsh-web-search-channels-menu-window-top);
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  align-self: safe start;
-  justify-self: safe end;
-}
-
-.menuScrollable {
-  max-height: calc(100vh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px)));
-  max-height: calc(100dvh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px)));
-}
-
-.menuViewport {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 0;
-}
-
-.menuScrollable .menuViewport {
-  overflow-y: auto;
-}
-
-.menuSurface,
-.menuBacking {
-  border-radius: var(--dsw-radius-lg);
-}
-
-:where(.menuSurface) {
-  position: relative;
-}
-
-.menuSurface {
-  anchor-name: var(--dsh-web-search-channels-menu-anchor);
-  isolation: isolate;
-}
-
-.menuMaterial {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  background: var(--dsw-menu-surface-fill);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  pointer-events: none;
-  padding: 0;
-}
-
-.menuBacking {
-  display: none;
-}
-
-html[data-platform='darwin'] .menuBacking {
-  display: block;
-  position: fixed;
-  position-anchor: var(--dsh-web-search-channels-menu-anchor);
-  top: anchor(top);
-  left: anchor(left);
-  width: anchor-size(width, 0px);
-  height: anchor-size(height, 0px);
-  z-index: -1;
-  background: var(--dsw-alias-bg-base);
-  pointer-events: none;
-}
-
-.menuItemWrap {
-  position: relative;
-}
-
-.menuItem {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 34px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--dsw-radius-md);
-  background: transparent;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-primary);
-  text-align: left;
-}
-
-@media (hover: hover) {
-  .menuItem:hover:not(:disabled):not([aria-disabled='true']) {
-    background: var(--dsw-alias-interactive-bg-hover);
-  }
-}
-
-.menuItem:focus-visible:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  outline: none;
-}
-
-.menuItem:disabled,
-.menuItem[aria-disabled='true'] {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.menuItemLabel {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.menuCheck {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--dsw-alias-label-primary);
-}
-
-.menuSelected {
-  background: transparent;
-}
 
 /* 账号、内联流程、rc5 small outline Button 与 Tag。 */
 .accountConfig {
@@ -530,6 +329,16 @@ html[data-platform='darwin'] .menuBacking {
 
 .accountRow + .accountRow {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* 列表与父 field 的 6px gap 已负责首侧；末侧由两层 field 的 12+12 负责。
+   首末 accountRow 不再各加一份 12px，避免首 18px、末 36px。 */
+.accountRow:first-child {
+  padding-top: 0;
+}
+
+.accountRow:last-child {
+  padding-bottom: 0;
 }
 
 .accountRowText {

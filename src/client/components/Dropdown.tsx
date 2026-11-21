@@ -138,6 +138,7 @@ export function Dropdown({
       onSelect={select}
       onClose={closeMenu}
       returnFocus={returnFocus}
+      portal
       autoFocus
       minWidthFromAnchor
       initialFocus={initialFocus}

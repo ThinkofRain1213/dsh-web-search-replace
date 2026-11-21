@@ -1,7 +1,7 @@
 /**
  * 「网页搜索渠道」bundle 设置卡（`plugins.bundle.config`，key = 包名）。
  *
- * rc3 的 bundle 配置 slot 只传 `view: 'page'`，不传 `form`；因此这里通过
+ * rc5 的 bundle 配置 slot 只传 `view: 'page'`，不传 `form`；因此这里通过
  * `configForms.get('dsh-web-search-channels')` 读取/订阅唯一设置快照，保存
  * 只走插件自己的 `settings.update` RPC。`summary` 视图返回 null，摘要由
  * locale 的 `meta.description` 负责。
