@@ -186,6 +186,18 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(rows[1]?.textContent).toContain('b***@example.com')
     expect(query(rows[1] as HTMLElement, '[data-action="set-current"]').textContent)
       .toContain('设为当前使用')
+
+    expect(query(rows[0] as HTMLElement, '[class*="accountBadge"]').getAttribute('data-tone')).toBe('solid')
+    expect(query(rows[1] as HTMLElement, '[class*="accountBadge"]').getAttribute('data-tone')).toBe('neutral')
+    expect(rows[0]?.querySelector('[data-account-actions]')).not.toBeNull()
+    expect(rows[1]?.querySelector('[data-account-actions]')).not.toBeNull()
+
+    const accountsHead = query<HTMLElement>(container, '[data-field="accounts"] [data-field-head]')
+    expect(query<HTMLElement>(accountsHead, '[data-label-group]').textContent).toBe('账号')
+    expect(accountsHead.querySelector('[data-field-actions] [data-action="add-account"]')).not.toBeNull()
+    const clearHead = query<HTMLElement>(container, '[data-field="clear-accounts"] [data-field-head]')
+    expect(query<HTMLElement>(clearHead, '[data-label-group]').textContent).toBe('清除全部账号数据')
+    expect(clearHead.querySelector('[data-field-actions] [data-action="clear-all"]')).not.toBeNull()
   })
 
   it('显式设为当前只锁相关行；成功后当前标记移动，不自动影响其他账号', async () => {
@@ -586,6 +598,8 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(confirmation.textContent).toContain('确认删除账号')
     expect(confirmation.textContent).toContain('网页搜索将不可用')
     expect(confirmation.textContent).toContain('不会自动选择其他账号')
+    expect(query<HTMLElement>(confirmation, '[data-delete-impact]').className).toContain('warning')
+    expect(query<HTMLElement>(confirmation, '[data-delete-impact]').className).not.toContain('error')
     expect(calls.filter(call => call.method === 'accounts.delete')).toEqual([])
 
     const none = query<HTMLInputElement>(confirmation, '[data-replacement-option="none"]')
@@ -720,6 +734,8 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(confirmation.textContent).toContain('Qoder 国际版')
     expect(confirmation.textContent).toContain('Qoder 中国版')
     expect(confirmation.textContent).toContain('无法自动恢复')
+    expect(query<HTMLElement>(confirmation, '[data-clear-impact]').className).toContain('warning')
+    expect(query<HTMLElement>(confirmation, '[data-clear-impact]').className).not.toContain('error')
     expect(calls.filter(call => call.method === 'accounts.clearAll')).toEqual([])
 
     await click(query(confirmation, '[data-action="cancel-clear-all"]'))

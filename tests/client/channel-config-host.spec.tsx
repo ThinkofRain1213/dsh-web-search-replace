@@ -101,9 +101,13 @@ describe('ChannelConfigHost（真实 DOM）', () => {
 
     const buddy = renderHost('buddy')
     expect(buddy.host.querySelector('[data-qoder-endpoint-slot]')).toBeNull()
-    expect(query<HTMLElement>(buddy.host, '[data-fixed-endpoint]').textContent)
+    const fixedSlot = query<HTMLElement>(buddy.host, '[data-fixed-endpoint-slot]')
+    expect(query<HTMLElement>(fixedSlot, '[data-fixed-endpoint]').textContent)
       .toBe('copilot.tencent.com')
-    expect(buddy.host.querySelector('[data-fixed-endpoint-slot] [aria-haspopup="menu"]')).toBeNull()
+    expect(fixedSlot.querySelector('[aria-haspopup="menu"]')).toBeNull()
+    expect(query<HTMLElement>(fixedSlot, '[data-field-head] > [data-label-group] [data-field-label]').textContent)
+      .toBe('搜索端点')
+    expect(query<HTMLElement>(fixedSlot, 'p[class*="hint"]').textContent).toContain('固定使用该域名')
   })
 
   it('账号区 hintRow 位于 fieldSlot 内部，section 直接子元素只有 heading/row/fieldSlot', () => {
@@ -114,6 +118,7 @@ describe('ChannelConfigHost（真实 DOM）', () => {
     expect(hint.closest('section')).toBe(host)
     expect(host.querySelector(':scope > [data-hint-row]')).toBeNull()
     expect(slot.querySelector('.field, [data-field]')).toBeTruthy()
+    expect(slot.querySelector('[data-field-head] > [data-label-group] [data-field-label]')?.textContent).toBe('账号')
     expect(slot.hasAttribute('data-hint-row')).toBe(false)
 
     const directChildren = [...host.children]

@@ -70,7 +70,7 @@ export function AccountList({
           >
             <div className={styles.accountRowText}>
               <div className={styles.accountRowHead}>
-                <span className={styles.accountBadge}>
+                <span className={styles.accountBadge} data-tone={isCurrent ? 'solid' : 'neutral'}>
                   {isCurrent
                     ? t('channel.accounts.currentBadge')
                     : t('channel.accounts.alternativeBadge')}
@@ -90,18 +90,18 @@ export function AccountList({
                   {t(`channel.accounts.status.${account.status}`)}
                 </span>
                 {queued && (
-                  <span className={styles.accountQueued} data-account-queued="">
+                  <span className={`${styles.accountBadge} ${styles.accountQueued}`} data-tone="neutral" data-account-queued="">
                     {t('channel.accounts.queued')}
                   </span>
                 )}
                 {working && (
-                  <span className={styles.accountQueued} data-account-busy="">
+                  <span className={`${styles.accountBadge} ${styles.accountQueued}`} data-tone="neutral" data-account-busy="">
                     {t('channel.accounts.working')}
                   </span>
                 )}
               </div>
             </div>
-            <div className={styles.accountActions}>
+            <div className={styles.accountActions} data-account-actions="">
               {!isCurrent && (
                 <button
                   type="button"

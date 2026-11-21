@@ -175,24 +175,28 @@ export function AccountChannelConfig({
   return (
     <div className={styles.accountConfig} data-account-config="" data-channel={channel}>
       <div className={styles.field} data-field="accounts">
-        <div className={styles.fieldHead}>
-          <span className={styles.fieldLabel}>{t('channel.account.label')}</span>
-          <button
-            type="button"
-            className={styles.actionButton}
-            data-action="add-account"
-            disabled={actionLocked || state.status !== 'ready'}
-            onClick={handleAdd}
-          >
-            {t('channel.accounts.add')}
-          </button>
+        <div className={styles.head} data-field-head="">
+          <div className={styles.labelGroup} data-label-group="">
+            <span className={styles.label} data-field-label="">{t('channel.account.label')}</span>
+          </div>
+          <div className={styles.badges} data-field-actions="">
+            <button
+              type="button"
+              className={styles.actionButton}
+              data-action="add-account"
+              disabled={actionLocked || state.status !== 'ready'}
+              onClick={handleAdd}
+            >
+              {t('channel.accounts.add')}
+            </button>
+          </div>
         </div>
 
         {state.error !== null && (
           <div className={styles.errorRow}>
-            <span className={styles.error} role="alert" data-account-error="">
+            <p className={styles.error} role="alert" data-account-error="">
               {t(state.error)}
-            </span>
+            </p>
             {state.status === 'error' && (
               <button
                 type="button"
@@ -206,14 +210,14 @@ export function AccountChannelConfig({
           </div>
         )}
 
-        <span className={styles.hintText} data-account-state={hintState}>
+        <p className={styles.hint} data-account-state={hintState}>
           {hintText}
-        </span>
+        </p>
 
         {state.notice !== null && (
-          <span className={styles.hintText} data-account-notice="">
+          <p className={styles.hint} data-account-notice="">
             {t(state.notice)}
-          </span>
+          </p>
         )}
 
         {state.auth.phase !== 'idle' && (
@@ -264,21 +268,25 @@ export function AccountChannelConfig({
       </div>
 
       <div className={styles.field} data-field="clear-accounts">
-        <div className={styles.fieldHead}>
-          <span className={styles.fieldLabel}>{t('channel.accounts.clearAll')}</span>
-          <button
-            type="button"
-            className={`${styles.actionButton} ${styles.dangerButton}`}
-            data-action="clear-all"
-            disabled={actionLocked || state.status !== 'ready'}
-            onClick={() => {
-              setDeletingAccountId(null)
-              setReplacementAccountId(null)
-              setConfirmingClear(true)
-            }}
-          >
-            {t('channel.accounts.clearAll')}
-          </button>
+        <div className={styles.head} data-field-head="">
+          <div className={styles.labelGroup} data-label-group="">
+            <span className={styles.label} data-field-label="">{t('channel.accounts.clearAll')}</span>
+          </div>
+          <div className={styles.badges} data-field-actions="">
+            <button
+              type="button"
+              className={`${styles.actionButton} ${styles.dangerButton}`}
+              data-action="clear-all"
+              disabled={actionLocked || state.status !== 'ready'}
+              onClick={() => {
+                setDeletingAccountId(null)
+                setReplacementAccountId(null)
+                setConfirmingClear(true)
+              }}
+            >
+              {t('channel.accounts.clearAll')}
+            </button>
+          </div>
         </div>
         {confirmingClear && (
           <div
@@ -288,7 +296,7 @@ export function AccountChannelConfig({
             aria-label={t('channel.accounts.clearTitle')}
           >
             <span className={styles.confirmTitle}>{t('channel.accounts.clearTitle')}</span>
-            <span className={styles.hintText} data-clear-impact="">
+            <span className={styles.warning} data-clear-impact="">
               {t('channel.accounts.clearImpactPrefix')}
               {channelNames}
               {t('channel.accounts.clearImpactSuffix')}

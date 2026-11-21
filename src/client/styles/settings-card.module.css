@@ -1,14 +1,12 @@
-/* 「网页搜索渠道」设置卡的 0.1.0 完整排版。
-   只使用宿主主题 token（--dsw-alias-*），并提供 currentColor 兜底。
-   `.stack` 自己收住整张卡的 flex column gap 0；间距全部由 section / row /
-   field 的 padding 提供。首末 −12px 只按块类型命中，绝不让 h3 被负 margin
-   拖动。类名由构建脚本按「包名/文件#类名」哈希，portal 菜单也使用本表。 */
+/* rc5 设置详情页完整排版：插件自有 stack、字段、控件、账号与 portal。
+   哈希输入含包名；只使用宿主主题 token，不使用 Host Client 运行时组件。 */
 
 .stack {
   display: flex;
   flex-direction: column;
   gap: 0;
   min-width: 0;
+  padding: 0;
 }
 
 .section {
@@ -21,7 +19,7 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
-  color: var(--dsw-alias-label-primary, currentColor);
+  color: var(--dsw-alias-label-primary);
 }
 
 .row {
@@ -38,13 +36,14 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  padding-right: 48px;
 }
 
 .rowTitle {
   font-size: 13px;
   font-weight: 500;
   line-height: 19.5px;
-  color: var(--dsw-alias-label-primary, currentColor);
+  color: var(--dsw-alias-label-primary);
 }
 
 .rowDescription {
@@ -52,33 +51,25 @@
   font-size: 12px;
   font-weight: 400;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .rowGated .rowTitle {
-  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-primary, currentColor));
+  color: var(--dsw-alias-label-dimmed);
 }
 
 .rowGated .rowDescription {
-  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary, currentColor));
+  color: var(--dsw-alias-label-dimmed);
 }
 
 .rowGated .selector {
   opacity: 0.5;
 }
 
-.error {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 18px;
-  color: var(--dsw-alias-state-error-primary, currentColor);
-}
-
 .rule {
   flex: none;
   margin: 0;
-  border-top: 0.5px solid var(--dsw-alias-border-l2, currentColor);
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 .fieldSlot {
@@ -94,19 +85,41 @@
   padding: 12px 0;
 }
 
-.fieldHead {
+.head {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  padding: 0;
 }
 
-.fieldLabel {
-  flex: 0 1 auto;
+.labelGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
-  color: var(--dsw-alias-label-primary, currentColor);
+  color: var(--dsw-alias-label-primary);
+}
+
+.labelGroup > .label {
+  flex: 0 1 auto;
+}
+
+.badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
 }
 
 .hintRow {
@@ -117,61 +130,44 @@
   margin: -6px 0 12px;
 }
 
-.hintText {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
-}
-
 .hint {
   margin: 0;
   font-size: 12px;
   font-weight: 400;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  color: var(--dsw-alias-label-tertiary);
 }
 
-/* Task 14 端点行：固定域文本与端点下拉都占用 field 的整行宽度；下拉锚点保持
-   Dropdown 的 34px 高度契约，不引入第二套 selector 样式。 */
-.fieldControl {
-  display: flex;
+.hintText {
   min-width: 0;
-}
-
-.fieldControl > button {
-  width: 100%;
-  justify-content: space-between;
-}
-
-.fieldValue {
-  min-width: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
-  line-height: 1.5;
-  color: var(--dsw-alias-label-primary, currentColor);
-  overflow-wrap: anywhere;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
-.fieldValue code,
-.hintText code {
-  font-family: inherit;
-  font-size: inherit;
-  color: inherit;
-  overflow-wrap: anywhere;
+.error {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
 }
 
-/* 首块补偿：h3 不在列表里；fieldSlot 自身 padding 为 0，抵消的是内部
-   .field 的 padding-top。空分组只有 h3 时不会命中任何一条。 */
+.warning {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
 .section > .row:first-child,
 .section > .fieldSlot:first-child,
 .section > .group:first-child {
   margin-top: -12px;
 }
 
-/* 末块补偿：只吸带 12px 空白的末块。hintRow 位于 fieldSlot 内部时由
-   fieldSlot:last-child 承担；只有 section 直接末孩子 hintRow 才用最后一条。 */
 .section > .row:last-child,
 .section > .fieldSlot:last-child,
 .section > .group:last-child,
@@ -179,8 +175,35 @@
   margin-bottom: -12px;
 }
 
-/* 自有 Switch：复制 rc3 primitives 的 36×20 轨道、16px thumb、120ms 动画、
-   focus ring 与 disabled .5；状态颜色由 aria-checked 驱动。 */
+.fieldControl {
+  display: flex;
+  min-width: 0;
+  padding: 0;
+}
+
+.fieldControl > .menuRoot {
+  width: 100%;
+}
+
+.fieldValue {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.fieldValue code,
+.hintText code,
+.hint code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+/* rc5 Switch。 */
 .switch {
   box-sizing: border-box;
   position: relative;
@@ -191,12 +214,12 @@
   border: 0;
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, currentColor));
+  background: var(--dsw-alias-border-l3);
   cursor: pointer;
 }
 
 .switch[aria-checked='true'] {
-  background: var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary, currentColor));
+  background: var(--dsw-alias-brand-primary);
 }
 
 .switch:disabled {
@@ -205,7 +228,7 @@
 }
 
 .switch:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
 
@@ -215,168 +238,307 @@
   height: 16px;
   border-radius: 50%;
   corner-shape: round;
-  background: var(--dsw-alias-label-primary-foreground, #fff);
+  background: var(--dsw-alias-label-primary-foreground);
   transition: transform 120ms ease;
 }
 
 .switch[aria-checked='false'] .thumb {
-  background: var(--dsw-alias-switch-thumb, #fff);
+  background: var(--dsw-alias-switch-thumb);
 }
 
 .switch[aria-checked='true'] .thumb {
   transform: translateX(16px);
 }
 
-/* 自有 Dropdown：锚点 34px / 0 12px；Menu 4px padding，item 34px 高、
-   6px 8px、gap 6、13px/20px。Menu 通过 portal 渲染到 body。 */
+/* rc5 WebSearch trigger 与标准 Menu。 */
+.menuRoot {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  padding: 0;
+}
+
 .selector {
   box-sizing: border-box;
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  width: 100%;
   min-width: 0;
   height: 34px;
   padding: 0 12px;
-  border: 0.5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3, currentColor));
-  border-radius: var(--dsw-radius-md, 12px);
-  background: var(--dsw-alias-bg-layer-3, transparent);
-  color: var(--dsw-alias-label-primary, currentColor);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
   font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
+  text-align: start;
   cursor: pointer;
 }
 
-@media (hover: hover) {
-  .selector:not(:disabled):hover {
-    background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-3, transparent));
-  }
-}
-
 .selector:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
-  outline-offset: 2px;
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .selector:disabled {
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  color: var(--dsw-alias-label-tertiary);
   cursor: default;
 }
 
+@media (hover: hover) {
+  .selector:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
 .selectorLabel {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chevron {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .menu {
   box-sizing: border-box;
-  position: fixed;
-  z-index: 1000;
+  padding: 4px;
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  max-height: 320px;
-  padding: 4px;
+  gap: 0;
+  border: 0;
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  min-width: min(144px, calc(100vw - 24px));
+  max-width: min(360px, calc(100vw - 24px));
+}
+
+.menuPortal {
+  --dsh-web-search-channels-menu-window-top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  position: fixed;
+  position-area: none;
+  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
+  bottom: 12px;
+  left: max(12px, anchor(left));
+  right: 12px;
+  justify-self: start;
+  align-self: start;
+  margin: 0;
+  position-try-fallbacks: --dsh-web-search-channels-menu-wide-below, --dsh-web-search-channels-menu-above, --dsh-web-search-channels-menu-wide-above, --dsh-web-search-channels-menu-window, --dsh-web-search-channels-menu-wide-window;
+  width: max-content;
+  height: fit-content;
+  z-index: 1100;
+}
+
+.menuPortal[data-match-anchor-width] {
+  min-width: min(anchor-size(width), calc(100vw - 24px));
+}
+
+@position-try --dsh-web-search-channels-menu-wide-below {
+  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  align-self: start;
+  justify-self: safe end;
+}
+
+@position-try --dsh-web-search-channels-menu-above {
+  top: var(--dsh-web-search-channels-menu-window-top);
+  bottom: max(12px, calc(anchor(top) + 4px));
+  align-self: end;
+}
+
+@position-try --dsh-web-search-channels-menu-wide-above {
+  top: var(--dsh-web-search-channels-menu-window-top);
+  bottom: max(12px, calc(anchor(top) + 4px));
+  left: 12px;
+  right: 12px;
+  align-self: end;
+  justify-self: safe end;
+}
+
+@position-try --dsh-web-search-channels-menu-window {
+  top: var(--dsh-web-search-channels-menu-window-top);
+  bottom: 12px;
+  align-self: safe start;
+}
+
+@position-try --dsh-web-search-channels-menu-wide-window {
+  top: var(--dsh-web-search-channels-menu-window-top);
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  align-self: safe start;
+  justify-self: safe end;
+}
+
+.menuScrollable {
+  max-height: calc(100vh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px)));
+  max-height: calc(100dvh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px)));
+}
+
+.menuViewport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+.menuScrollable .menuViewport {
   overflow-y: auto;
-  border: 0.5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3, currentColor));
-  border-radius: var(--dsw-radius-md, 12px);
-  background: var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2, #fff));
-  box-shadow: 0 8px 24px var(--dsw-alias-shadow-l2, rgba(0, 0, 0, 0.16));
+}
+
+.menuSurface,
+.menuBacking {
+  border-radius: var(--dsw-radius-lg);
+}
+
+:where(.menuSurface) {
+  position: relative;
+}
+
+.menuSurface {
+  anchor-name: var(--dsh-web-search-channels-menu-anchor);
+  isolation: isolate;
+}
+
+.menuMaterial {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--dsw-menu-surface-fill);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  pointer-events: none;
+  padding: 0;
+}
+
+.menuBacking {
+  display: none;
+}
+
+html[data-platform='darwin'] .menuBacking {
+  display: block;
+  position: fixed;
+  position-anchor: var(--dsh-web-search-channels-menu-anchor);
+  top: anchor(top);
+  left: anchor(left);
+  width: anchor-size(width, 0px);
+  height: anchor-size(height, 0px);
+  z-index: -1;
+  background: var(--dsw-alias-bg-base);
+  pointer-events: none;
+}
+
+.menuItemWrap {
+  position: relative;
 }
 
 .menuItem {
-  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
   min-height: 34px;
   padding: 6px 8px;
-  border: 0;
-  border-radius: var(--dsw-radius-md, 12px);
+  border: none;
+  border-radius: var(--dsw-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-primary, currentColor);
+  cursor: pointer;
   font-family: inherit;
   font-size: 13px;
-  font-weight: 400;
   line-height: 20px;
+  color: var(--dsw-alias-label-primary);
   text-align: left;
-  cursor: pointer;
 }
 
-.menuItem:hover,
-.menuItem:focus-visible,
-.menuItem[data-selected='true'] {
-  background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2, transparent));
+@media (hover: hover) {
+  .menuItem:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
 }
 
-.menuItem:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
-  outline-offset: -2px;
+.menuItem:focus-visible:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
 }
 
-.menuItem:disabled {
+.menuItem:disabled,
+.menuItem[aria-disabled='true'] {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.menuCheck {
-  flex: 0 0 auto;
-  width: 16px;
-  text-align: center;
-  color: var(--dsw-alias-state-business-primary, currentColor);
-}
-
 .menuItemLabel {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Task 14 账号区：所有内联流程都在 .field 内就地展开，不引入 Modal/路由。
-   操作按钮使用 28px 高的小按钮；错误红字与删除/清除确认区独立占行。 */
+.menuCheck {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.menuSelected {
+  background: transparent;
+}
+
+/* 账号、内联流程、rc5 small outline Button 与 Tag。 */
 .accountConfig {
   display: flex;
   flex-direction: column;
+  gap: 0;
   min-width: 0;
+  padding: 0;
 }
 
 .accountList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   min-width: 0;
+  padding: 0;
 }
 
 .accountRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
-  padding: 8px 0;
-  border-top: 0.5px solid var(--dsw-alias-border-l2, transparent);
+  padding: 12px 0;
 }
 
-.accountRow:first-child {
-  border-top: 0;
+.accountRow + .accountRow {
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 .accountRowText {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+  padding: 0;
 }
 
 .accountRowHead {
@@ -385,21 +547,29 @@
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
+  padding: 0;
 }
 
 .accountBadge {
-  flex: 0 0 auto;
-  padding: 0 6px;
-  border-radius: var(--dsw-radius-sm, 8px);
-  background: var(--dsw-alias-bg-layer-2, transparent);
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  corner-shape: round;
+  padding: 1px 8px;
   font-size: 11px;
-  line-height: 18px;
+  line-height: 17px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.accountRow[data-current='true'] .accountBadge {
-  background: var(--dsw-alias-state-business-primary, var(--dsw-alias-bg-layer-2, transparent));
-  color: var(--dsw-alias-label-primary-foreground, currentColor);
+.accountBadge[data-tone='solid'] {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+
+.accountBadge[data-tone='neutral'] {
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
 }
 
 .accountName {
@@ -407,7 +577,7 @@
   font-size: 13px;
   font-weight: 500;
   line-height: 19.5px;
-  color: var(--dsw-alias-label-primary, currentColor);
+  color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
 }
 
@@ -415,15 +585,8 @@
   min-width: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
+  color: var(--dsw-alias-label-tertiary);
   overflow-wrap: anywhere;
-}
-
-.accountStatus {
-  min-width: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
 }
 
 .accountStatusLine {
@@ -432,41 +595,48 @@
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
+  padding: 0;
+}
+
+.accountStatus {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .accountQueued {
   flex: 0 0 auto;
-  padding: 0 6px;
-  border-radius: var(--dsw-radius-sm, 8px);
-  background: var(--dsw-alias-bg-layer-2, transparent);
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-primary, currentColor));
-  font-size: 11px;
-  line-height: 18px;
 }
 
 .accountStatus[data-account-status='reauth_required'],
 .accountStatus[data-account-status='credential_unavailable'] {
-  color: var(--dsw-alias-state-error-primary, currentColor);
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .accountActions {
   display: flex;
   flex: 0 0 auto;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+  padding: 0;
 }
 
 .actionButton,
 .dangerButton {
   box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   height: 28px;
   padding: 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3, currentColor));
-  border-radius: var(--dsw-radius-sm, 8px);
+  border: 0.5px solid transparent;
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-primary, currentColor);
+  box-shadow: inset 0 0 0 var(--dsh-hairline-width, 0.5px) var(--dsh-button-outline-color, var(--dsw-alias-border-l3));
+  color: var(--dsw-alias-label-primary);
   font-family: inherit;
   font-size: 12px;
   line-height: 18px;
@@ -475,25 +645,33 @@
 }
 
 .dangerButton {
-  color: var(--dsw-alias-state-error-primary, currentColor);
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .actionButton:focus-visible,
 .dangerButton:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, currentColor));
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
 
-.actionButton:disabled,
+.actionButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .dangerButton:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 @media (hover: hover) {
-  .actionButton:not(:disabled):hover,
-  .dangerButton:not(:disabled):hover {
-    background: var(--dsw-alias-interactive-bg-hover, transparent);
+  .actionButton:hover:not(:disabled),
+  .dangerButton:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  .dangerButton:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover-danger);
   }
 }
 
@@ -501,9 +679,13 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  justify-content: space-between;
   gap: 8px;
   min-width: 0;
+  padding: 0;
+}
+
+.errorRow .error {
+  flex: 1;
 }
 
 .confirmBox {
@@ -511,22 +693,22 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 10px 0;
-  border-top: 0.5px solid var(--dsw-alias-border-l2, transparent);
+  padding: 0;
 }
 
 .confirmTitle {
   font-size: 13px;
   font-weight: 500;
   line-height: 19.5px;
-  color: var(--dsw-alias-label-primary, currentColor);
+  color: var(--dsw-alias-label-primary);
 }
 
 .choiceList {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+  padding: 0;
 }
 
 .choice {
@@ -536,7 +718,7 @@
   min-width: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-primary, currentColor);
+  color: var(--dsw-alias-label-primary);
 }
 
 .confirmActions {
@@ -544,6 +726,7 @@
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
+  padding: 0;
 }
 
 .authFlow {
@@ -551,20 +734,21 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 10px 0;
-  border-top: 0.5px solid var(--dsw-alias-border-l2, transparent);
+  padding: 0;
 }
 
 .authUrl {
   display: block;
   min-width: 0;
-  padding: 6px 8px;
-  border-radius: var(--dsw-radius-sm, 8px);
-  background: var(--dsw-alias-bg-layer-2, transparent);
-  color: var(--dsw-alias-label-primary, currentColor);
-  font-family: inherit;
+  padding: 12px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 12px;
   line-height: 18px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
 }

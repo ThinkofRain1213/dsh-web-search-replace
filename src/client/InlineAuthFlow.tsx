@@ -141,32 +141,32 @@ export function InlineAuthFlow({
       data-auth-phase={auth.phase}
       aria-live="polite"
     >
-      <span className={styles.fieldLabel}>
+      <span className={styles.label}>
         {auth.targetAccountId === null
           ? t('channel.auth.addTitle')
           : t('channel.auth.reauthTitle')}
         {accountName === null ? null : `: ${accountName}`}
       </span>
-      <span
-        className={failed ? styles.error : styles.hintText}
+      <p
+        className={failed ? styles.error : styles.hint}
         role={failed ? 'alert' : undefined}
         data-auth-status=""
       >
         {statusText}
-      </span>
+      </p>
       {auth.phase === 'pending' && auth.authUrl !== null && (
         <>
-          <span className={styles.hintText} data-auth-instruction="">
+          <p className={styles.hint} data-auth-instruction="">
             {t('channel.auth.instruction')}
-          </span>
+          </p>
           <code ref={urlRef} className={styles.authUrl} data-auth-url="">{auth.authUrl}</code>
-          <span className={styles.hintText} data-copy-state={copyState}>
+          <p className={styles.hint} data-copy-state={copyState}>
             {copyState === 'copied'
               ? t('channel.auth.copied')
               : copyState === 'failed'
                 ? t('channel.auth.copyFailed')
                 : ''}
-          </span>
+          </p>
         </>
       )}
       <div className={styles.confirmActions}>

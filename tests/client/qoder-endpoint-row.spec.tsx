@@ -198,6 +198,26 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     expect(alert.closest('[aria-disabled="true"], [inert]')).toBeNull()
   })
 
+  it('字段使用 rc5 head>labelGroup、独立 p.hint 与完整 aria-describedby 关系', () => {
+    const { row } = renderRow({ error: 'settings.saveFailed' })
+    const labelGroup = query<HTMLElement>(row, '[data-field-head] > [data-label-group]')
+    const label = query<HTMLLabelElement>(labelGroup, 'label')
+    const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
+    expect(label.htmlFor).toBe(trigger.id)
+    expect(label.textContent).toBe('搜索端点')
+    expect(labelGroup.querySelector('[data-field-actions]')).toBeNull()
+
+    const status = query<HTMLElement>(row, '[data-endpoint-status]')
+    expect(status.tagName).toBe('P')
+    expect(status.id).not.toBe('')
+    const description = query<HTMLElement>(row, '[data-endpoint-description]')
+    expect(description.tagName).toBe('P')
+    const error = query<HTMLElement>(row, '[data-endpoint-error]')
+    expect(error.tagName).toBe('P')
+    const describedBy = trigger.getAttribute('aria-describedby')?.split(' ') ?? []
+    expect(describedBy).toEqual(expect.arrayContaining([status.id, description.id, error.id]))
+  })
+
   it('英文文案覆盖端点行，自动无观测不会出现中文', () => {
     const { row } = renderRow({ preference: 'auto', actualHost: null, locale: 'en' })
     expect(query<HTMLButtonElement>(row, '[data-dropdown-trigger]').textContent).toContain('Auto')

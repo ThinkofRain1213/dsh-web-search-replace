@@ -62,14 +62,14 @@ export function InlineDeleteConfirmation({
         {t('channel.accounts.deleteConfirmTitle')}
         {`: ${account.displayName}`}
       </span>
-      <span className={styles.hintText} data-delete-impact="">
+      <span className={styles.warning} data-delete-impact="">
         {isCurrent
           ? t('channel.accounts.deleteCurrentImpact')
           : t('channel.accounts.deleteOtherImpact')}
       </span>
       {isCurrent && (
         <div className={styles.choiceList} data-replacement-group="">
-          <span className={styles.fieldLabel}>{t('channel.accounts.replacementLabel')}</span>
+          <span className={styles.label}>{t('channel.accounts.replacementLabel')}</span>
           <label className={styles.choice}>
             <input
               type="radio"

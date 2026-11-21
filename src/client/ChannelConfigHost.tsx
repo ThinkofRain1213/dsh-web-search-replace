@@ -1,9 +1,6 @@
 /**
- * 动态渠道配置宿主：只渲染当前 `search.channel` 对应的配置区。
- *
- * Qoder 国际版拥有端点偏好下拉（`QoderEndpointRow`）；其他三渠道只显示固定
- * 域名文本，没有端点下拉。账号列表、内联授权/删除由 `AccountChannelConfig`
- * 通过 `children` 挂到账号区；缺省时仍渲染“需要账号/当前账号”状态占位。
+ * 动态渠道配置宿主：同一时刻只渲染当前 search.channel 对应的一个配置区。
+ * 保留 Qoder 端点、固定域、账号/授权/删除/清除的既有 IA 与 Host 注入边界。
  */
 import * as React from 'react'
 
@@ -15,35 +12,20 @@ import {
 import { QoderEndpointRow } from './QoderEndpointRow.tsx'
 import styles from './styles/settings-card.module.css'
 
-/** 渠道配置宿主属性。 */
 export interface ChannelConfigHostProps {
-  /** 当前 search.channel；同一时刻只有一个。 */
   readonly channel: ChannelId
-  /** 该渠道的用户当前账号意图；null 表示尚未配置。 */
   readonly currentAccountId: string | null
-  /** 翻译函数。 */
   readonly t: (key: string) => string
-  /** Task 14 的账号配置区；未提供时渲染状态占位。 */
   readonly children?: React.ReactNode
-  /** Qoder 国际版端点偏好；其他渠道忽略。 */
   readonly endpointPreference?: QoderEndpointPreference
-  /** Host 脱敏运行观测的实际 host；没有观测时为 null。 */
   readonly actualEndpointHost?: string | null
-  /** 端点设置写入在飞。 */
   readonly endpointBusy?: boolean
-  /** 端点下拉是否可写。 */
   readonly endpointWritable?: boolean
-  /** 已翻译的端点保存错误。 */
   readonly endpointError?: string | null
-  /** 请求保存 Qoder 国际版端点偏好。 */
   readonly onEndpointPreferenceChange?: (next: QoderEndpointPreference) => void
 }
 
-/**
- * 渲染当前渠道的配置 section。
- * @param props - 渠道、账号状态、端点行、翻译与 Task 14 账号区接缝。
- * @returns 动态渠道配置区。
- */
+/** 渲染当前渠道的配置 section；children 只替换账号区，不增加第二渠道选择器。 */
 export function ChannelConfigHost({
   channel,
   currentAccountId,
@@ -90,13 +72,15 @@ export function ChannelConfigHost({
         : (
           <div className={styles.fieldSlot} data-fixed-endpoint-slot="">
             <div className={styles.field} data-field="endpoint">
-              <div className={styles.fieldHead}>
-                <span className={styles.fieldLabel}>{t('channel.endpoint.label')}</span>
+              <div className={styles.head} data-field-head="">
+                <div className={styles.labelGroup} data-label-group="">
+                  <span className={styles.label} data-field-label="">{t('channel.endpoint.label')}</span>
+                </div>
               </div>
               <span className={styles.fieldValue} data-fixed-endpoint="">
                 {CHANNELS[channel].hosts[0]}
               </span>
-              <span className={styles.hintText}>{t('channel.endpoint.fixedDescription')}</span>
+              <p className={styles.hint}>{t('channel.endpoint.fixedDescription')}</p>
             </div>
           </div>
         )}
@@ -105,8 +89,10 @@ export function ChannelConfigHost({
         {children ?? (
           <>
             <div className={styles.field} data-field="">
-              <div className={styles.fieldHead}>
-                <span className={styles.fieldLabel}>{t('channel.account.label')}</span>
+              <div className={styles.head} data-field-head="">
+                <div className={styles.labelGroup} data-label-group="">
+                  <span className={styles.label} data-field-label="">{t('channel.account.label')}</span>
+                </div>
               </div>
             </div>
             <div className={styles.hintRow} data-hint-row="">

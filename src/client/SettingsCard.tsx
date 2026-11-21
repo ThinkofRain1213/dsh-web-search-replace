@@ -118,13 +118,21 @@ export function SettingsCard({
       ? (
         <section className={styles.section} data-settings-status="unavailable">
           <h3 className={styles.heading}>{t('settings.title')}</h3>
-          <p className={styles.error} role="alert">{t('settings.unavailable')}</p>
+          <div className={styles.row} data-settings-status="unavailable">
+            <div className={styles.rowText}>
+              <p className={styles.error} role="alert">{t('settings.unavailable')}</p>
+            </div>
+          </div>
         </section>
       )
       : (
         <section className={styles.section} data-settings-status="loading">
           <h3 className={styles.heading}>{t('settings.title')}</h3>
-          <p className={styles.hint}>{t('settings.loading')}</p>
+          <div className={styles.row} data-settings-status="loading">
+            <div className={styles.rowText}>
+              <p className={styles.hint}>{t('settings.loading')}</p>
+            </div>
+          </div>
         </section>
       )
 

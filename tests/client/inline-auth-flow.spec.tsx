@@ -237,9 +237,12 @@ describe('InlineAuthFlow（真实 DOM）', () => {
     expect(storage).not.toHaveBeenCalled()
     expect(auth.textContent).not.toContain('仅中文的后台提示')
     expect(auth.textContent).not.toMatch(/[\u4e00-\u9fff]/)
+    expect(query<HTMLElement>(auth, '[data-auth-status]').tagName).toBe('P')
+    expect(query<HTMLElement>(auth, '[data-auth-instruction]').tagName).toBe('P')
     expect(query<HTMLElement>(auth, '[data-auth-url]').textContent).toContain('machine_id=machine-123')
 
     const urlElement = query<HTMLElement>(auth, '[data-auth-url]')
+    expect(urlElement.className).toContain('authUrl')
     urlElement.remove()
     expect(document.body.textContent).not.toContain('machine_id')
   })

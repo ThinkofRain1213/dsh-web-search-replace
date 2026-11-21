@@ -54,6 +54,7 @@ interface RenderOptions {
   readonly responder?: RpcResponder
   readonly accounts?: AccountHandlers
   readonly writable?: boolean
+  readonly status?: 'loading' | 'ready' | 'unavailable'
 }
 
 /**
@@ -69,7 +70,7 @@ async function renderCard(options: RenderOptions = {}) {
   const snapshot = options.snapshot ?? makeSnapshot()
   const locale = options.locale ?? 'zh'
   const t = translator(locale)
-  const forms = createConfigFormsDouble(snapshot, { writable: options.writable })
+  const forms = createConfigFormsDouble(snapshot, { writable: options.writable, status: options.status })
   const accounts = routeAccounts(options.accounts ?? {})
   const settingsResponder = options.responder ?? (() => ({ ok: true, value: snapshot }))
   const routed: RpcResponder = call => (
@@ -580,7 +581,7 @@ describe('SearchSection（真实 DOM）', () => {
     expect(document.activeElement).toBe(trigger)
   })
 
-  it('普通 Tab 在菜单外不被本菜单拦截', async () => {
+  it('rc5 普通 Tab 从 trigger 进入首个 enabled row，不直接提交选择', async () => {
     const { container, calls } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
     })
@@ -590,7 +591,9 @@ describe('SearchSection（真实 DOM）', () => {
 
     trigger.focus()
     const tab = await keydown(trigger, 'Tab')
-    expect(tab.defaultPrevented).toBe(false)
+    expect(tab.defaultPrevented).toBe(true)
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitem')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('CodeBuddy')
     expect(calls).toHaveLength(0)
     expect(document.querySelector('[data-dropdown-menu]')).not.toBeNull()
   })
@@ -629,26 +632,34 @@ describe('SearchSection（真实 DOM）', () => {
     }
   })
 
-  it('门户定位使用锚点几何，minWidthFromAnchor 取锚点宽度', async () => {
+  it('门户使用 CSS anchor 与 minWidthFromAnchor，不写死 getBoundingClientRect 坐标', async () => {
     const { container } = await renderCard({ snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }) })
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
-    const original = HTMLButtonElement.prototype.getBoundingClientRect
-    HTMLButtonElement.prototype.getBoundingClientRect = function getRect(): DOMRect {
-      return {
-        width: 222, height: 34, top: 100, bottom: 134, left: 40, right: 262, x: 40, y: 100,
-        toJSON: () => ({}),
-      } as DOMRect
-    }
-    try {
-      await click(trigger)
-      const menu = query<HTMLElement>(document, '[data-dropdown-menu]')
-      expect(menu.style.minWidth).toBe('222px')
-      expect(menu.style.left).toBe('40px')
-      expect(menu.style.top).toBe('138px')
-      expect(menu.hasAttribute('data-min-width-from-anchor')).toBe(true)
-    } finally {
-      HTMLButtonElement.prototype.getBoundingClientRect = original
-    }
+    await click(trigger)
+    const root = query<HTMLElement>(container, '[data-menu-root]')
+    const menu = query<HTMLElement>(document, '[data-dropdown-menu]')
+    expect(menu.style.getPropertyValue('position-anchor')).toBe(root.style.getPropertyValue('anchor-name'))
+    expect(menu.hasAttribute('data-match-anchor-width')).toBe(true)
+    expect(menu.style.left).toBe('')
+    expect(menu.style.top).toBe('')
+    expect(menu.style.minWidth).toBe('')
+  })
+
+  it.each([
+    { status: 'loading' as const, text: '设置加载中', role: null },
+    { status: 'unavailable' as const, text: '设置不可用', role: 'alert' },
+  ])('status=$status 也保持 h3→row→rowText 的完整剖面', async ({ status, text, role }) => {
+    const { container } = await renderCard({ status })
+    const section = query<HTMLElement>(container, `section[data-settings-status="${status}"]`)
+    expect(section.firstElementChild?.tagName).toBe('H3')
+    const row = query<HTMLElement>(section, `:scope > div[data-settings-status="${status}"]`)
+    expect(row.getAttribute('data-settings-status')).toBe(status)
+    expect(row.querySelector('[class*="rowText"]')).not.toBeNull()
+    const message = row.querySelector(role === null ? 'p[class*="hint"]' : 'p[class*="error"]')
+    expect(message?.textContent).toBe(text)
+    expect(message?.getAttribute('role')).toBe(role)
+    expect(container.querySelector('[data-search-section]')).toBeNull()
+    expect(container.querySelector('[data-channel-config-host]')).toBeNull()
   })
 
   it('英文文案覆盖标题、开关、渠道、账号状态与错误', async () => {
