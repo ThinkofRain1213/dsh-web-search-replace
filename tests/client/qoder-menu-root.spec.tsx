@@ -119,6 +119,18 @@ describe('Qoder 跨 CSS Module 全宽规则（NB-1 RED）', () => {
     expect(artifact).toContain(`.${fieldControlClass} > .${settingsRoot}`)
   })
 
+  it('trigger 使用 DPG/DAE 的 border:none 与 module-platform，MenuSurface elevation 不变', async () => {
+    const root = renderBuiltChannel('qoder')
+    await flush()
+    const trigger = query<HTMLButtonElement>(root.container, '[data-qoder-endpoint-row] [data-dropdown-trigger]')
+    expect(trigger.classList.contains(settingsClasses.selector)).toBe(true)
+    expect(artifact).toMatch(new RegExp(`\\.${settingsClasses.selector}\\s*\\{[^}]*border:\\s*none;`))
+    expect(artifact).toMatch(new RegExp(`\\.${settingsClasses.selector}\\s*\\{[^}]*background:\\s*var\\(--dsw-alias-bg-module-platform\\)`))
+    expect(artifact).not.toMatch(new RegExp(`\\.${settingsClasses.selector}\\s*\\{[^}]*border-l4`))
+    expect(artifact).not.toMatch(new RegExp(`\\.${settingsClasses.selector}\\s*\\{[^}]*bg-layer-3`))
+    expect(artifact).toContain('box-shadow: var(--dsw-elevation-prominent)')
+  })
+
   it('SearchSection 不传附加类，保持官方 Menu 根且不受 Qoder 全宽规则影响', async () => {
     const root = renderBuiltChannel('buddy')
     await flush()

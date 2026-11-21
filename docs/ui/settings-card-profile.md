@@ -60,7 +60,7 @@
 │ │ 条件 interactionBusy：span.rowDescription「请先完成或取消当前操作。」  │ │
 │ │ 条件 settings error：span.error[role=alert] margin: 0，红色不灰化        │ │
 │ │ span.menuRoot padding:0 anchor-name:--dsh-web-search-channels-menu-trigger-*               │ │
-│ │ button.selector height:34px padding:0 12px gap:12 radius-md            │ │
+│ │ button.selector height:34px padding:0 12px gap:12 radius-md border:none bg-module-platform │ │
 │ │ span.selectorLabel → svg.chevron 14px aria-hidden                      │ │
 │ │ 条件 open：body 下 portal A = div.menuSurface，逻辑归属 trigger，不占 stack │ │
 │ │   padding:4 border:0 radius-lg elevation-prominent z-index:1100        │ │
@@ -107,7 +107,7 @@
 │ │   label.label[for=qoder endpoint trigger] flex:0 1 auto 13/500/1.5      │ │
 │ │ ┆ .field ▸ gap ················································· 6px │
 │ │ div.fieldControl padding:0 › span.menuRoot padding:0；同时持有官方与 settings 类 │ │
-│ │ button.selector 34px / 0 12px；选项仅 auto/center.qoder.sh/api2         │ │
+│ │ button.selector 34px / 0 12px border:none bg-module-platform；仅 auto/center/api2 │ │
 │ │ .fieldControl > .menuRoot 与 width:100% 命中同一最终 DOM；SearchSection 不附加该类 │ │
 │ │ 条件 open：body 下 portal menuSurface，结构与搜索渠道菜单完全相同       │ │
 │ │ ┆ .field ▸ gap ················································· 6px │
@@ -221,7 +221,7 @@
 | 控件 | rc5 值 / 行为 |
 |---|---|
 | Switch | 原生 `button type=button`，`role=switch` / `aria-checked` / 必填 `aria-label`；轨道 36 × 20、padding 2、thumb 16、translateX(16px)、transform 120ms ease、disabled opacity .5、focus-visible ring、reduced-motion 关闭动画 |
-| Dropdown 锚点 | height 34px / padding `0 12px` / border `0.5px solid border-l4` / radius-md / bg-layer-3；disabled 只改 label-tertiary 与 cursor；focus 改 business border且 outline none |
+| Dropdown 锚点 | height 34px / padding `0 12px` / border `none` / radius-md / bg-module-platform；disabled 只改 label-tertiary 与 cursor；focus 改 business border且 outline none |
 | MenuSurface / MenuRow | surface padding 4、border 0、radius-lg、elevation-prominent、min 144 / max 360 / width max-content / z1100；item min-height 34、padding `6px 8px`、gap 6、13/20；label 在前，仅 selected 追加 trailing 14px SVG check；selected transparent，focus 背景且 outline none |
 | Menu 定位 | portal 到 body；trigger `anchor-name` 与 surface `positionAnchor` 对应；`data-match-anchor-width` 以 `anchor-size(width)` 提供最小宽度；完整 `position-try-fallbacks`；viewport 独立滚动，不手写 left/top rect |
 | Dropdown 键盘 / 焦点 | autoFocus；方向键/Home/End 跳过 disabled；Escape、Shift+Tab、普通 Tab、outside pointer 按 rc5；选择后回 trigger；保留慢保存最终回焦 R30，用户竞争焦点时不抢 |
@@ -230,6 +230,10 @@
 | 展示框 | 授权 URL padding 12、0.5px border-l2、radius-lg、bg-base、code font、12/18、pre-wrap/anywhere；只读，不自动打开、不持久化 |
 | 状态与警告 | OFF 只锁渠道选择且保值；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
 | 业务边界 | 不提前实现真实 external-open；删除当前账号默认“暂不指定”替代；清除全部必须就地二次确认；不改变 settings.update、accounts/auth RPC 或 generation/queue 语义 |
+
+### Trigger 外观补充
+
+DPG `settings-card.module.css:122-137` 与 DAE `settings-card.module.css:91-106` 的 trigger 均为 `border:none` + `var(--dsw-alias-bg-module-platform)`。按用户对本页视觉验收的明确要求，本卡采用这一实际插件先例，不再以 WebSearch 的 border-l4 作为保留额外边框的理由。仅 trigger 外观改变；rc5 的 34px / `0 12px` / gap 12 / radius-md、键盘、焦点、disabled、Qoder 全宽与 MenuSurface/elevation 均不变。
 
 ## 5. 证据边界
 
