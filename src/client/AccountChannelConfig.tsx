@@ -26,6 +26,8 @@ export interface AccountChannelConfigProps {
   readonly t: (key: string) => string
   /** Host 是否允许写入。 */
   readonly writable: boolean
+  /** 搜索 OFF 时账号区灰化并禁用添加/设当前/重登/删除；清除全部仍可用。 */
+  readonly gated?: boolean
   /** 兼容旧名；现在同样报告统一 interaction busy。 */
   readonly onAuthBusyChange?: ((busy: boolean) => void) | undefined
   /** 确认、授权/刷新、已接受队列/执行中的统一交互锁。 */
@@ -46,6 +48,7 @@ export function AccountChannelConfig({
   connection,
   t,
   writable,
+  gated = false,
   onAuthBusyChange,
   onInteractionBusyChange,
   onAccountsStateChange,
@@ -99,7 +102,8 @@ export function AccountChannelConfig({
   const reauthAccount = state.auth.targetAccountId === null
     ? null
     : state.accounts.find(account => account.id === state.auth.targetAccountId) ?? null
-  const actionLocked = !writable
+  // gated 只锁账号管理写操作；clear-all 与清除确认保持可用（R52）。
+  const lockWithoutGate = !writable
     || state.authBusy
     || state.refreshBusy
     || state.busyAccountId !== null
@@ -107,6 +111,8 @@ export function AccountChannelConfig({
     || state.queue.length > 0
     || deletingAccountId !== null
     || confirmingClear
+  const actionLocked = lockWithoutGate || gated
+  const clearLocked = lockWithoutGate
 
   const handleAdd = (): void => {
     setDeletingAccountId(null)
@@ -171,10 +177,15 @@ export function AccountChannelConfig({
   const channelNames = CHANNEL_IDS.map(id => t(`channel.${id}.name`)).join(
     t('channel.accounts.listSeparator'),
   )
+  const accountsFieldClass = gated ? `${styles.field} ${styles.fieldGated}` : styles.field
 
   return (
     <div className={styles.accountConfig} data-account-config="" data-channel={channel}>
-      <div className={styles.field} data-field="accounts">
+      <div
+        className={accountsFieldClass}
+        data-field="accounts"
+        data-off-gated={gated ? 'true' : undefined}
+      >
         <div className={styles.head} data-field-head="">
           <div className={styles.labelGroup} data-label-group="">
             <span className={styles.label} data-field-label="">{t('channel.account.label')}</span>
@@ -202,6 +213,7 @@ export function AccountChannelConfig({
                 type="button"
                 className={styles.actionButton}
                 data-action="retry-accounts"
+                disabled={gated}
                 onClick={() => { void controller.reload() }}
               >
                 {t('channel.accounts.retry')}
@@ -241,7 +253,8 @@ export function AccountChannelConfig({
               || state.refreshBusy
               || deletingAccountId !== null
               || confirmingClear
-              || state.clearBusy}
+              || state.clearBusy
+              || gated}
             writable={writable}
             t={t}
             onSetCurrent={(accountId) => { void controller.setCurrent(accountId) }}
@@ -262,6 +275,7 @@ export function AccountChannelConfig({
             busy={state.busyAccountId === deletingAccount.id}
             queued={state.status !== 'ready'
               || state.queue.some(operation => operation.accountId === deletingAccount.id)}
+            locked={gated}
             t={t}
           />
         )}
@@ -277,7 +291,7 @@ export function AccountChannelConfig({
               type="button"
               className={`${styles.actionButton} ${styles.dangerButton}`}
               data-action="clear-all"
-              disabled={actionLocked || state.status !== 'ready'}
+              disabled={clearLocked || state.status !== 'ready'}
               onClick={() => {
                 setDeletingAccountId(null)
                 setReplacementAccountId(null)

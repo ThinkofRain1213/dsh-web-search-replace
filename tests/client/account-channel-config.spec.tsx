@@ -47,12 +47,13 @@ interface RenderOptions {
   readonly handlers: AccountHandlers
   readonly locale?: TestLocale
   readonly writable?: boolean
+  readonly gated?: boolean
 }
 
 /**
  * 挂载真实账号配置区，并等待首次账号读取完成。
  * @param channel - 当前渠道。
- * @param options - RPC 处理器、locale 与可写性。
+ * @param options - RPC 处理器、locale、可写性与 OFF gating。
  * @returns 容器、调用记录、翻译与 auth busy 回调。
  */
 async function renderAccount(channel: ChannelId, options: RenderOptions) {
@@ -64,6 +65,7 @@ async function renderAccount(channel: ChannelId, options: RenderOptions) {
     connection: rpc.connection,
     t,
     writable: options.writable ?? true,
+    gated: options.gated ?? false,
     onAuthBusyChange,
   }))
   mounted.push(root)
@@ -830,6 +832,137 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(query<HTMLButtonElement>(container, '[data-action="set-current"]').disabled).toBe(true)
     expect(query<HTMLButtonElement>(container, '[data-action="reauth-account"]').disabled).toBe(true)
     expect(query<HTMLButtonElement>(container, '[data-action="delete"]').disabled).toBe(true)
+  })
+
+  it('OFF gating：账号区灰化并禁用添加/设当前/重登/删除，清除全部仍可用', async () => {
+    const current = accountSummary('buddy', 'account-a', { displayName: 'Account A' })
+    const alternative = accountSummary('buddy', 'account-b', { displayName: 'Account B' })
+    const { container } = await renderAccount('buddy', {
+      gated: true,
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [current, alternative] }),
+        'accounts.current': () => ({ ok: true, value: current }),
+      },
+    })
+
+    const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
+    expect(accountsField.getAttribute('data-off-gated')).toBe('true')
+    expect(accountsField.className).toContain('fieldGated')
+    expect(accountsField.textContent).toContain('Account A')
+    expect(accountsField.textContent).toContain('Account B')
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="add-account"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="set-current"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="reauth-account"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="delete"]').disabled)
+      .toBe(true)
+
+    const clearField = query<HTMLElement>(container, '[data-field="clear-accounts"]')
+    expect(clearField.getAttribute('data-off-gated')).toBeNull()
+    expect(clearField.className).not.toContain('fieldGated')
+    expect(query<HTMLButtonElement>(clearField, '[data-action="clear-all"]').disabled).toBe(false)
+  })
+
+  it('OFF gating：无账号时仍显示灰化提示，添加禁用而清除全部可用', async () => {
+    const { container } = await renderAccount('buddy', {
+      gated: true,
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [] }),
+        'accounts.current': () => ({ ok: true, value: null }),
+      },
+    })
+
+    const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
+    expect(accountsField.getAttribute('data-off-gated')).toBe('true')
+    expect(query<HTMLElement>(accountsField, '[data-account-state]').textContent)
+      .toContain('需要账号')
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="add-account"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(container, '[data-action="clear-all"]').disabled).toBe(false)
+  })
+
+  it('OFF gating：清除全部账号数据与就地确认仍可写入', async () => {
+    const account = accountSummary('buddy', 'account-a')
+    let cleared = false
+    const { container, calls } = await renderAccount('buddy', {
+      gated: true,
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: cleared ? [] : [account] }),
+        'accounts.current': () => ({ ok: true, value: cleared ? null : account }),
+        'accounts.clearAll': () => {
+          cleared = true
+          return { ok: true, value: { cleared: 1 } }
+        },
+      },
+    })
+
+    await click(query(container, '[data-action="clear-all"]'))
+    const confirmation = query<HTMLElement>(container, '[data-clear-confirmation]')
+    expect(query<HTMLButtonElement>(confirmation, '[data-action="confirm-clear-all"]').disabled)
+      .toBe(false)
+    expect(query<HTMLButtonElement>(confirmation, '[data-action="cancel-clear-all"]').disabled)
+      .toBe(false)
+    await click(query(confirmation, '[data-action="confirm-clear-all"]'))
+    await flush()
+
+    expect(calls.find(call => call.method === 'accounts.clearAll')).toEqual({
+      method: 'accounts.clearAll',
+      payload: {},
+    })
+    expect(container.textContent).toContain('已清除全部账号数据')
+  })
+
+  it('OFF gating：账号错误红字保持 class=error，重试入口同样受门控', async () => {
+    const { container } = await renderAccount('buddy', {
+      gated: true,
+      handlers: { 'accounts.list': () => failure },
+    })
+
+    const alert = query<HTMLElement>(container, '[data-account-error]')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.className).toContain('error')
+    expect(alert.textContent).toContain('读取账号失败')
+    expect(query<HTMLButtonElement>(container, '[data-action="retry-accounts"]').disabled)
+      .toBe(true)
+  })
+
+  it('OFF gating 解除后恢复添加/设当前/重登/删除', async () => {
+    const current = accountSummary('buddy', 'account-a')
+    const alternative = accountSummary('buddy', 'account-b')
+    const rendered = await renderAccount('buddy', {
+      gated: true,
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [current, alternative] }),
+        'accounts.current': () => ({ ok: true, value: current }),
+      },
+    })
+    expect(query<HTMLButtonElement>(rendered.container, '[data-action="add-account"]').disabled)
+      .toBe(true)
+
+    await rendered.rerender(createElement(AccountChannelConfig, {
+      channel: 'buddy',
+      connection: rendered.connection,
+      t: rendered.t,
+      writable: true,
+      gated: false,
+    }))
+
+    expect(query<HTMLButtonElement>(rendered.container, '[data-action="add-account"]').disabled)
+      .toBe(false)
+    expect(query<HTMLButtonElement>(
+      rendered.container,
+      '[data-action="set-current"][data-account-id="account-b"]',
+    ).disabled).toBe(false)
+    expect(query<HTMLButtonElement>(
+      rendered.container,
+      '[data-action="reauth-account"][data-account-id="account-a"]',
+    ).disabled).toBe(false)
+    expect(query<HTMLButtonElement>(
+      rendered.container,
+      '[data-action="delete"][data-account-id="account-b"]',
+    ).disabled).toBe(false)
   })
 
   it('英文文案覆盖当前/备选、状态、操作、删除与清除确认', async () => {

@@ -29,6 +29,8 @@ export interface InlineDeleteConfirmationProps {
   readonly busy: boolean
   /** 删除操作已在顺序队列中等待。 */
   readonly queued?: boolean
+  /** 搜索 OFF 等外部门控：锁确认与替代选择，取消仍可用。 */
+  readonly locked?: boolean
   /** 翻译函数。 */
   readonly t: (key: string) => string
 }
@@ -48,6 +50,7 @@ export function InlineDeleteConfirmation({
   onCancel,
   busy,
   queued = false,
+  locked = false,
   t,
 }: InlineDeleteConfirmationProps): React.ReactElement {
   const groupName = `dsh-web-search-replacement-${account.id}`
@@ -77,7 +80,7 @@ export function InlineDeleteConfirmation({
               value=""
               data-replacement-option="none"
               checked={replacementAccountId === null}
-              disabled={busy}
+              disabled={busy || locked}
               onChange={() => { onSelectReplacement(null) }}
             />
             <span>{t('channel.accounts.replacementNone')}</span>
@@ -90,7 +93,7 @@ export function InlineDeleteConfirmation({
                 value={alternative.id}
                 data-replacement-option={alternative.id}
                 checked={replacementAccountId === alternative.id}
-                disabled={busy}
+                disabled={busy || locked}
                 onChange={() => { onSelectReplacement(alternative.id) }}
               />
               <span>{alternative.displayName}</span>
@@ -103,7 +106,7 @@ export function InlineDeleteConfirmation({
           type="button"
           className={styles.dangerButton}
           data-action="confirm-delete"
-          disabled={busy || queued}
+          disabled={busy || queued || locked}
           onClick={onConfirm}
         >
           {t('channel.accounts.confirmDelete')}

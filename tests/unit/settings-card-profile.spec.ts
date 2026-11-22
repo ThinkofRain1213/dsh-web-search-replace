@@ -54,6 +54,22 @@ function hasSelector(css: string, selector: string): boolean {
   return new RegExp(`(?:^|[,\\n])\\s*${escapeRegExp(selector)}\\s*(?:,|\\{)`, 'm').test(css)
 }
 
+/**
+ * 取包含指定选择器的整条规则声明块，允许选择器列表。
+ * @param css - 样式表原文。
+ * @param selector - 规则中的选择器。
+ * @returns 花括号内的声明。
+ */
+function ruleBlock(css: string, selector: string): string {
+  const pattern = new RegExp(
+    `(?:^|\\})\\s*([^{}]*?${escapeRegExp(selector)}(?=[,\\s{])[^{}]*?)\\{([^{}]*)\\}`,
+    'g',
+  )
+  const blocks = [...css.matchAll(pattern)].map(match => match[2] ?? '')
+  expect(blocks.length, `CSS 缺少规则 ${selector}`).toBeGreaterThan(0)
+  return blocks.join('\n')
+}
+
 describe('完整设置卡剖面', () => {
   const profileSource = readText(PROFILE_PATH)
 
@@ -126,6 +142,17 @@ describe('完整设置卡剖面', () => {
     expect(profile).toContain('0.5px')
     expect(profile).toContain('data-menu-backing')
     expect(profile).toContain('.accountRow + .accountRow')
+  })
+
+  it('R52：OFF 说明替换与下方配置区灰化只写进剖面', () => {
+    const profile = profileBlocks[0] ?? ''
+    expect(profileSource).toContain('lockedHint')
+    expect(profileSource).toMatch(/lockedHint[^\n]*替换|替换[^\n]*lockedHint/)
+    expect(profile).toContain('data-off-gated')
+    expect(profile).toContain('data-field="clear-accounts"')
+    expect(profileSource).toMatch(/清除全部账号数据[^\n]*可用|仅[^\n]*清除全部账号数据/)
+    expect(profileSource).toMatch(/禁用[^\n]*端点|端点[^\n]*禁用/)
+    expect(profileSource).toMatch(/账号[^\n]*禁用|禁用[^\n]*账号/)
   })
 })
 
@@ -231,6 +258,30 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.error')).toMatch(/color:\s*var\(--dsw-alias-state-error-primary/)
     expect(css).not.toMatch(/\.rowGated[^{]*\.error/)
     expect(css).not.toMatch(/(?:disabled|gated)[^{]*\.error/)
+  })
+
+  it('R52 OFF gating 只灰化文本与各自 disabled 控件，clear-all 与错误红字不受影响', () => {
+    for (const selector of [
+      '.channelGated > .heading',
+      '.channelGated > .row .rowTitle',
+      '.channelGated > .row .rowDescription',
+      '.fieldGated .label',
+      '.fieldGated .fieldValue',
+      '.fieldGated .hint',
+      '.fieldGated .hintText',
+      '.fieldGated .accountName',
+      '.fieldGated .accountMasked',
+      '.fieldGated .accountStatus',
+    ]) {
+      expect(ruleBlock(css, selector), `${selector} 必须用 label-dimmed`)
+        .toMatch(/color:\s*var\(--dsw-alias-label-dimmed/)
+    }
+    expect(ruleBlock(css, '.channelGated .selector:disabled')).toMatch(/opacity:\s*0\.5;/)
+    expect(css).not.toMatch(/\.fieldGated[^{]*\.error/)
+    expect(css).not.toMatch(/\.channelGated[^{]*\.error/)
+    expect(css).not.toMatch(/\.fieldGated\s*\{[^}]*opacity:/)
+    expect(css).not.toMatch(/\.channelGated\s*\{[^}]*opacity:/)
+    expect(css).not.toMatch(/clear-accounts[^{]*label-dimmed/)
   })
 
   it('账号/条件块包装层、警告、展示框与 rc5 Button/Tag 保持统一契约', () => {

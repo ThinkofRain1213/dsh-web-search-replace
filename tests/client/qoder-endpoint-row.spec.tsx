@@ -48,6 +48,7 @@ interface RowOptions {
   readonly locale?: TestLocale
   readonly busy?: boolean
   readonly writable?: boolean
+  readonly gated?: boolean
   readonly error?: string | null
 }
 
@@ -66,6 +67,7 @@ function renderRow(options: RowOptions = {}) {
     t,
     busy: options.busy ?? false,
     writable: options.writable ?? true,
+    gated: options.gated ?? false,
     error: options.error ?? null,
   }))
   mounted.push(root)
@@ -205,6 +207,26 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     expect(alert.closest('[aria-disabled="true"], [inert]')).toBeNull()
   })
 
+  it('OFF gating 时端点下拉禁用并整体灰化，不触发变更', async () => {
+    const { row, t, onChange } = renderRow({ gated: true })
+    expect(row.getAttribute('data-off-gated')).toBe('true')
+    expect(row.className).toContain('fieldGated')
+    const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
+    expect(trigger.disabled).toBe(true)
+    expect(row.textContent).toContain(t('channel.endpoint.description'))
+    expect(row.textContent).toContain(t('channel.endpoint.noObservation'))
+    await click(trigger)
+    expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('ON 时端点行没有 OFF gating 标记', () => {
+    const { row } = renderRow({ gated: false })
+    expect(row.hasAttribute('data-off-gated')).toBe(false)
+    expect(row.className).not.toContain('fieldGated')
+    expect(query<HTMLButtonElement>(row, '[data-dropdown-trigger]').disabled).toBe(false)
+  })
+
   it('字段使用 rc5 head>labelGroup、独立 p.hint 与完整 aria-describedby 关系', () => {
     const { row } = renderRow({ error: 'settings.saveFailed' })
     const labelGroup = query<HTMLElement>(row, '[data-field-head] > [data-label-group]')
@@ -275,9 +297,9 @@ describe('设置卡中的端点行与固定域', () => {
     }
   })
 
-  it('端点保存非乐观：pending 保持自动与旧状态，成功后才显示 api2，失败回滚并只在端点行报错', async () => {
-    const before = makeSnapshot({ enabled: false, channel: 'qoder', endpointPreference: 'auto' })
-    const after = makeSnapshot({ enabled: false, channel: 'qoder', endpointPreference: 'api2' })
+  it('ON 时端点保存非乐观：pending 保持自动与旧状态，成功后才显示 api2，失败回滚并只在端点行报错', async () => {
+    const before = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'auto' })
+    const after = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'api2' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
     const { container, calls } = renderCard(before, (call) => {
       if (call.method === 'settings.update') return response.promise
@@ -311,8 +333,8 @@ describe('设置卡中的端点行与固定域', () => {
     expect(row.textContent).toContain('api2.qoder.sh')
   })
 
-  it('端点保存失败回滚到旧偏好，错误只出现在端点行，不污染渠道行', async () => {
-    const before = makeSnapshot({ enabled: false, channel: 'qoder', endpointPreference: 'auto' })
+  it('ON 时端点保存失败回滚到旧偏好，错误只出现在端点行，不污染渠道行', async () => {
+    const before = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'auto' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
     const { container } = renderCard(before, (call) => {
       if (call.method === 'settings.update') return response.promise

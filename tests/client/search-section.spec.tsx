@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
 import type { AccountCollection, AccountSummary } from '../../src/shared/accounts.ts'
+import { CHANNEL_IDS } from '../../src/shared/channels.ts'
 import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
 import {
@@ -145,21 +146,161 @@ describe('SearchSection（真实 DOM）', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
-  it('OFF 时渠道下拉灰化但保值，当前配置区仍可管理', async () => {
+  it('OFF 时渠道 lockedHint 替换原说明，不追加第三行', async () => {
     const { container, t } = await renderCard({
-      snapshot: makeSnapshot({ enabled: false, channel: 'qoder' }),
+      snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
     })
 
-    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    const row = query<HTMLElement>(container, '[data-row="channel"]')
+    const descriptions = [...row.querySelectorAll<HTMLElement>('[class*="rowDescription"]')]
+    expect(descriptions.map(node => node.textContent)).toEqual([t('search.channel.lockedHint')])
+    expect(row.textContent).not.toContain(t('search.channel.description'))
+    expect(query<HTMLElement>(row, '[class*="rowTitle"]').textContent)
+      .toBe(t('search.channel.label'))
+    const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(true)
-    expect(trigger.textContent).toContain(t('channel.qoder.name'))
     expect(trigger.closest('[data-row="channel"]')?.getAttribute('data-gated')).toBe('true')
+  })
 
-    const config = query<HTMLElement>(container, '[data-channel-config-host]')
-    expect(config.getAttribute('data-channel')).toBe('qoder')
-    expect(config.querySelector('[data-qoder-endpoint-slot]')).toBeTruthy()
-    expect(config.querySelector('[data-account-config-slot]')).toBeTruthy()
-    expect(config.querySelector('[data-account-state]')?.textContent).toContain('需要账号')
+  it('OFF 时下方渠道配置整体灰化，仅清除全部账号数据保留可用', async () => {
+    const current = accountSummary('qoder', 'qoder-current', {
+      displayName: 'Qoder Current', maskedIdentifier: 'q***@example.com', status: 'ready',
+    })
+    const alternative = accountSummary('qoder', 'qoder-alt', {
+      displayName: 'Qoder Alternative', maskedIdentifier: 'q***2@example.com',
+    })
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: false, channel: 'qoder' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [current, alternative] }),
+        'accounts.current': () => ({ ok: true, value: current }),
+      },
+    })
+
+    const host = query<HTMLElement>(container, '[data-channel-config-host]')
+    expect(host.getAttribute('data-off-gated')).toBe('true')
+    expect(host.className).toContain('channelGated')
+
+    const endpoint = query<HTMLElement>(host, '[data-qoder-endpoint-slot]')
+    expect(query<HTMLButtonElement>(endpoint, '[data-dropdown-trigger]').disabled).toBe(true)
+    expect(query<HTMLElement>(endpoint, '[data-qoder-endpoint-row]')
+      .getAttribute('data-off-gated')).toBe('true')
+
+    const accountsField = query<HTMLElement>(host, '[data-field="accounts"]')
+    expect(accountsField.getAttribute('data-off-gated')).toBe('true')
+    expect(accountsField.className).toContain('fieldGated')
+    expect(accountsField.textContent).toContain('Qoder Current')
+    expect(accountsField.textContent).toContain('Qoder Alternative')
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="add-account"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="set-current"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="reauth-account"]').disabled)
+      .toBe(true)
+    expect(query<HTMLButtonElement>(accountsField, '[data-action="delete"]').disabled)
+      .toBe(true)
+
+    const clearField = query<HTMLElement>(host, '[data-field="clear-accounts"]')
+    expect(clearField.getAttribute('data-off-gated')).toBeNull()
+    expect(clearField.className).not.toContain('fieldGated')
+    expect(query<HTMLButtonElement>(clearField, '[data-action="clear-all"]').disabled)
+      .toBe(false)
+  })
+
+  it.each(CHANNEL_IDS)('OFF 时 %s 配置区整体灰化且 clear-all 可用', async (channel) => {
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: false, channel }),
+    })
+    const host = query<HTMLElement>(container, '[data-channel-config-host]')
+    expect(host.getAttribute('data-off-gated')).toBe('true')
+    expect(query<HTMLButtonElement>(host, '[data-action="add-account"]').disabled).toBe(true)
+    expect(query<HTMLButtonElement>(host, '[data-action="clear-all"]').disabled).toBe(false)
+
+    if (channel === 'qoder') {
+      const endpoint = query<HTMLElement>(host, '[data-qoder-endpoint-slot]')
+      expect(query<HTMLButtonElement>(endpoint, '[data-dropdown-trigger]').disabled).toBe(true)
+      expect(query<HTMLElement>(endpoint, '[data-qoder-endpoint-row]')
+        .getAttribute('data-off-gated')).toBe('true')
+    } else {
+      const endpoint = query<HTMLElement>(host, '[data-fixed-endpoint-slot]')
+      expect(query<HTMLElement>(endpoint, '[data-field="endpoint"]')
+        .getAttribute('data-off-gated')).toBe('true')
+      expect(endpoint.querySelector('button')).toBeNull()
+      expect(query<HTMLElement>(endpoint, '[data-fixed-endpoint]').textContent).not.toBe('')
+    }
+  })
+
+  it('OFF 时清除全部账号数据仍可就地确认并写入', async () => {
+    const account = accountSummary('buddy', 'account-a')
+    let cleared = false
+    const { container, calls } = await renderCard({
+      snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: cleared ? [] : [account] }),
+        'accounts.current': () => ({ ok: true, value: cleared ? null : account }),
+        'accounts.clearAll': () => {
+          cleared = true
+          return { ok: true, value: { cleared: 1 } }
+        },
+      },
+    })
+
+    const clearAll = query<HTMLButtonElement>(container, '[data-action="clear-all"]')
+    expect(clearAll.disabled).toBe(false)
+    await click(clearAll)
+    const confirmation = query<HTMLElement>(container, '[data-clear-confirmation]')
+    expect(query<HTMLButtonElement>(confirmation, '[data-action="confirm-clear-all"]').disabled)
+      .toBe(false)
+    await click(query(confirmation, '[data-action="confirm-clear-all"]'))
+    await flush()
+
+    expect(calls.find(call => call.method === 'accounts.clearAll')).toEqual({
+      method: 'accounts.clearAll',
+      payload: {},
+    })
+    expect(container.textContent).toContain('已清除全部账号数据')
+  })
+
+  it('OFF→ON 恢复渠道说明与配置区操作', async () => {
+    const before = makeSnapshot({ enabled: false, channel: 'buddy' })
+    const after = makeSnapshot({ enabled: true, channel: 'buddy' })
+    const response = deferred<RpcResult<SearchSettingsSnapshot>>()
+    const { container, t } = await renderCard({
+      snapshot: before,
+      responder: () => response.promise,
+    })
+
+    const gatedHost = query<HTMLElement>(container, '[data-channel-config-host]')
+    expect(gatedHost.getAttribute('data-off-gated')).toBe('true')
+    expect(query<HTMLButtonElement>(gatedHost, '[data-action="add-account"]').disabled).toBe(true)
+    expect(query<HTMLElement>(container, '[data-row="channel"]').textContent)
+      .toContain(t('search.channel.lockedHint'))
+
+    await click(query(container, '[role="switch"]'))
+    response.resolve({ ok: true, value: after })
+    await settle()
+
+    const restored = query<HTMLElement>(container, '[data-channel-config-host]')
+    expect(restored.getAttribute('data-off-gated')).toBeNull()
+    expect(restored.className).not.toContain('channelGated')
+    expect(query<HTMLButtonElement>(restored, '[data-action="add-account"]').disabled).toBe(false)
+    const row = query<HTMLElement>(container, '[data-row="channel"]')
+    expect(row.textContent).toContain(t('search.channel.description'))
+    expect(row.textContent).not.toContain(t('search.channel.lockedHint'))
+  })
+
+  it('OFF 时账号错误仍以红色错误呈现，不被灰化规则吞掉', async () => {
+    const { container } = await renderCard({
+      snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
+      accounts: { 'accounts.list': () => failure },
+    })
+
+    expect(query<HTMLElement>(container, '[data-channel-config-host]')
+      .getAttribute('data-off-gated')).toBe('true')
+    const alert = query<HTMLElement>(container, '[data-account-error]')
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.className).toContain('error')
+    expect(alert.textContent).toContain('读取账号失败')
   })
 
   it('ON 但该渠道无账号时明确显示需要账号，不伪造 ready', async () => {

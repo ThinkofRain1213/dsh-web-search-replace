@@ -2,7 +2,8 @@
  * 搜索设置区：启用开关与渠道下拉。
  *
  * 开关与下拉都从同一 `search.enabled/channel` 状态派生；OFF 时渠道下拉
- * 禁用并灰化但保留当前值，配置区不受这里门控。渠道选项顺序来自共享
+ * 禁用并灰化但保留当前值，并用 `lockedHint` 替换说明而不是追加第三行。
+ * 下方渠道配置区由 SettingsCard 整体传入 OFF gating。渠道选项顺序来自共享
  * `CHANNEL_IDS`，可见名称来自 locale。
  */
 import * as React from 'react'
@@ -104,10 +105,9 @@ export function SearchSection({
       >
         <div className={styles.rowText}>
           <span id={channelLabelId} className={styles.rowTitle}>{t('search.channel.label')}</span>
-          <span className={styles.rowDescription}>{t('search.channel.description')}</span>
-          {gated && (
-            <span className={styles.rowDescription}>{t('search.channel.lockedHint')}</span>
-          )}
+          <span className={styles.rowDescription}>
+            {gated ? t('search.channel.lockedHint') : t('search.channel.description')}
+          </span>
           {interactionBusy && (
             <span className={styles.rowDescription} data-interaction-busy-hint="">
               {t('search.channel.interactionLockedHint')}

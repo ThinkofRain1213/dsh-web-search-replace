@@ -66,6 +66,30 @@
   opacity: 0.5;
 }
 
+/* R52 OFF：下方渠道配置整体灰化。纯文本只用 label-dimmed，控件沿用各自
+   :disabled 规则；不给整个区域统一 opacity。账号 field 单独用 .fieldGated，
+   清除全部账号数据 field 不挂该类，因此 label 与按钮保持可辨识可用。 */
+.channelGated > .heading,
+.channelGated > .row .rowTitle,
+.channelGated > .row .rowDescription,
+.fieldGated .label,
+.fieldGated .fieldValue,
+.fieldGated .hint,
+.fieldGated .hintText,
+.fieldGated .accountName,
+.fieldGated .accountMasked,
+.fieldGated .accountStatus {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.fieldGated .accountBadge[data-tone='solid'] {
+  background: var(--dsw-alias-label-dimmed);
+}
+
+.channelGated .selector:disabled {
+  opacity: 0.5;
+}
+
 .rule {
   flex: none;
   margin: 0;

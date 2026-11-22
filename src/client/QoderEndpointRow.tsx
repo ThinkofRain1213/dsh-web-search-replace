@@ -1,6 +1,7 @@
 /**
  * Qoder 国际版端点偏好字段。保留 auto/center/api2、实际观测与保存语义；
  * 外观复制 rc5 field/head/labelGroup，hint/error 通过 aria-describedby 关联 trigger。
+ * 搜索 OFF 时 gated 禁用下拉并灰化字段，但不改变已持久化的 preference。
  */
 import * as React from 'react'
 
@@ -19,6 +20,8 @@ export interface QoderEndpointRowProps {
   readonly t: (key: string) => string
   readonly busy?: boolean
   readonly writable?: boolean
+  /** 搜索 OFF 时只读灰化；与 busy/writable 一样只禁用控件。 */
+  readonly gated?: boolean
   readonly error?: string | null
 }
 
@@ -36,6 +39,7 @@ export function QoderEndpointRow({
   t,
   busy = false,
   writable = true,
+  gated = false,
   error = null,
 }: QoderEndpointRowProps): React.ReactElement {
   const labelId = React.useId()
@@ -59,7 +63,12 @@ export function QoderEndpointRow({
     : `${t('channel.endpoint.fixed')}${ENDPOINT_HOSTS[preference]}`
 
   return (
-    <div className={styles.field} data-qoder-endpoint-row="" data-preference={preference}>
+    <div
+      className={`${styles.field}${gated ? ` ${styles.fieldGated}` : ''}`}
+      data-qoder-endpoint-row=""
+      data-preference={preference}
+      data-off-gated={gated ? 'true' : undefined}
+    >
       <div className={styles.head} data-field-head="">
         <div className={styles.labelGroup} data-label-group="">
           <label id={labelId} htmlFor={triggerId} className={styles.label} data-field-label="">
@@ -74,7 +83,7 @@ export function QoderEndpointRow({
           selectedId={preference}
           valueLabel={selectedLabel}
           onSelect={(id) => { onChange(id as QoderEndpointPreference) }}
-          disabled={busy || !writable}
+          disabled={busy || !writable || gated}
           labelledBy={labelId}
           label={t('channel.endpoint.label')}
           describedBy={describedBy}

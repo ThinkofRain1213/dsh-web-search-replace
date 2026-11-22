@@ -536,7 +536,7 @@ git commit -m "feat: add Qoder CN authorization lifecycle"
 
 - [ ] **Step 1: 先写完整剖面与失败 DOM/控制器测试**
 
-剖面必须从 `.stack` 顶到底列出 search section、分隔线、四个条件渠道配置、Qoder 国际版端点行、fieldSlot/hintRow 和所有包装层 padding，不拆段。测试断言：同一 channel 驱动下拉/状态/配置；OFF 灰化保值；保存失败回滚； busy 锁定；无第二查看选择器。
+剖面必须从 `.stack` 顶到底列出 search section、分隔线、四个条件渠道配置、Qoder 国际版端点行、fieldSlot/hintRow 和所有包装层 padding，不拆段。测试断言：同一 channel 驱动下拉/状态/配置；OFF 用 lockedHint 替换渠道说明；OFF 下方配置区整体灰化且仅 clear-all 可用；保存失败回滚； busy 锁定；无第二查看选择器。
 
 - [ ] **Step 2: 运行测试，确认组件与剖面缺失**
 
@@ -597,7 +597,7 @@ Expected: FAIL，提示账号组件不存在。
 
 - [ ] **Step 4: 实现 Qoder 国际版端点偏好与状态**
 
-下拉只有自动/center/api2；自动显示实际 host；固定模式只显示所选 host；OFF 时仍可编辑当前渠道配置。端点保存失败回滚，实际 host 不改变用户 preference。
+下拉只有自动/center/api2；自动显示实际 host；固定模式只显示所选 host；OFF 时端点下拉随下方配置区整体灰化禁用，clear-all 除外。端点保存失败回滚，实际 host 不改变用户 preference。
 
 - [ ] **Step 5: 运行账号与端点 UI 测试**
 
@@ -690,7 +690,7 @@ Expected: 全部 PASS；反向对照按预期 FAIL 后被门禁识别；所有�
 
 - [ ] **Step 6: 主会话完成真实设置页与 CSS 验收**
 
-在真实插件详情逐项量取：34px 下拉、36×20 Switch、24/32/6/16 间距、h3 不补偿、fieldSlot padding 0、hintRow 归属；验证 OFF 灰化、动态配置同源、Qoder 独有端点下拉、键盘/焦点/Escape、390px、深浅主题、zh/en。对所有最终样式表做跨插件交集与双向反向对照，至少覆盖同级已构建的 `dsh-project-groups` 与 `dsh-auto-expand`，并保存必要截图与计算样式证据。
+在真实插件详情逐项量取：34px 下拉、36×20 Switch、24/32/6/16 间距、h3 不补偿、fieldSlot padding 0、hintRow 归属；验证 OFF 说明替换与下方配置区整体灰化（仅 clear-all 可用）、动态配置同源、Qoder 独有端点下拉、键盘/焦点/Escape、390px、深浅主题、zh/en。对所有最终样式表做跨插件交集与双向反向对照，至少覆盖同级已构建的 `dsh-project-groups` 与 `dsh-auto-expand`，并保存必要截图与计算样式证据。
 
 - [ ] **Step 7: 记录证据并做最终本地提交**
 

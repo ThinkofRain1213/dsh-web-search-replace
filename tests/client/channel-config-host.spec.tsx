@@ -26,18 +26,23 @@ afterEach(() => {
 /**
  * 挂载一个渠道配置宿主。
  * @param channel - 当前渠道。
- * @param options - 当前账号与额外 children。
+ * @param options - 当前账号、额外 children 与 OFF gating。
  * @returns 容器、翻译器与宿主元素。
  */
 function renderHost(
   channel: (typeof CHANNEL_IDS)[number],
-  options: { accountId?: string | null; children?: ReturnType<typeof createElement> } = {},
+  options: {
+    accountId?: string | null
+    children?: ReturnType<typeof createElement>
+    gated?: boolean
+  } = {},
 ) {
   const t = translator('zh')
   const root = mount(createElement(ChannelConfigHost, {
     channel,
     currentAccountId: options.accountId ?? null,
     t,
+    gated: options.gated ?? false,
     ...(options.children === undefined ? {} : { children: options.children }),
   }))
   mounted.push(root)
@@ -139,6 +144,47 @@ describe('ChannelConfigHost（真实 DOM）', () => {
     expect(endpoint.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(1)
     expect(host.querySelectorAll('[data-channel-config-host]')).toHaveLength(0)
     expect(host.querySelectorAll('[data-qoder-endpoint-slot]')).toHaveLength(1)
+  })
+
+  it.each(CHANNEL_IDS)('OFF gating：%s 整段标记灰化并禁用配置修改入口', (channel) => {
+    const { host, t } = renderHost(channel, { gated: true })
+    expect(host.getAttribute('data-off-gated')).toBe('true')
+    expect(host.className).toContain('channelGated')
+    expect(host.querySelector('h3')?.textContent).toBe(t(`channel.${channel}.name`))
+    expect(host.textContent).toContain(t(`channel.${channel}.description`))
+
+    const fallback = query<HTMLElement>(host, '[data-account-config-slot] [data-off-gated="true"]')
+    expect(fallback.closest('[data-account-config-slot]')).not.toBeNull()
+    expect(host.querySelector('[data-account-state]')).not.toBeNull()
+
+    if (channel === 'qoder') {
+      const endpoint = query<HTMLElement>(host, '[data-qoder-endpoint-slot]')
+      expect(query<HTMLButtonElement>(endpoint, '[data-dropdown-trigger]').disabled).toBe(true)
+      expect(query<HTMLElement>(endpoint, '[data-qoder-endpoint-row]')
+        .getAttribute('data-off-gated')).toBe('true')
+    } else {
+      const endpoint = query<HTMLElement>(host, '[data-fixed-endpoint-slot]')
+      const field = query<HTMLElement>(endpoint, '[data-field="endpoint"]')
+      expect(field.getAttribute('data-off-gated')).toBe('true')
+      expect(field.className).toContain('fieldGated')
+      expect(endpoint.querySelector('button')).toBeNull()
+      expect(query<HTMLElement>(endpoint, '[data-fixed-endpoint]').textContent).not.toBe('')
+    }
+  })
+
+  it('ON 时配置宿主没有 OFF gating 标记', () => {
+    const { host } = renderHost('qoder')
+    expect(host.hasAttribute('data-off-gated')).toBe(false)
+    expect(host.className).not.toContain('channelGated')
+    expect(query<HTMLButtonElement>(host, '[data-dropdown-trigger]').disabled).toBe(false)
+  })
+
+  it('OFF gating 不改变传入 children 的账号区结构', () => {
+    const children = createElement('div', { 'data-account-config': 'future' }, '未来账号区')
+    const { host } = renderHost('buddy', { children, gated: true })
+    expect(host.getAttribute('data-off-gated')).toBe('true')
+    expect(query<HTMLElement>(host, '[data-account-config-slot]').textContent).toBe('未来账号区')
+    expect(host.querySelector('[data-account-state]')).toBeNull()
   })
 
   it('英文配置区不含中文，Qoder 国际版名称与说明来自英文字典', () => {

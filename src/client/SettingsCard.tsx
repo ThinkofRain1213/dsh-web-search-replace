@@ -95,6 +95,7 @@ export function SettingsCard({
           channel={state.viewChannel}
           currentAccountId={state.settings[state.viewChannel].currentAccountId}
           t={t}
+          gated={!state.enabled}
           endpointPreference={state.settings.qoder.endpointPreference}
           actualEndpointHost={state.actualEndpointHost}
           endpointBusy={state.busy}
@@ -108,6 +109,7 @@ export function SettingsCard({
             connection={connection}
             t={t}
             writable={state.writable}
+            gated={!state.enabled}
             onInteractionBusyChange={onInteractionBusyChange}
             onAccountsStateChange={onAccountsStateChange}
           />
