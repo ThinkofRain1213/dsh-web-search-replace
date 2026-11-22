@@ -261,14 +261,18 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     expect(status.id).not.toBe('')
     const description = query<HTMLElement>(hintRow, '[data-endpoint-description]')
     expect(description.tagName).toBe('P')
-    const error = query<HTMLElement>(container, '[data-endpoint-error]')
+    const error = query<HTMLElement>(hintRow, '[data-endpoint-error]')
     expect(error.tagName).toBe('P')
+    expect(error.parentElement).toBe(hintRow)
     const describedBy = trigger.getAttribute('aria-describedby')?.split(' ') ?? []
     expect(describedBy).toEqual(expect.arrayContaining([status.id, description.id, error.id]))
     for (const hint of [...hintRow.querySelectorAll('p[class*="hint"]'), error]) {
       expect(hint.children, '字段 hint 必须是纯字符串，不允许嵌入 code 等元素').toHaveLength(0)
     }
-    expect(hintRow.nextElementSibling).toBe(error)
+    expect([...hintRow.children]).toEqual([status, description, error])
+    expect(hintRow.lastElementChild).toBe(error)
+    expect(hintRow.nextElementSibling).toBeNull()
+    expect(container.querySelector('[data-endpoint-error]')).toBe(error)
   })
 
   it('英文文案覆盖端点行，自动无观测不会出现中文', () => {

@@ -297,6 +297,8 @@ describe('设置卡 CSS 契约', () => {
     expect(css).not.toMatch(/\.fieldGated\s*\{[^}]*opacity:/)
     expect(css).not.toMatch(/\.channelGated\s*\{[^}]*opacity:/)
     expect(css).not.toMatch(/\.rowGated\s*\{[^}]*opacity:/)
+    expect(css).not.toMatch(/\.rowGated\s+\.accountList\s*\{[^}]*border/)
+    expect(css).not.toMatch(/\.fieldGated\s+\.accountList\s*\{[^}]*border/)
     expect(css).not.toMatch(/clear-accounts[^{]*label-dimmed/)
   })
 
@@ -305,6 +307,8 @@ describe('设置卡 CSS 契约', () => {
       expect(cssBlock(css, selector), `${selector} 必须 padding:0`).toMatch(/padding:\s*0;/)
     }
     expect(cssBlock(css, '.accountList')).toMatch(/padding-top:\s*12px;/)
+    expect(cssBlock(css, '.accountList')).toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    expect(cssBlock(css, '.accountList')).toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
     expect(cssBlock(css, '.accountListRegion')).toMatch(/padding-bottom:\s*12px;/)
     expect(cssBlock(css, '.accountRow')).toMatch(/padding:\s*12px 0;/)
     expect(cssBlock(css, '.accountRow')).not.toMatch(/justify-content:/)

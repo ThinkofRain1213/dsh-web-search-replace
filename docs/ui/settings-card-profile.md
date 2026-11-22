@@ -10,7 +10,7 @@
 
 R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端点配置，避免 CodeBuddy 组名与下一行渠道说明重复；`channel.*.description` 不再出现在详情页。端点统一为横向 `row`：固定端点是「左侧搜索端点 + 右侧固定域名」，Qoder 是「左侧搜索端点 + 右侧 Dropdown」，不再使用纵向 label/value/hint 三段。端点说明放在紧随控件 row 的 `hintRow`；Qoder 的状态与说明都是纯字符串 `p`，不嵌入按钮或组标题。
 
-账号区只保留一个 `AccountChannelConfig（Task 14）`；当前账号状态改为独立 `row[data-account-state]` 的 `rowDescription`，位于账号列表上方而不是字段尾部 hint。账号列表内部的行结构、行名、行说明、按钮与分隔线全部冻结，只通过 `.accountList` 的 `padding-top: 12px` 修正它与状态行的距离。`QoderEndpointRow（Task 14）` 只在 qoder 出现。不得新增第二渠道选择器，不改变 controllers、RPC、凭据、保存、账号安全与 Host 服务注入；不要提前实现真实 external-open。
+账号区只保留一个 `AccountChannelConfig（Task 14）`；当前账号状态改为独立 `row[data-account-state]` 的 `rowDescription`，位于账号列表上方而不是字段尾部 hint。账号列表内部的行结构、行名、行说明、按钮与行间分隔线全部冻结，只通过 `.accountList` 的 `padding-top: 12px` 修正它与状态行的距离，并在 `.accountList` 容器自身加 `border-top` / `border-bottom:0.5px solid border-l2`，让首行之前和末行之后都有列表边界线；R52 灰化不得覆盖这两条线。`QoderEndpointRow（Task 14）` 只在 qoder 出现。不得新增第二渠道选择器，不改变 controllers、RPC、凭据、保存、账号安全与 Host 服务注入；不要提前实现真实 external-open。
 
 ## 2. 完整剖面（从 `.stack` 顶到底，一张图）
 
@@ -126,8 +126,10 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 │ │ div.hintRow[data-hint-row] 条件 OFF：rowGated + data-off-gated=true   │ │
 │ │ p.hint[data-endpoint-status] 纯字符串：尚无运行观测/实际 host/固定使用 │ │
 │ │ p.hint[data-endpoint-description]「仅支持搜索，不支持服务端网页抓取。」│ │
-│ │ 条件 endpoint error：p.error[data-endpoint-error][role=alert] margin:0 │ │
+│ │ 条件 endpoint error：p.error[data-endpoint-error][role=alert] 仍在    │ │
+│ │   hintRow 内，作为 status/description 后的最后一个独立子元素；margin:0 │ │
 │ │ ┆ .hintRow ▸ margin-bottom ···································· 12px │ │
+│ │   （该 12px 位于 error 之后，再与账号 field padding-top 12 = 24px）  │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
 │ ┆ hintRow margin-bottom 12 ＋ 下一账号 field padding-top 12 ······· 24px │
 │ ┄ div.fieldSlot[data-account-config-slot] ┄                              │
@@ -153,6 +155,7 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 │ │ 条件 accounts.length>0 或 deletingAccount：div.accountListRegion data-account-list-region │ │
 │ │   条件 OFF：.rowGated + data-off-gated=true；列表文字灰化、行按钮 disabled │ │
 │ │   div.accountList padding-top:12px gap:0；内部行结构冻结               │ │
+│ │     border-top / border-bottom:0.5px solid border-l2（容器首末线）    │ │
 │ │     首 div.accountRow:first-child padding-top:0                       │ │
 │ │     每个 div.accountRow padding:12px 0 gap:8                          │ │
 │ │       div.accountRowText flex:1 padding:0 gap:6                       │ │
@@ -165,6 +168,7 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 │ │   条件 deletingAccount：div.confirmBox padding:0 gap:6（与列表 6px）  │ │
 │ │   ┆ .accountListRegion ▸ padding-bottom ························· 12px │ │
 │ │ ┆ accounts field bottom 12 ＋ 状态 row top 12 = 24px；末账号 bottom 0 │ │
+│ │ ┆ ＋ accountList 容器 bottom hairline 0.5px（视觉线，不改 12px 间距） │ │
 │ │ ┆ ＋ accountListRegion bottom 12 ＋ 清除 field top 12 = 24px          │ │
 │ │ ┌─ div.field[data-field="clear-accounts"] padding:12px 0 gap:6 ────────┐ │
 │ │ │ 条件 OFF：不挂 .fieldGated/.rowGated；清除全部账号数据仍可用         │ │
@@ -197,11 +201,11 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 | hintRow 在 fieldSlot 内部且 fieldSlot 是 section 直接末孩子 | 内部 hintRow 的 `margin-bottom:12px` | 由 `.section > .fieldSlot:last-child` 承担；`.section > .hintRow:last-child` 不命中 |
 | hintRow 是 section 直接末孩子 | hintRow 自身 `margin-bottom:12px` | `.section > .hintRow:last-child` 承担 |
 | 端点控件 row → 外置说明 hintRow | row `padding-bottom:12px` 与 hintRow `margin-top:−6px` | 先 12 再 −6，净 6px |
-| 端点 hintRow → 下一账号 field | hintRow `margin-bottom:12px` 与下一 field `padding-top:12px` | 24px |
+| 端点 hintRow → 下一账号 field | hintRow `margin-bottom:12px` 与下一 field `padding-top:12px` | 24px；endpoint error 在 hintRow 内最后，因此 12px 位于 error 之后 |
 | 账号 field → 当前账号状态 row | field `padding-bottom:12px` 与 row `padding-top:12px` | 24px |
-| 当前账号状态 row → 首个账号 | row `padding-bottom:12px` 与 `.accountList` 容器 `padding-top:12px` | 24px；不再经过父 field 的 6px gap |
-| 末账号 → 清除全部 head | 末行 `padding-bottom:0` + `.accountListRegion` 的 `padding-bottom:12px` + clear field `padding-top:12px` | 24px；列表内部行不额外加 padding |
-| 包装层 | stack/fieldSlot/accountConfig/authFlow/confirmBox/accountListRegion/accountList 内部/menuRoot/viewport | 只保留列出的 padding；accountList 仅 `padding-top:12px`，accountListRegion 仅 `padding-bottom:12px` |
+| 当前账号状态 row → 首个账号 | row `padding-bottom:12px` + `.accountList` 容器 `border-top:0.5px` + `padding-top:12px` | 12+12=24px 间距，另加容器首条 0.5px hairline；不再经过父 field 的 6px gap |
+| 末账号 → 清除全部 head | 末行 `padding-bottom:0` + `.accountList` 容器 `border-bottom:0.5px` + `.accountListRegion` 的 `padding-bottom:12px` + clear field `padding-top:12px` | 12+12=24px 间距，另加容器末条 0.5px hairline；列表内部行不额外加 padding |
+| 包装层 | stack/fieldSlot/accountConfig/authFlow/confirmBox/accountListRegion/accountList 内部/menuRoot/viewport | 只保留列出的 padding；accountList 仅 `padding-top:12px` + 上下 0.5px border，accountListRegion 仅 `padding-bottom:12px` |
 
 `.hintRow` 仍是 `display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-6px 0 12px`；端点说明和 Qoder 状态都是纯字符串 `p.hint`，不嵌入按钮、组标题或 code。账号状态不使用 hintRow，而是独立 `.row[data-account-state]` 的 `rowDescription`。
 
@@ -215,11 +219,11 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 | Menu 定位 | portal 到 body；trigger `anchor-name` 与 surface `positionAnchor` 对应；`data-match-anchor-width` 以 `anchor-size(width)` 提供最小宽度；完整 `position-try-fallbacks`；viewport 独立滚动，不手写 left/top rect |
 | Dropdown 键盘 / 焦点 | autoFocus；方向键/Home/End 跳过 disabled；Escape、Shift+Tab、普通 Tab、outside pointer 按 rc5；选择后回 trigger；保留慢保存最终回焦 R30，用户竞争焦点时不抢 |
 | 端点行 | 固定端点为 `row[data-fixed-endpoint-row]`：左 `rowTitle`「搜索端点」，右 `fieldValue` 固定域，无按钮；Qoder 为 `row[data-qoder-endpoint-row]`：左 label（`for` 指 trigger），右 Dropdown。二者都不使用 `.field`、`fieldControl` 或 settings `menuRoot` 全宽接缝 |
-| 端点提示 | 说明在控件 row 后的 `.hintRow`：状态/说明为纯字符串 `p.hint`；错误为独立 `p.error[role=alert]`；`aria-describedby` 指向 status/description/error |
+| 端点提示 | 说明在控件 row 后的 `.hintRow`：状态/说明为纯字符串 `p.hint`；条件错误也是 hintRow 内的最后一个独立 `p.error[role=alert]`（不是 hintRow 的兄弟）；`aria-describedby` 指向 status/description/error。hintRow 的 margin-bottom 12 位于 error 之后，error → 下一账号 field 仍为 24px |
 | 账号 / 操作 | 账号 head 的 labelGroup flex 1，右侧 badges/accountActions 自然靠右，不用外层 justify 补偿；账号行基础 padding `12px 0`，首行 top 0、末行 bottom 0，行间 hairline 0.5px；按钮复制 rc5 small outline，Tag 复制官方几何/tone |
 | 当前账号状态 | 独立 `.row[data-account-state]`（不在账号 field 内），内部 `span.rowDescription` 显示 loading/required/selected/no-current/error；错误状态不伪造 ready。它与列表之间固定 24px |
-| 账号列表区域 | `.accountList` 只加 `padding-top:12px`，首行仍 top 0；`.accountListRegion` 只加 `padding-bottom:12px` 与删除确认前的 6px gap；列表内部结构、行名、行说明、按钮、分隔线全部冻结 |
-| OFF gating | `ChannelConfigHost` 接收 `gated`，section 加 `.channelGated` / `data-off-gated`；端点 row 与 hintRow 加 `.rowGated`，账号 field 加 `.fieldGated`，账号状态 row 与列表区域加 `.rowGated`。添加账号、设当前、重登、删除、重试、端点下拉全部 `disabled`；文本用 `label-dimmed`；清除全部 field 不挂 gated；OFF 不取消在飞授权/RPC |
+| 账号列表区域 | `.accountList` 只加 `padding-top:12px` 与容器自身 `border-top` / `border-bottom:0.5px solid border-l2`（首行前、末行后各一条线），首行仍 top 0；`.accountListRegion` 只加 `padding-bottom:12px` 与删除确认前的 6px gap；列表内部结构、行名、行说明、按钮、行间分隔线全部冻结 |
+| OFF gating | `ChannelConfigHost` 接收 `gated`，section 加 `.channelGated` / `data-off-gated`；端点 row 与 hintRow 加 `.rowGated`，账号 field 加 `.fieldGated`，账号状态 row 与列表区域加 `.rowGated`。添加账号、设当前、重登、删除、重试、端点下拉全部 `disabled`；文本用 `label-dimmed`；clear-all field 不挂 gated；列表容器上下 0.5px border 不被 rowGated 覆盖；OFF 不取消在飞授权/RPC |
 | 展示框 | 授权 URL padding 12、0.5px border-l2、radius-lg、bg-base、code font、12/18、pre-wrap/anywhere；只读，不自动打开、不持久化 |
 | 状态与警告 | OFF 时渠道说明由 `lockedHint` 替换且下拉保值；下方配置区用 `label-dimmed` 灰化纯文本，控件沿用各自 `:disabled`；清除全部账号数据与清除确认不在 gated 区内，保持可用；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
 | 业务边界 | 不提前实现真实 external-open；删除当前账号默认“暂不指定”替代；清除全部必须就地二次确认；不改变 settings.update、accounts/auth RPC 或 generation/queue 语义 |
@@ -232,7 +236,7 @@ DPG `settings-card.module.css:122-137` 与 DAE `settings-card.module.css:91-106`
 
 当前只以静态源码、构建产物与 jsdom 验证真实 React DOM、事件、焦点、portal 结构、授权轮询/generation 与 RPC 调用形状。真实视觉仍未验收：
 
-- 真实计算样式（h3 后直接端点 row、hintRow 的 −6/24、状态 row 12 + accountList 12 = 24、末账号 12+12=24、34px、36 × 20、账号行基础 12px 与首末 0、行间 hairline、独立 backing portal 等）、明暗主题与窄宽度；
+- 真实计算样式（h3 后直接端点 row、hintRow 的 −6/24、endpoint error 仍在 hintRow 内、状态 row 12 + accountList 12 = 24、末账号 12+12=24、账号列表容器上下 0.5px hairline、34px、36 × 20、账号行基础 12px 与首末 0、行间 hairline、独立 backing portal 等）、明暗主题与窄宽度；
 - CSS anchor positioning 在滚动详情列中的实际位置、`position-try` fallback 与 portal 不裁剪；
 - zh/en 切换不重挂载、live slot key、Theme token、控制台无 slot entry crash；
 - 真实 Host configForms、实际运行观测 host、四渠道真实账号授权/搜索；

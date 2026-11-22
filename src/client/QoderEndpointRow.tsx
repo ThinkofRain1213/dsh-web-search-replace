@@ -107,12 +107,15 @@ export function QoderEndpointRow({
         <p id={descriptionId} className={styles.hint} data-endpoint-description="">
           {t('channel.endpoint.description')}
         </p>
+        {/* R53/NB-1：错误是 hintRow 内最后一个独立元素，hintRow 的
+            margin-bottom 12 仍位于错误之后，再与下一字段 padding-top 12
+            合成 error → 下一字段的 24px。不要把错误放回 hintRow 外。 */}
+        {error !== null && (
+          <p id={errorId} className={styles.error} role="alert" data-endpoint-error="">
+            {t(error)}
+          </p>
+        )}
       </div>
-      {error !== null && (
-        <p id={errorId} className={styles.error} role="alert" data-endpoint-error="">
-          {t(error)}
-        </p>
-      )}
     </>
   )
 }

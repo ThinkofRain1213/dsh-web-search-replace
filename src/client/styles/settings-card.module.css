@@ -322,7 +322,8 @@
 }
 
 /* R53：账号状态 row 与列表之间的 24px 由 row padding-bottom 12 +
-   accountList padding-top 12 组成；列表内部行仍从 padding-top:0 开始。 */
+   accountList padding-top 12 组成；列表内部行仍从 padding-top:0 开始。
+   列表容器自身画首行前与末行后的 0.5px hairline；行内/行间线不改。 */
 .accountList {
   display: flex;
   flex-direction: column;
@@ -330,6 +331,8 @@
   min-width: 0;
   padding: 0;
   padding-top: 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 /* 账号列表区域只负责末侧 12px（与清除 field 的 12px 合成 24px）和
