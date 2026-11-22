@@ -87,8 +87,11 @@ describe('完整设置卡剖面', () => {
     expect(profile).toContain('data-search-section')
     expect(profile).toContain('role="separator"')
     expect(profile).toContain('data-channel-config-host')
+    expect(profile).toContain('data-fixed-endpoint-row')
     expect(profile).toContain('data-account-config-slot')
     expect(profile).toContain('data-qoder-endpoint-slot')
+    expect(profile).toContain('data-account-state')
+    expect(profile).toContain('data-account-list-region')
     expect(profile).toContain('hintRow')
     expect(profile).toContain('fieldSlot ▸ padding')
     expect(profile).toContain('卡片底')
@@ -102,6 +105,8 @@ describe('完整设置卡剖面', () => {
       'data-channel-config-host',
       'data-qoder-endpoint-slot',
       'data-account-config-slot',
+      'data-account-state',
+      'data-account-list-region',
       '卡片底',
     ]
     let cursor = -1
@@ -125,18 +130,23 @@ describe('完整设置卡剖面', () => {
     expect(profileSource).toMatch(/不.*提前.*实现|不要.*提前.*实现/)
   })
 
-  it('剖面写明 h3、fieldSlot、field、hintRow 的 padding 归属与两类 hintRow 选择器', () => {
+  it('剖面写明 h3、row、fieldSlot、field、hintRow 与 accountList 的 padding 归属', () => {
     const profile = profileBlocks[0] ?? ''
     expect(profile).toContain('h3')
     expect(profile).toContain('margin: 0')
+    expect(profile).toMatch(/row ▸ padding[^\n]*12px 0/)
     expect(profile).toMatch(/fieldSlot ▸ padding[^\n]*0px/)
     expect(profile).toMatch(/field ▸ padding[^\n]*12px 0/)
     expect(profile).toMatch(/field ▸ gap[^\n]*6px/)
     expect(profile).toMatch(/hintRow ▸ margin-top[^\n]*−6px/)
     expect(profile).toMatch(/hintRow ▸ margin-bottom[^\n]*12px/)
+    expect(profile).toMatch(/accountList ▸ padding-top[^\n]*12px/)
+    expect(profile).toMatch(/accountListRegion ▸ padding-bottom[^\n]*12px/)
     expect(profile).toMatch(/section ▸ 末块补偿[^\n]*−12px/)
     expect(profileSource).toContain('.section > .fieldSlot:last-child')
     expect(profileSource).toContain('.section > .hintRow:last-child')
+    expect(profileSource).toContain('data-channel-description')
+    expect(profileSource).toMatch(/不再渲染|删除[^\n]*渠道说明|不渲染[^\n]*说明行/)
     expect(profile).toContain('34px')
     expect(profile).toContain('36 × 20')
     expect(profile).toContain('0.5px')
@@ -149,6 +159,7 @@ describe('完整设置卡剖面', () => {
     expect(profileSource).toContain('lockedHint')
     expect(profileSource).toMatch(/lockedHint[^\n]*替换|替换[^\n]*lockedHint/)
     expect(profile).toContain('data-off-gated')
+    expect(profile).toContain('rowGated')
     expect(profile).toContain('data-field="clear-accounts"')
     expect(profileSource).toMatch(/清除全部账号数据[^\n]*可用|仅[^\n]*清除全部账号数据/)
     expect(profileSource).toMatch(/禁用[^\n]*端点|端点[^\n]*禁用/)
@@ -252,8 +263,8 @@ describe('设置卡 CSS 契约', () => {
   })
 
   it('门控只灰化文本/选择器，错误红字不被覆盖', () => {
-    expect(cssBlock(css, '.rowGated .rowTitle')).toMatch(/label-dimmed/)
-    expect(cssBlock(css, '.rowGated .rowDescription')).toMatch(/label-dimmed/)
+    expect(ruleBlock(css, '.rowGated .rowTitle')).toMatch(/label-dimmed/)
+    expect(ruleBlock(css, '.rowGated .rowDescription')).toMatch(/label-dimmed/)
     expect(cssBlock(css, '.rowGated .selector')).toMatch(/opacity:\s*0\.5;/)
     expect(cssBlock(css, '.error')).toMatch(/color:\s*var\(--dsw-alias-state-error-primary/)
     expect(css).not.toMatch(/\.rowGated[^{]*\.error/)
@@ -263,31 +274,38 @@ describe('设置卡 CSS 契约', () => {
   it('R52 OFF gating 只灰化文本与各自 disabled 控件，clear-all 与错误红字不受影响', () => {
     for (const selector of [
       '.channelGated > .heading',
-      '.channelGated > .row .rowTitle',
-      '.channelGated > .row .rowDescription',
+      '.rowGated .rowTitle',
+      '.rowGated .rowDescription',
+      '.rowGated .fieldValue',
+      '.rowGated .hint',
+      '.rowGated .hintText',
+      '.rowGated .accountName',
+      '.rowGated .accountMasked',
+      '.rowGated .accountStatus',
       '.fieldGated .label',
       '.fieldGated .fieldValue',
       '.fieldGated .hint',
       '.fieldGated .hintText',
-      '.fieldGated .accountName',
-      '.fieldGated .accountMasked',
-      '.fieldGated .accountStatus',
     ]) {
       expect(ruleBlock(css, selector), `${selector} 必须用 label-dimmed`)
         .toMatch(/color:\s*var\(--dsw-alias-label-dimmed/)
     }
-    expect(ruleBlock(css, '.channelGated .selector:disabled')).toMatch(/opacity:\s*0\.5;/)
+    expect(ruleBlock(css, '.rowGated .selector')).toMatch(/opacity:\s*0\.5;/)
     expect(css).not.toMatch(/\.fieldGated[^{]*\.error/)
     expect(css).not.toMatch(/\.channelGated[^{]*\.error/)
+    expect(css).not.toMatch(/\.rowGated[^{]*\.error/)
     expect(css).not.toMatch(/\.fieldGated\s*\{[^}]*opacity:/)
     expect(css).not.toMatch(/\.channelGated\s*\{[^}]*opacity:/)
+    expect(css).not.toMatch(/\.rowGated\s*\{[^}]*opacity:/)
     expect(css).not.toMatch(/clear-accounts[^{]*label-dimmed/)
   })
 
   it('账号/条件块包装层、警告、展示框与 rc5 Button/Tag 保持统一契约', () => {
-    for (const selector of ['.accountConfig', '.accountList', '.authFlow', '.confirmBox', '.choiceList', '.fieldControl', '.menuRoot']) {
+    for (const selector of ['.accountConfig', '.authFlow', '.confirmBox', '.choiceList', '.menuRoot']) {
       expect(cssBlock(css, selector), `${selector} 必须 padding:0`).toMatch(/padding:\s*0;/)
     }
+    expect(cssBlock(css, '.accountList')).toMatch(/padding-top:\s*12px;/)
+    expect(cssBlock(css, '.accountListRegion')).toMatch(/padding-bottom:\s*12px;/)
     expect(cssBlock(css, '.accountRow')).toMatch(/padding:\s*12px 0;/)
     expect(cssBlock(css, '.accountRow')).not.toMatch(/justify-content:/)
     expect(cssBlock(css, '.accountRow:first-child')).toMatch(/padding-top:\s*0;/)

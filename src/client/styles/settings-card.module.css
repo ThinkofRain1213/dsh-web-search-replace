@@ -54,11 +54,16 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.rowGated .rowTitle {
-  color: var(--dsw-alias-label-dimmed);
-}
-
-.rowGated .rowDescription {
+/* R53：端点行与账号状态 row 用 .rowGated，账号列表区域通过同一个类灰化
+   列表文字；账号 field 自身仍用 .fieldGated 灰化 label/hint。 */
+.rowGated .rowTitle,
+.rowGated .rowDescription,
+.rowGated .fieldValue,
+.rowGated .hint,
+.rowGated .hintText,
+.rowGated .accountName,
+.rowGated .accountMasked,
+.rowGated .accountStatus {
   color: var(--dsw-alias-label-dimmed);
 }
 
@@ -66,28 +71,19 @@
   opacity: 0.5;
 }
 
+.rowGated .accountBadge[data-tone='solid'] {
+  background: var(--dsw-alias-label-dimmed);
+}
+
 /* R52 OFF：下方渠道配置整体灰化。纯文本只用 label-dimmed，控件沿用各自
    :disabled 规则；不给整个区域统一 opacity。账号 field 单独用 .fieldGated，
    清除全部账号数据 field 不挂该类，因此 label 与按钮保持可辨识可用。 */
 .channelGated > .heading,
-.channelGated > .row .rowTitle,
-.channelGated > .row .rowDescription,
 .fieldGated .label,
 .fieldGated .fieldValue,
 .fieldGated .hint,
-.fieldGated .hintText,
-.fieldGated .accountName,
-.fieldGated .accountMasked,
-.fieldGated .accountStatus {
+.fieldGated .hintText {
   color: var(--dsw-alias-label-dimmed);
-}
-
-.fieldGated .accountBadge[data-tone='solid'] {
-  background: var(--dsw-alias-label-dimmed);
-}
-
-.channelGated .selector:disabled {
-  opacity: 0.5;
 }
 
 .rule {
@@ -197,16 +193,6 @@
 .section > .group:last-child,
 .section > .hintRow:last-child {
   margin-bottom: -12px;
-}
-
-.fieldControl {
-  display: flex;
-  min-width: 0;
-  padding: 0;
-}
-
-.fieldControl > .menuRoot {
-  width: 100%;
 }
 
 .fieldValue {
@@ -335,12 +321,25 @@
   padding: 0;
 }
 
+/* R53：账号状态 row 与列表之间的 24px 由 row padding-bottom 12 +
+   accountList padding-top 12 组成；列表内部行仍从 padding-top:0 开始。 */
 .accountList {
   display: flex;
   flex-direction: column;
   gap: 0;
   min-width: 0;
   padding: 0;
+  padding-top: 12px;
+}
+
+/* 账号列表区域只负责末侧 12px（与清除 field 的 12px 合成 24px）和
+   删除确认与列表之间的 6px；不给内部账号行增加任何间距。 */
+.accountListRegion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-bottom: 12px;
 }
 
 .accountRow {

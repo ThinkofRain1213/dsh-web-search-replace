@@ -3,8 +3,11 @@
  * Task 14 Qoder 国际版端点行：只有 auto/center/api2，自动模式显示实际观测，
  * 无观测时不得把默认 center 冒充实际成功域；固定模式显示用户选择域。
  *
+ * R53：端点标签与 Dropdown 在同一个横向 row，状态与说明在紧随其后的 hintRow；
+ * 不再使用纵向全宽 field/fieldControl，也不再为全宽传 settings menuRoot 类。
+ *
  * 同时覆盖设置卡中的非乐观保存：pending 保持旧值，Host 成功快照后才更新，
- * 失败回滚并只把错误显示在端点行；OFF 时下方配置区整体灰化且仅清除全部账号
+ * 失败回滚并只把错误显示在端点区；OFF 时下方配置区整体灰化且仅清除全部账号
  * 数据可用，端点编辑只在 ON 时允许。
  */
 import { createElement } from 'react'
@@ -56,7 +59,7 @@ interface RowOptions {
 /**
  * 挂载真实的 QoderEndpointRow。
  * @param options - 偏好、实际观测与锁定状态。
- * @returns 容器、行元素、翻译与变更 spy。
+ * @returns 容器、行元素、提示行、翻译与变更 spy。
  */
 function renderRow(options: RowOptions = {}) {
   const t = translator(options.locale ?? 'zh')
@@ -77,6 +80,7 @@ function renderRow(options: RowOptions = {}) {
     t,
     onChange,
     row: query<HTMLElement>(root.container, '[data-qoder-endpoint-row]'),
+    hintRow: query<HTMLElement>(root.container, '[data-hint-row]'),
   }
 }
 
@@ -113,31 +117,29 @@ function renderCard(
 
 describe('QoderEndpointRow（真实 DOM）', () => {
   it('自动模式无实际观测时只显示“尚无运行观测”，不把默认 center 冒充成功域', () => {
-    const { row, t } = renderRow({ preference: 'auto', actualHost: null })
+    const { row, hintRow, t } = renderRow({ preference: 'auto', actualHost: null })
 
     const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(trigger.textContent).toContain(t('channel.endpoint.auto'))
     expect(row.querySelector('[data-actual-host]')).toBeNull()
-    const status = query<HTMLElement>(row, '[data-endpoint-status]')
+    const status = query<HTMLElement>(hintRow, '[data-endpoint-status]')
     expect(status.textContent).toContain(t('channel.endpoint.noObservation'))
     expect(status.textContent).not.toContain('center.qoder.sh')
     expect(status.textContent).not.toContain('api2.qoder.sh')
-    expect(row.textContent).not.toContain('gateway.qoder.com.cn')
+    expect(hintRow.textContent).not.toContain('gateway.qoder.com.cn')
   })
 
-  it('自动模式收到实际观测后显示它，但不改写 preference 也不触发 onChange', async () => {
-    const { row, t, onChange } = renderRow({
+  it('自动模式收到实际观测后显示它，但不改写 preference 也不触发 onChange', () => {
+    const { hintRow, t, onChange } = renderRow({
       preference: 'auto',
       actualHost: 'api2.qoder.sh',
     })
 
-    const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
-    expect(trigger.textContent).toContain(t('channel.endpoint.auto'))
-    const status = query<HTMLElement>(row, '[data-actual-host]')
+    const status = query<HTMLElement>(hintRow, '[data-actual-host]')
     expect(status.textContent).toBe(`${t('channel.endpoint.actual')}api2.qoder.sh`)
     expect(status.children).toHaveLength(0)
     expect(status.querySelector('code')).toBeNull()
-    expect(query<HTMLElement>(row, '[data-endpoint-status]').textContent)
+    expect(query<HTMLElement>(hintRow, '[data-endpoint-status]').textContent)
       .toContain(t('channel.endpoint.actual'))
     expect(onChange).not.toHaveBeenCalled()
   })
@@ -146,21 +148,21 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     const center = renderRow({ preference: 'center', actualHost: 'api2.qoder.sh' })
     expect(query<HTMLButtonElement>(center.row, '[data-dropdown-trigger]').textContent)
       .toContain('center.qoder.sh')
-    const centerStatus = query<HTMLElement>(center.row, '[data-selected-host]')
+    const centerStatus = query<HTMLElement>(center.hintRow, '[data-selected-host]')
     expect(centerStatus.textContent).toBe(`${center.t('channel.endpoint.fixed')}center.qoder.sh`)
     expect(centerStatus.children).toHaveLength(0)
     expect(centerStatus.querySelector('code')).toBeNull()
-    expect(center.row.querySelector('[data-actual-host]')).toBeNull()
-    expect(center.row.textContent).not.toContain('api2.qoder.sh')
+    expect(center.container.querySelector('[data-actual-host]')).toBeNull()
+    expect(center.hintRow.textContent).not.toContain('api2.qoder.sh')
 
     const api2 = renderRow({ preference: 'api2', actualHost: 'center.qoder.sh' })
     expect(query<HTMLButtonElement>(api2.row, '[data-dropdown-trigger]').textContent)
       .toContain('api2.qoder.sh')
-    const api2Status = query<HTMLElement>(api2.row, '[data-selected-host]')
+    const api2Status = query<HTMLElement>(api2.hintRow, '[data-selected-host]')
     expect(api2Status.textContent).toBe(`${api2.t('channel.endpoint.fixed')}api2.qoder.sh`)
     expect(api2Status.children).toHaveLength(0)
     expect(api2Status.querySelector('code')).toBeNull()
-    expect(api2.row.textContent).not.toContain('center.qoder.sh')
+    expect(api2.hintRow.textContent).not.toContain('center.qoder.sh')
   })
 
   it('下拉恰好只有自动/center/api2，选择后回传新偏好，不出现 gateway 或第四项', async () => {
@@ -201,67 +203,86 @@ describe('QoderEndpointRow（真实 DOM）', () => {
     expect(query<HTMLButtonElement>(readOnly.row, '[data-dropdown-trigger]').disabled).toBe(true)
 
     const failing = renderRow({ error: 'settings.saveFailed' })
-    const alert = query<HTMLElement>(failing.row, '[data-endpoint-error]')
+    const alert = query<HTMLElement>(failing.container, '[data-endpoint-error]')
     expect(alert.getAttribute('role')).toBe('alert')
     expect(alert.className).toContain('error')
     expect(alert.textContent).toContain('保存失败')
     expect(alert.closest('[aria-disabled="true"], [inert]')).toBeNull()
   })
 
-  it('OFF gating 时端点下拉禁用并整体灰化，不触发变更', async () => {
-    const { row, t, onChange } = renderRow({ gated: true })
+  it('OFF gating 时端点下拉禁用且 row/hintRow 灰化，不触发变更', async () => {
+    const { row, hintRow, t, onChange } = renderRow({ gated: true })
     expect(row.getAttribute('data-off-gated')).toBe('true')
-    expect(row.className).toContain('fieldGated')
+    expect(row.className).toContain('rowGated')
+    expect(hintRow.getAttribute('data-off-gated')).toBe('true')
+    expect(hintRow.className).toContain('rowGated')
     const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(true)
-    expect(row.textContent).toContain(t('channel.endpoint.description'))
-    expect(row.textContent).toContain(t('channel.endpoint.noObservation'))
+    expect(hintRow.textContent).toContain(t('channel.endpoint.description'))
+    expect(hintRow.textContent).toContain(t('channel.endpoint.noObservation'))
     await click(trigger)
     expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
   })
 
   it('ON 时端点行没有 OFF gating 标记', () => {
-    const { row } = renderRow({ gated: false })
+    const { row, hintRow } = renderRow({ gated: false })
     expect(row.hasAttribute('data-off-gated')).toBe(false)
-    expect(row.className).not.toContain('fieldGated')
+    expect(row.className).not.toContain('rowGated')
+    expect(hintRow.hasAttribute('data-off-gated')).toBe(false)
+    expect(hintRow.className).not.toContain('rowGated')
     expect(query<HTMLButtonElement>(row, '[data-dropdown-trigger]').disabled).toBe(false)
   })
 
-  it('字段使用 rc5 head>labelGroup、独立 p.hint 与完整 aria-describedby 关系', () => {
-    const { row } = renderRow({ error: 'settings.saveFailed' })
-    const labelGroup = query<HTMLElement>(row, '[data-field-head] > [data-label-group]')
-    const label = query<HTMLLabelElement>(labelGroup, 'label')
+  it('搜索端点标签与 Dropdown 同处一个横向 row，hint 在独立 hintRow 且为纯字符串 p', () => {
+    const { row, hintRow, container } = renderRow({ error: 'settings.saveFailed' })
+    expect(row.className).toContain('row')
+    expect(row.children).toHaveLength(2)
+    expect(row.firstElementChild?.className).toContain('rowText')
+    expect(row.querySelector('[class*="field"]')).toBeNull()
+    expect(row.querySelector('[class*="fieldControl"]')).toBeNull()
+
+    const label = query<HTMLLabelElement>(row, '[data-field-label]')
     const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(label.htmlFor).toBe(trigger.id)
     expect(label.textContent).toBe('搜索端点')
-    expect(labelGroup.querySelector('[data-field-actions]')).toBeNull()
+    expect(label.className).toContain('rowTitle')
+    expect(row.lastElementChild).toBe(trigger.closest('[data-menu-root]'))
+    expect(row.querySelector('[data-field-head]')).toBeNull()
+    expect(row.querySelector('[data-field-actions]')).toBeNull()
 
-    const status = query<HTMLElement>(row, '[data-endpoint-status]')
+    expect(hintRow.previousElementSibling).toBe(row)
+    expect(hintRow.querySelectorAll('button')).toHaveLength(0)
+    expect(hintRow.querySelector('[data-field-label]')).toBeNull()
+    expect(hintRow.querySelector('[data-field-head]')).toBeNull()
+
+    const status = query<HTMLElement>(hintRow, '[data-endpoint-status]')
     expect(status.tagName).toBe('P')
     expect(status.id).not.toBe('')
-    const description = query<HTMLElement>(row, '[data-endpoint-description]')
+    const description = query<HTMLElement>(hintRow, '[data-endpoint-description]')
     expect(description.tagName).toBe('P')
-    const error = query<HTMLElement>(row, '[data-endpoint-error]')
+    const error = query<HTMLElement>(container, '[data-endpoint-error]')
     expect(error.tagName).toBe('P')
     const describedBy = trigger.getAttribute('aria-describedby')?.split(' ') ?? []
     expect(describedBy).toEqual(expect.arrayContaining([status.id, description.id, error.id]))
-    for (const hint of row.querySelectorAll('p[class*="hint"]')) {
+    for (const hint of [...hintRow.querySelectorAll('p[class*="hint"]'), error]) {
       expect(hint.children, '字段 hint 必须是纯字符串，不允许嵌入 code 等元素').toHaveLength(0)
     }
+    expect(hintRow.nextElementSibling).toBe(error)
   })
 
   it('英文文案覆盖端点行，自动无观测不会出现中文', () => {
-    const { row } = renderRow({ preference: 'auto', actualHost: null, locale: 'en' })
-    expect(query<HTMLButtonElement>(row, '[data-dropdown-trigger]').textContent).toContain('Auto')
-    expect(row.textContent).toContain('No runtime observation')
-    expect(row.textContent).toContain('Search endpoint')
-    expect(row.textContent).not.toMatch(/[\u4e00-\u9fff]/)
+    const { container } = renderRow({ preference: 'auto', actualHost: null, locale: 'en' })
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').textContent)
+      .toContain('Auto')
+    expect(container.textContent).toContain('No runtime observation')
+    expect(container.textContent).toContain('Search endpoint')
+    expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/)
   })
 })
 
 describe('设置卡中的端点行与固定域', () => {
-  it('只有 Qoder 国际版出现端点下拉；其他三渠道只显示固定域文本', async () => {
+  it('只有 Qoder 国际版出现端点下拉；其他三渠道只显示横向固定域 row', async () => {
     const cases = [
       { channel: 'buddy' as const, host: 'copilot.tencent.com', endpoint: false },
       { channel: 'workbuddy' as const, host: 'www.workbuddy.ai', endpoint: false },
@@ -283,14 +304,19 @@ describe('设置卡中的端点行与固定域', () => {
       )
       if (testCase.host === null) {
         const row = query<HTMLElement>(host, '[data-qoder-endpoint-row]')
+        const hintRow = query<HTMLElement>(host, '[data-qoder-endpoint-slot] [data-hint-row]')
         expect(row.textContent).not.toContain('gateway.qoder.com.cn')
-        expect(query<HTMLElement>(row, '[data-endpoint-status]').textContent)
-          .toContain('尚无运行观测')
+        expect(hintRow.textContent).toContain('尚无运行观测')
       } else {
-        const fixed = query<HTMLElement>(host, '[data-fixed-endpoint]')
+        const row = query<HTMLElement>(host, '[data-fixed-endpoint-row]')
+        const fixed = query<HTMLElement>(row, '[data-fixed-endpoint]')
         expect(fixed.textContent).toBe(testCase.host)
         expect(fixed.closest('[data-fixed-endpoint-slot]')).not.toBeNull()
-        expect(fixed.closest('[data-fixed-endpoint-slot]')?.querySelector('button')).toBeNull()
+        expect(row.closest('[data-fixed-endpoint-slot]')?.querySelector('button')).toBeNull()
+        expect(query<HTMLElement>(row, '[data-fixed-endpoint-label]').textContent)
+          .toBe('搜索端点')
+        expect(query<HTMLElement>(host, '[data-fixed-endpoint-slot] [data-hint-row]').textContent)
+          .toContain('固定使用该域名')
       }
 
       for (const root of mounted.splice(0)) root.unmount()
@@ -298,7 +324,7 @@ describe('设置卡中的端点行与固定域', () => {
     }
   })
 
-  it('ON 时端点保存非乐观：pending 保持自动与旧状态，成功后才显示 api2，失败回滚并只在端点行报错', async () => {
+  it('ON 时端点保存非乐观：pending 保持自动与旧状态，成功后才显示 api2，失败回滚并只在端点区报错', async () => {
     const before = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'auto' })
     const after = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'api2' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
@@ -309,6 +335,7 @@ describe('设置卡中的端点行与固定域', () => {
     await flush()
 
     const row = query<HTMLElement>(container, '[data-qoder-endpoint-row]')
+    const hintRow = query<HTMLElement>(container, '[data-qoder-endpoint-slot] [data-hint-row]')
     const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(false)
     expect(trigger.textContent).toContain('自动')
@@ -319,7 +346,7 @@ describe('设置卡中的端点行与固定域', () => {
 
     expect(trigger.disabled).toBe(true)
     expect(trigger.textContent).toContain('自动')
-    expect(row.textContent).toContain('尚无运行观测')
+    expect(hintRow.textContent).toContain('尚无运行观测')
     expect(calls.filter(call => call.method === 'settings.update')).toEqual([{
       method: 'settings.update',
       payload: { patch: { endpointPreference: 'api2' } },
@@ -330,11 +357,11 @@ describe('设置卡中的端点行与固定域', () => {
     await flush()
     expect(trigger.disabled).toBe(false)
     expect(trigger.textContent).toContain('api2.qoder.sh')
-    expect(row.textContent).toContain('固定使用')
-    expect(row.textContent).toContain('api2.qoder.sh')
+    expect(hintRow.textContent).toContain('固定使用')
+    expect(hintRow.textContent).toContain('api2.qoder.sh')
   })
 
-  it('ON 时端点保存失败回滚到旧偏好，错误只出现在端点行，不污染渠道行', async () => {
+  it('ON 时端点保存失败回滚到旧偏好，错误只出现在端点区，不污染渠道行', async () => {
     const before = makeSnapshot({ enabled: true, channel: 'qoder', endpointPreference: 'auto' })
     const response = deferred<RpcResult<SearchSettingsSnapshot>>()
     const { container } = renderCard(before, (call) => {
@@ -355,8 +382,9 @@ describe('设置卡中的端点行与固定域', () => {
 
     expect(trigger.textContent).toContain('自动')
     expect(trigger.disabled).toBe(false)
-    expect(row.textContent).toContain('尚无运行观测')
-    const alert = query<HTMLElement>(row, '[data-endpoint-error]')
+    expect(query<HTMLElement>(container, '[data-qoder-endpoint-slot] [data-hint-row]').textContent)
+      .toContain('尚无运行观测')
+    const alert = query<HTMLElement>(container, '[data-endpoint-error]')
     expect(alert.textContent).toContain('保存失败')
     expect(alert.className).toContain('error')
     expect(container.querySelector('[data-row="channel"] [role="alert"]')).toBeNull()

@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-/** NB-1：用最终 lib/client.js 的真实组件与类名验证跨 CSS Module 选择器。 */
+/**
+ * R53：Qoder 端点不再是纵向全宽字段。最终 lib/client.js 必须证明：
+ * - 端点标签与 Dropdown 位于同一横向 row；
+ * - 官方 Menu 根不再附加 settings-card 的 menuRoot 类，也不再有 fieldControl；
+ * - trigger 的 border:none / bg-module-platform 与官方 MenuSurface elevation 不变。
+ */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -103,20 +108,29 @@ function renderBuiltChannel(channel: SearchSettingsSnapshot['search']['channel']
   return root
 }
 
-describe('Qoder 跨 CSS Module 全宽规则（NB-1 RED）', () => {
-  it('最终 Menu 根同时持有官方类与 settings-card 类，命中最终 fieldControl 选择器', async () => {
+describe('Qoder 端点行不再使用纵向全宽接缝（R53）', () => {
+  it('最终产物中 settings CSS 不再导出 fieldControl / menuRoot 全宽规则', () => {
+    expect(settingsClasses.fieldControl).toBeUndefined()
+    expect(settingsClasses.menuRoot).toBeUndefined()
+    expect(artifact).not.toContain('> .menuRoot')
+  })
+
+  it('端点标签与 Dropdown 同处一个横向 row，官方 Menu 根不带 settings 附加类', async () => {
     const root = renderBuiltChannel('qoder')
     await flush()
-    const fieldControl = query<HTMLElement>(root.container, '[data-qoder-endpoint-row] [class*="fieldControl"]')
-    const menuRoot = query<HTMLElement>(fieldControl, ':scope > [data-menu-root]')
-    const officialRoot = menuClasses.menuRoot
-    const settingsRoot = settingsClasses.menuRoot
-    const fieldControlClass = settingsClasses.fieldControl
-    expect(officialRoot).not.toBe(settingsRoot)
-    expect(menuRoot.classList.contains(officialRoot)).toBe(true)
-    expect(menuRoot.classList.contains(settingsRoot)).toBe(true)
-    expect(fieldControl.classList.contains(fieldControlClass)).toBe(true)
-    expect(artifact).toContain(`.${fieldControlClass} > .${settingsRoot}`)
+    const row = query<HTMLElement>(root.container, '[data-qoder-endpoint-row]')
+    const rowText = query<HTMLElement>(row, '[class*="rowText"]')
+    const menuRoot = query<HTMLElement>(row, ':scope > [data-menu-root]')
+    const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
+
+    expect(row.className).toContain(settingsClasses.row)
+    expect(rowText.textContent).toBe('搜索端点')
+    expect(rowText.nextElementSibling).toBe(menuRoot)
+    expect(row.querySelector('[class*="fieldControl"]')).toBeNull()
+    expect(menuRoot.classList.contains(menuClasses.menuRoot)).toBe(true)
+    expect(menuRoot.className.split(/\s+/)).toHaveLength(1)
+    expect(trigger.parentElement).toBe(menuRoot)
+    expect(trigger.classList.contains(settingsClasses.selector)).toBe(true)
   })
 
   it('trigger 使用 DPG/DAE 的 border:none 与 module-platform，MenuSurface elevation 不变', async () => {
@@ -131,12 +145,12 @@ describe('Qoder 跨 CSS Module 全宽规则（NB-1 RED）', () => {
     expect(artifact).toContain('box-shadow: var(--dsw-elevation-prominent)')
   })
 
-  it('SearchSection 不传附加类，保持官方 Menu 根且不受 Qoder 全宽规则影响', async () => {
+  it('SearchSection 不传附加类，保持官方 Menu 根且不受 Qoder 行影响', async () => {
     const root = renderBuiltChannel('buddy')
     await flush()
     const menuRoot = query<HTMLElement>(root.container, '[data-search-section] [data-menu-root]')
     expect(menuRoot.classList.contains(menuClasses.menuRoot)).toBe(true)
-    expect(menuRoot.classList.contains(settingsClasses.menuRoot)).toBe(false)
-    expect(menuRoot.parentElement?.classList.contains(settingsClasses.fieldControl)).toBe(false)
+    expect(menuRoot.parentElement?.classList.contains(settingsClasses.row)).toBe(true)
+    expect(root.container.querySelector('[data-fixed-endpoint-row] [data-menu-root]')).toBeNull()
   })
 })

@@ -178,6 +178,13 @@ export function AccountChannelConfig({
     t('channel.accounts.listSeparator'),
   )
   const accountsFieldClass = gated ? `${styles.field} ${styles.fieldGated}` : styles.field
+  // R53：当前账号是独立 row，账号列表容器只负责与它保持 24px，并给清除 field
+  // 保留末侧 12px；账号列表内部行结构完全交给 AccountList 原样渲染。
+  const stateRowClass = gated ? `${styles.row} ${styles.rowGated}` : styles.row
+  const listRegionClass = gated
+    ? `${styles.accountListRegion} ${styles.rowGated}`
+    : styles.accountListRegion
+  const offGated = gated ? 'true' : undefined
 
   return (
     <div className={styles.accountConfig} data-account-config="" data-channel={channel}>
@@ -222,10 +229,6 @@ export function AccountChannelConfig({
           </div>
         )}
 
-        <p className={styles.hint} data-account-state={hintState}>
-          {hintText}
-        </p>
-
         {state.notice !== null && (
           <p className={styles.hint} data-account-notice="">
             {t(state.notice)}
@@ -241,45 +244,63 @@ export function AccountChannelConfig({
             onDismiss={() => { controller.dismissAuth() }}
           />
         )}
-
-        {state.accounts.length > 0 && (
-          <AccountList
-            accounts={state.accounts}
-            current={state.current}
-            busyAccountId={state.busyAccountId}
-            queue={state.queue}
-            locked={state.status !== 'ready'
-              || state.authBusy
-              || state.refreshBusy
-              || deletingAccountId !== null
-              || confirmingClear
-              || state.clearBusy
-              || gated}
-            writable={writable}
-            t={t}
-            onSetCurrent={(accountId) => { void controller.setCurrent(accountId) }}
-            onReauth={handleReauth}
-            onDelete={handleDeleteRequest}
-          />
-        )}
-
-        {deletingAccount !== null && (
-          <InlineDeleteConfirmation
-            account={deletingAccount}
-            alternatives={state.accounts.filter(account => account.id !== deletingAccount.id)}
-            isCurrent={state.current?.id === deletingAccount.id}
-            replacementAccountId={replacementAccountId}
-            onSelectReplacement={setReplacementAccountId}
-            onConfirm={() => { void handleConfirmDelete() }}
-            onCancel={handleCancelDelete}
-            busy={state.busyAccountId === deletingAccount.id}
-            queued={state.status !== 'ready'
-              || state.queue.some(operation => operation.accountId === deletingAccount.id)}
-            locked={gated}
-            t={t}
-          />
-        )}
       </div>
+
+      <div
+        className={stateRowClass}
+        data-account-state={hintState}
+        data-off-gated={offGated}
+      >
+        <div className={styles.rowText}>
+          <span className={styles.rowDescription}>{hintText}</span>
+        </div>
+      </div>
+
+      {(state.accounts.length > 0 || deletingAccount !== null) && (
+        <div
+          className={listRegionClass}
+          data-account-list-region=""
+          data-off-gated={offGated}
+        >
+          {state.accounts.length > 0 && (
+            <AccountList
+              accounts={state.accounts}
+              current={state.current}
+              busyAccountId={state.busyAccountId}
+              queue={state.queue}
+              locked={state.status !== 'ready'
+                || state.authBusy
+                || state.refreshBusy
+                || deletingAccountId !== null
+                || confirmingClear
+                || state.clearBusy
+                || gated}
+              writable={writable}
+              t={t}
+              onSetCurrent={(accountId) => { void controller.setCurrent(accountId) }}
+              onReauth={handleReauth}
+              onDelete={handleDeleteRequest}
+            />
+          )}
+
+          {deletingAccount !== null && (
+            <InlineDeleteConfirmation
+              account={deletingAccount}
+              alternatives={state.accounts.filter(account => account.id !== deletingAccount.id)}
+              isCurrent={state.current?.id === deletingAccount.id}
+              replacementAccountId={replacementAccountId}
+              onSelectReplacement={setReplacementAccountId}
+              onConfirm={() => { void handleConfirmDelete() }}
+              onCancel={handleCancelDelete}
+              busy={state.busyAccountId === deletingAccount.id}
+              queued={state.status !== 'ready'
+                || state.queue.some(operation => operation.accountId === deletingAccount.id)}
+              locked={gated}
+              t={t}
+            />
+          )}
+        </div>
+      )}
 
       <div className={styles.field} data-field="clear-accounts">
         <div className={styles.head} data-field-head="">

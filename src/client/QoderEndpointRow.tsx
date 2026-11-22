@@ -1,7 +1,10 @@
 /**
- * Qoder 国际版端点偏好字段。保留 auto/center/api2、实际观测与保存语义；
- * 外观复制 rc5 field/head/labelGroup，hint/error 通过 aria-describedby 关联 trigger。
- * 搜索 OFF 时 gated 禁用下拉并灰化字段，但不改变已持久化的 preference。
+ * Qoder 国际版端点偏好字段。保留 auto/center/api2、实际观测与保存语义。
+ *
+ * R53：标签与 Dropdown 位于同一个横向 row（左侧搜索端点、右侧下拉），不再使用
+ * 纵向全宽 field/fieldControl，也不再为全宽给 Menu 根传 settings menuRoot 类。
+ * 状态与说明放在紧随其后的 hintRow，二者都是纯字符串 p；错误单独一行。
+ * 搜索 OFF 时 gated 禁用下拉并灰化 row/hintRow，但不改变已持久化的 preference。
  */
 import * as React from 'react'
 
@@ -31,7 +34,7 @@ const ENDPOINT_HOSTS = CHANNELS.qoder.endpointPreference?.hosts ?? {
   api2: 'api2.qoder.sh',
 }
 
-/** 渲染 Qoder 端点字段；auto 的默认 center 不冒充实际观测。 */
+/** 渲染 Qoder 端点行；auto 的默认 center 不冒充实际观测。 */
 export function QoderEndpointRow({
   preference,
   actualHost,
@@ -61,22 +64,23 @@ export function QoderEndpointRow({
       ? t('channel.endpoint.noObservation')
       : `${t('channel.endpoint.actual')}${observedHost}`
     : `${t('channel.endpoint.fixed')}${ENDPOINT_HOSTS[preference]}`
+  const rowClass = gated ? `${styles.row} ${styles.rowGated}` : styles.row
+  const hintRowClass = gated ? `${styles.hintRow} ${styles.rowGated}` : styles.hintRow
+  const offGated = gated ? 'true' : undefined
 
   return (
-    <div
-      className={`${styles.field}${gated ? ` ${styles.fieldGated}` : ''}`}
-      data-qoder-endpoint-row=""
-      data-preference={preference}
-      data-off-gated={gated ? 'true' : undefined}
-    >
-      <div className={styles.head} data-field-head="">
-        <div className={styles.labelGroup} data-label-group="">
-          <label id={labelId} htmlFor={triggerId} className={styles.label} data-field-label="">
+    <>
+      <div
+        className={rowClass}
+        data-qoder-endpoint-row=""
+        data-preference={preference}
+        data-off-gated={offGated}
+      >
+        <div className={styles.rowText}>
+          <label id={labelId} htmlFor={triggerId} className={styles.rowTitle} data-field-label="">
             {t('channel.endpoint.label')}
           </label>
         </div>
-      </div>
-      <div className={styles.fieldControl}>
         <Dropdown
           id={triggerId}
           items={items}
@@ -87,27 +91,28 @@ export function QoderEndpointRow({
           labelledBy={labelId}
           label={t('channel.endpoint.label')}
           describedBy={describedBy}
-          className={styles.menuRoot}
         />
       </div>
-      <p
-        id={statusId}
-        className={styles.hint}
-        data-endpoint-status=""
-        data-state={preference === 'auto' ? (observedHost === null ? 'unobserved' : 'observed') : 'fixed'}
-        data-actual-host={preference === 'auto' && observedHost !== null ? '' : undefined}
-        data-selected-host={preference === 'auto' ? undefined : ''}
-      >
-        {statusText}
-      </p>
-      <p id={descriptionId} className={styles.hint} data-endpoint-description="">
-        {t('channel.endpoint.description')}
-      </p>
+      <div className={hintRowClass} data-hint-row="" data-off-gated={offGated}>
+        <p
+          id={statusId}
+          className={styles.hint}
+          data-endpoint-status=""
+          data-state={preference === 'auto' ? (observedHost === null ? 'unobserved' : 'observed') : 'fixed'}
+          data-actual-host={preference === 'auto' && observedHost !== null ? '' : undefined}
+          data-selected-host={preference === 'auto' ? undefined : ''}
+        >
+          {statusText}
+        </p>
+        <p id={descriptionId} className={styles.hint} data-endpoint-description="">
+          {t('channel.endpoint.description')}
+        </p>
+      </div>
       {error !== null && (
         <p id={errorId} className={styles.error} role="alert" data-endpoint-error="">
           {t(error)}
         </p>
       )}
-    </div>
+    </>
   )
 }

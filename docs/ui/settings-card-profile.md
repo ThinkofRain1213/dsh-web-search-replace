@@ -6,9 +6,11 @@
 
 ## 1. 唯一真源与不可变业务 IA
 
-设置卡只认一个 `search.channel`：下拉值、配置区标题、账号区与端点行都由它派生；同一时刻只渲染一个 `ChannelConfigHost`，不存在第二渠道查看选择器。`OFF` 时渠道下拉用 `lockedHint` 替换原说明（不追加第三行）并整行灰化；下方 `ChannelConfigHost` 得到 `gated`，标题、说明、固定端点、Qoder 端点偏好与账号区整体灰化只读，添加/设当前/重登/删除/重试与端点修改都禁用；仅「清除全部账号数据」及其就地确认保留可用。OFF 不取消已经开始的授权/RPC 请求。
+设置卡只认一个 `search.channel`：下拉值、配置区标题、账号区与端点行都由它派生；同一时刻只渲染一个 `ChannelConfigHost`，不存在第二渠道查看选择器。`OFF` 时渠道下拉用 `lockedHint` 替换原说明（不追加第三行）并整行灰化；下方 `ChannelConfigHost` 得到 `gated`，标题、固定端点、Qoder 端点偏好、账号状态行与账号列表整体灰化只读，添加/设当前/重登/删除/重试与端点修改都禁用；仅「清除全部账号数据」及其就地确认保留可用。OFF 不取消已经开始的授权/RPC 请求。
 
-页面结构保持 `SearchSection + 独立 rule + 单一 ChannelConfigHost`。`AccountChannelConfig（Task 14）` 通过 children 进入唯一账号 slot；`QoderEndpointRow（Task 14）` 只在 qoder 出现。不得新增第二渠道选择器，不改变 controllers、RPC、凭据、保存、账号安全与 Host 服务注入。
+R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端点配置，避免 CodeBuddy 组名与下一行渠道说明重复；`channel.*.description` 不再出现在详情页。端点统一为横向 `row`：固定端点是「左侧搜索端点 + 右侧固定域名」，Qoder 是「左侧搜索端点 + 右侧 Dropdown」，不再使用纵向 label/value/hint 三段。端点说明放在紧随控件 row 的 `hintRow`；Qoder 的状态与说明都是纯字符串 `p`，不嵌入按钮或组标题。
+
+账号区只保留一个 `AccountChannelConfig（Task 14）`；当前账号状态改为独立 `row[data-account-state]` 的 `rowDescription`，位于账号列表上方而不是字段尾部 hint。账号列表内部的行结构、行名、行说明、按钮与分隔线全部冻结，只通过 `.accountList` 的 `padding-top: 12px` 修正它与状态行的距离。`QoderEndpointRow（Task 14）` 只在 qoder 出现。不得新增第二渠道选择器，不改变 controllers、RPC、凭据、保存、账号安全与 Host 服务注入；不要提前实现真实 external-open。
 
 ## 2. 完整剖面（从 `.stack` 顶到底，一张图）
 
@@ -31,7 +33,7 @@
 │ ┆ .row[data-settings-status="unavailable"] ▸ padding-top ··········· 12px │
 │ div.rowText padding-right:48px gap:6 › p.error[role=alert] margin: 0        │
 │ ┆ .row ▸ padding-bottom ··········································· 12px │
-│ ┆ .section > .row:last-child ▸ margin-bottom ······················ −12px │
+│ ┆ .section > .row:last-child ▸ margin-bottom ·················───── −12px │
 │ ┆ .section ▸ padding-bottom ······································· 16px │
 └─────────────────────────────────────────────────────────────────────────────┘
 ┌─ 互斥分支 state.status="ready"：section[data-search-section] padding:16px 0 ┐
@@ -93,132 +95,115 @@
 │ 条件 OFF：section 挂 .channelGated + data-off-gated=true；下方配置区整体灰化只读 │
 │ ┆ .section ▸ padding-top ··········································· 16px │
 │ h3.heading「当前渠道名」 margin: 0 font:13/600 line-height:1.5              │
+│ 说明：R53 起 h3 后不再渲染 div.row[data-channel-description]；不重复渠道说明行 │
 │ ┆ .heading ▸ margin-bottom ········································· 0px │
-│ ┌─ div.row[data-channel-description] padding:12px 0 gap:8 ────────────────┐ │
+│ ┆ .row ▸ padding-top ·············································· 12px │
+│ ┌─ 条件 channel≠qoder：div.fieldSlot[data-fixed-endpoint-slot] ▸ padding · 0px ┐
+│ │ div.row[data-fixed-endpoint-row] padding:12px 0 gap:8（横向一行）      │ │
+│ │ 条件 OFF：.rowGated + data-off-gated=true；无 button、无下拉            │ │
 │ │ div.rowText flex:1 padding-right:48px gap:6                             │ │
-│ │ span.rowDescription「当前渠道说明」 12/400/18                           │ │
+│ │ span.rowTitle[data-fixed-endpoint-label]「搜索端点」13/500/1.5         │ │
+│ │ span.fieldValue[data-fixed-endpoint]「copilot.tencent.com」13/400/1.5  │ │
+│ │ ┆ .row ▸ padding ··············································· 12px 0 │ │
+│ │ ┆ .row ▸ padding-bottom ········································ 12px │ │
+│ │ ┆ .hintRow ▸ margin-top ······································· −6px │ │
+│ │ div.hintRow[data-hint-row] gap:12；条件 OFF：rowGated + data-off-gated │ │
+│ │ p.hint[data-fixed-endpoint-description] margin:0 纯字符串              │ │
+│ │ ┆ .hintRow ▸ margin-bottom ···································· 12px │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
-│ ┆ .row[data-channel-description] ▸ padding-bottom ················· 12px │
-│ ┄ 条件 channel="qoder"：div.fieldSlot[data-qoder-endpoint-slot] ▸ padding · 0px ┄
-│ 条件 OFF：QoderEndpointRow 挂 .fieldGated + data-off-gated=true；下拉禁用，hint 灰化 │
-│ ┌─ QoderEndpointRow（Task 14）div.field ▸ padding · 12px 0；gap:6px ────────────┐ │
-│ │ ┆ .field ▸ padding-top ········································· 12px │
-│ │ div.head padding:0 gap:8                                                │ │
-│ │   div.labelGroup flex:1 min-width:0 padding:0 gap:4                     │ │
-│ │   label.label[for=qoder endpoint trigger] flex:0 1 auto 13/500/1.5      │ │
-│ │ ┆ .field ▸ gap ················································· 6px │
-│ │ div.fieldControl padding:0 › span.menuRoot padding:0；同时持有官方与 settings 类 │ │
-│ │ button.selector 34px / 0 12px border:none bg-module-platform；仅 auto/center/api2 │ │
-│ │ .fieldControl > .menuRoot 与 width:100% 命中同一最终 DOM；SearchSection 不附加该类 │ │
-│ │ 条件 open：body 下 portal menuSurface，结构与搜索渠道菜单完全相同       │ │
-│ │ ┆ .field ▸ gap ················································· 6px │
-│ │ p.hint[data-endpoint-status] margin: 0 font:12/400 line-height:1.5       │ │
-│ │ 条件 auto 且无观测：尚无运行观测；auto 有观测：实际 host；fixed：所选域 │ │
-│ │ 所有分支 statusText 均为纯字符串；data-actual/selected-host 在 p 上，无 code │ │
-│ │ ┆ .field ▸ gap ················································· 6px │
-│ │ p.hint「仅支持搜索，不支持服务端网页抓取。」 margin: 0                  │ │
-│ │ 条件 endpoint error：p.error[data-endpoint-error][role=alert] margin: 0 │ │
-│ │ ┆ .field ▸ padding-bottom ······································· 12px │
+│ ┌─ 条件 channel="qoder"：div.fieldSlot[data-qoder-endpoint-slot] ▸ padding · 0px ┐
+│ │ div.row[data-qoder-endpoint-row][data-preference] padding:12px 0 gap:8 │ │
+│ │ 条件 OFF：.rowGated + data-off-gated=true；下拉 disabled               │ │
+│ │ div.rowText flex:1 padding-right:48px gap:6                             │ │
+│ │ label.rowTitle[data-field-label][for=trigger]「搜索端点」13/500/1.5    │ │
+│ │ span[data-menu-root] 官方 Menu 根 inline-flex；不附加 settings menuRoot │ │
+│ │ button.selector[data-dropdown-trigger] 34px / 0 12px / border:none     │ │
+│ │   bg-module-platform radius-md；仅 auto/center/api2                    │ │
+│ │   aria-describedby 指向 status + description + error                   │ │
+│ │   open 时 body portal menuSurface 与 data-menu-backing 不占 stack      │ │
+│ │ ┆ .row ▸ padding-bottom ········································ 12px │ │
+│ │ ┆ .hintRow ▸ margin-top ······································· −6px │ │
+│ │ div.hintRow[data-hint-row] 条件 OFF：rowGated + data-off-gated=true   │ │
+│ │ p.hint[data-endpoint-status] 纯字符串：尚无运行观测/实际 host/固定使用 │ │
+│ │ p.hint[data-endpoint-description]「仅支持搜索，不支持服务端网页抓取。」│ │
+│ │ 条件 endpoint error：p.error[data-endpoint-error][role=alert] margin:0 │ │
+│ │ ┆ .hintRow ▸ margin-bottom ···································· 12px │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
-│ ┄ 条件 channel≠"qoder"：div.fieldSlot[data-fixed-endpoint-slot] ▸ padding · 0px ┄
-│ ┌─ div.field[data-field="endpoint"] padding:12px 0 gap:6 ────────────────┐ │
-│ │ 条件 OFF：.fieldGated + data-off-gated=true；固定域与 hint 灰化，无控件 │ │
-│ │ ┆ .field ▸ padding-top ········································· 12px │
-│ │ div.head padding:0 gap:8 › div.labelGroup flex:1 padding:0 gap:4        │ │
-│ │ span.label「搜索端点」 13/500/1.5；无按钮、无下拉                       │ │
-│ │ ┆ .field ▸ gap ················································· 6px │
-│ │ span.fieldValue[data-fixed-endpoint] 13/400/1.5 overflow-wrap:anywhere │ │
-│ │ ┆ .field ▸ gap ················································· 6px │
-│ │ p.hint「此渠道固定使用该域名，没有端点下拉。」 margin: 0                │ │
-│ │ ┆ .field ▸ padding-bottom ······································· 12px │
-│ └─────────────────────────────────────────────────────────────────────────┘ │
-│ ┆ 端点 field padding-bottom 12 ＋ 账号 field padding-top 12 ········ 24px │
-│ ┄ div.fieldSlot ▸ padding · 0px；[data-account-config-slot] ┄                       │
-│ ┌─ 条件传入真实 children：div.accountConfig[AccountChannelConfig（Task 14）] padding:0 gap:0 ┐ │
-│ │ ┌─ div.field[data-field="accounts"] padding:12px 0 gap:6 ─────────────┐ │
-│ │ │ 条件 OFF：.fieldGated + data-off-gated=true；添加/设当前/重登/删除/重试禁用 │ │
-│ │ │ ┆ .field ▸ padding-top ······································ 12px │ │
-│ │ │ div.head padding:0 gap:8 › div.labelGroup flex:1 padding:0 gap:4     │ │
-│ │ │ span.label「账号」 13/500/1.5                                        │ │
-│ │ │ div.badges padding:0 gap:8 › button.small.outline[添加账号] 28px     │ │
-│ │ │ ┆ .field ▸ gap ············································· 6px │ │
-│ │ │ 条件 account error：div.errorRow padding:0 gap:8                    │ │
-│ │ │   p.error[role=alert] flex:1 + 条件读取失败时 button[重试]       │ │
-│ │ │ ┆ .field ▸ gap ············································· 6px │ │
-│ │ │ p.hint[data-account-state] margin: 0；loading/required/selected/     │ │
-│ │ │ no-current/error 各状态不伪造 ready                                  │ │
-│ │ │ 条件 notice：p.hint[data-account-notice] margin: 0                    │ │
-│ │ │ ┆ .field ▸ gap ············································· 6px │ │
-│ │ │ 条件 auth.phase≠idle：div.authFlow padding:0 gap:6                  │ │
-│ │ │   span.label「添加账号/重新登录账号」 13/500/1.5                    │ │
-│ │ │   p.hint 或 p.error[data-auth-status] margin: 0                      │ │
-│ │ │   条件 pending+authUrl：p.hint[data-auth-instruction] margin: 0      │ │
-│ │ │   code.authUrl display:block padding:12px border:0.5px solid l2     │ │
-│ │ │     radius-lg bg-base code-font 12/18 pre-wrap anywhere             │ │
-│ │ │   p.hint[data-copy-state] margin: 0 font:12/400/18                     │ │
-│ │ │   div.confirmActions padding:0 gap:8 [复制/取消/关闭]               │ │
-│ │ │ ┆ .field ▸ gap ············································· 6px │ │
-│ │ │ 条件 accounts.length>0：div.accountList padding:0 gap:0             │ │
-│ │ │ ┆ 前一 field 孩子与 accountList 的父 field gap ··············· 6px │ │
-│ │ │   首 div.accountRow:first-child padding-top:0，不再形成 6+12=18px  │ │
-│ │ │   每个账号 div.accountRow 基础 padding:12px 0 gap:8                │ │
-│ │ │     div.accountRowText flex:1 padding:0 gap:6                       │ │
-│ │ │       div.accountRowHead padding:0 gap:8 + Tag + 显示名 + 脱敏标识  │ │
-│ │ │       div.accountStatusLine padding:0 gap:8 + 状态/排队/处理中      │ │
-│ │ │     div.accountActions flex:none padding:0 gap:8                    │ │
-│ │ │       [设为当前使用] 仅备选 + [重新登录] + [删除]                   │ │
-│ │ │   相邻账号间：.accountRow + .accountRow border-top:0.5px margin:0  │ │
-│ │ │   相邻账号内容间距 = 前行 padding-bottom 12 + 后行 padding-top 12 = 24px │ │
-│ │ │   末 div.accountRow:last-child padding-bottom:0，不再形成 12+12+12=36px │ │
-│ │ │ 条件 deletingAccount：div.confirmBox padding:0 gap:6                │ │
-│ │ │   span.confirmTitle「确认删除账号」 13/500/19.5                     │ │
-│ │ │   span.warning[data-delete-impact] state-warn-primary 12/400/18     │ │
-│ │ │   条件 isCurrent：div.choiceList padding:0 gap:6                    │ │
-│ │ │     label.choice gap:6 radio + 替代账号；默认“暂不指定”             │ │
-│ │ │   div.confirmActions padding:0 gap:8 [确认删除/取消]                │ │
-│ │ │ ┆ .field[data-field="accounts"] ▸ padding-bottom ············· 12px │ │
-│ │ └─────────────────────────────────────────────────────────────────────┘ │
-│ │ ┆ 账号 field padding-bottom 12 ＋ 清除 field padding-top 12 ····· 24px │
-│ │ ┌─ div.field[data-field="clear-accounts"] padding:12px 0 gap:6 ───────┐ │
-│ │ │ 条件 OFF：不挂 .fieldGated；清除全部账号数据与确认/取消仍可用、可辨识 │ │
-│ │ │ ┆ .field ▸ padding-top ······································ 12px │ │
-│ │ │ div.head padding:0 gap:8 › div.labelGroup flex:1 padding:0 gap:4     │ │
-│ │ │ span.label「清除全部账号数据」 + div.badges padding:0 [清除按钮]    │ │
-│ │ │ 条件 confirmingClear：div.confirmBox padding:0 gap:6                │ │
-│ │ │   span.confirmTitle「确认清除全部账号数据」                         │ │
-│ │ │   span.warning[data-clear-impact] state-warn-primary，列出四渠道    │ │
-│ │ │   div.confirmActions padding:0 gap:8 [确认清除/取消]                │ │
-│ │ │ ┆ .field[data-field="clear-accounts"] ▸ padding-bottom ········ 12px │ │
-│ │ └─────────────────────────────────────────────────────────────────────┘ │
-│ └─────────────────────────────────────────────────────────────────────────┘ │
-│ ┄ 条件未传 children 的缺省 fallback：div.field[data-field] padding:12px 0 ┄
-│ │ div.head padding:0 › div.labelGroup flex:1 padding:0 › span.label「账号」│
-│ │ ┆ .field ▸ padding-bottom ······································· 12px │
-│ ┆ div.fieldSlot 内 div.hintRow ▸ margin-top ········· −6px；[data-hint-row] │
-│ span.hintText[data-account-state]「需要账号/当前账号」 12/400/18           │
-│ ┆ .hintRow ▸ margin-bottom ········································· 12px │
+│ ┆ hintRow margin-bottom 12 ＋ 下一账号 field padding-top 12 ······· 24px │
+│ ┄ div.fieldSlot[data-account-config-slot] ┄                              │
+│ ┆ .fieldSlot ▸ padding ··········································· 0px │
+│ ┌─ 条件真实 children：div.accountConfig[AccountChannelConfig（Task 14）] gap:0 ┐
+│ │ ┌─ div.field[data-field="accounts"] padding:12px 0 gap:6 ─────────────────┐ │
+│ │ │ 条件 OFF：.fieldGated + data-off-gated=true；添加/重试禁用              │ │
+│ │ │ div.head padding:0 gap:8 › div.labelGroup flex:1 padding:0 gap:4        │ │
+│ │ │ span.label「账号」13/500/1.5；div.badges padding:0 [添加账号]           │ │
+│ │ │ 条件 account error：div.errorRow padding:0 gap:8 + p.error[role=alert]  │ │
+│ │ │ 条件 notice：p.hint[data-account-notice] margin:0                       │ │
+│ │ │ 条件 auth.phase≠idle：div.authFlow padding:0 gap:6 …                    │ │
+│ │ │ ┆ .field ▸ padding ············································· 12px 0 │ │
+│ │ │ ┆ .field ▸ gap ················································· 6px │ │
+│ │ │ ┆ .field ▸ padding-bottom ····································· 12px │ │
+│ │ └─────────────────────────────────────────────────────────────────────────┘ │
+│ │ ┆ .row[data-account-state] ▸ padding-top ························· 12px │
+│ │ div.row[data-account-state] 独立行；条件 OFF：rowGated + data-off-gated  │ │
+│ │ div.rowText flex:1 padding-right:48px gap:6                             │ │
+│ │ span.rowDescription「当前账号: … / 需要账号…」12/400/18                  │ │
+│ │ ┆ .row[data-account-state] ▸ padding-bottom ······················· 12px │ │
+│ │ ┆ .accountList ▸ padding-top ····································· 12px │ │
+│ │ 条件 accounts.length>0 或 deletingAccount：div.accountListRegion data-account-list-region │ │
+│ │   条件 OFF：.rowGated + data-off-gated=true；列表文字灰化、行按钮 disabled │ │
+│ │   div.accountList padding-top:12px gap:0；内部行结构冻结               │ │
+│ │     首 div.accountRow:first-child padding-top:0                       │ │
+│ │     每个 div.accountRow padding:12px 0 gap:8                          │ │
+│ │       div.accountRowText flex:1 padding:0 gap:6                       │ │
+│ │         div.accountRowHead padding:0 gap:8 + Tag + 显示名 + 脱敏标识  │ │
+│ │         div.accountStatusLine padding:0 gap:8 + 状态/排队/处理中      │ │
+│ │       div.accountActions flex:none padding:0 gap:8                     │ │
+│ │        [设为当前使用] 仅备选 + [重新登录] + [删除]                    │ │
+│ │     相邻账号：.accountRow + .accountRow border-top:0.5px margin:0     │ │
+│ │     末 div.accountRow:last-child padding-bottom:0                     │ │
+│ │   条件 deletingAccount：div.confirmBox padding:0 gap:6（与列表 6px）  │ │
+│ │   ┆ .accountListRegion ▸ padding-bottom ························· 12px │ │
+│ │ ┆ accounts field bottom 12 ＋ 状态 row top 12 = 24px；末账号 bottom 0 │ │
+│ │ ┆ ＋ accountListRegion bottom 12 ＋ 清除 field top 12 = 24px          │ │
+│ │ ┌─ div.field[data-field="clear-accounts"] padding:12px 0 gap:6 ────────┐ │
+│ │ │ 条件 OFF：不挂 .fieldGated/.rowGated；清除全部账号数据仍可用         │ │
+│ │ │ div.head padding:0 gap:8 › span.label「清除全部账号数据」+ [清除按钮] │ │
+│ │ │ 条件 confirmingClear：div.confirmBox padding:0 gap:6 …               │ │
+│ │ │ ┆ .field ▸ padding-bottom ····································· 12px │ │
+│ │ └─────────────────────────────────────────────────────────────────────────┘ │
+│ └─────────────────────────────────────────────────────────────────────────────┘ │
+│ ┄ 条件未传 children 的缺省 fallback：div.field[data-field] padding:12px 0 ┄ │
+│ │ div.head padding:0 › div.labelGroup flex:1 › span.label「账号」          │ │
+│ │ div.row[data-account-state] padding:12px 0 › span.rowDescription …      │ │
 │ ┆（section ▸ 末块补偿）.fieldSlot:last-child ▸ margin-bottom ······· −12px │
 │ ┆ .section ▸ padding-bottom ······································· 16px │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ┆ 卡片底 = 12 − 12 + 16 = 16px
 ```
 
-四渠道共用上面同一个 `data-channel-config-host` 段，差别只在标题、说明、端点行条件与账号区内容；`buddy`、`workbuddy`、`qoder`、`qodercn` 各自拥有独立 `currentAccountId`、账号列表和授权流程，不会串用。只有 `qoder` 渲染 `data-qoder-endpoint-slot` 与端点下拉；其他三个渠道渲染固定域文本，没有端点下拉、不可点击。
+四渠道共用同一个 `data-channel-config-host` 段，差别只在标题、端点行条件与账号区内容；`buddy`、`workbuddy`、`qoder`、`qodercn` 各自拥有独立 `currentAccountId`、账号列表和授权流程，不会串用。只有 `qoder` 渲染 `data-qoder-endpoint-slot` 与端点下拉；其他三个渠道渲染 `data-fixed-endpoint-row` 固定域文本，没有端点下拉、不可点击。`data-account-state` 是账号状态独立 row，`data-account-list-region` 只承载冻结的账号列表与可选删除确认。
 
 ## 3. 空白归属与 hintRow 选择器
 
 | 位置 | 空白持有者 | 生效规则 |
 |---|---|---|
 | section 顶 / 底 | `.section` 的 `padding:16px 0` | `.heading` 永不命中首/末补偿 |
-| h3 → 第一行 | 第一行 `padding-top:12px` | `.heading { margin: 0 }` |
+| h3 → 第一行 | 第一行 `padding-top:12px` | `.heading { margin: 0 }`；R53 后第一行就是端点 row |
 | 行 → 行 / 相邻 field | 前块 12 + 后块 12 | 24px |
 | 跨线内容 → 内容 | 上 section 16 + 下 section 16 | 32px；rule margin 0 |
 | 首块为 row/fieldSlot/group | 首块自身或内部 field 的 padding-top | `.section > .row:first-child` / `.section > .fieldSlot:first-child` / `.section > .group:first-child` 的 `margin-top:−12px` |
 | 末块为 row/fieldSlot/group | 末块自身或内部 field 的 padding-bottom | `.section > .row:last-child` / `.section > .fieldSlot:last-child` / `.section > .group:last-child` 的 `margin-bottom:−12px` |
 | hintRow 在 fieldSlot 内部且 fieldSlot 是 section 直接末孩子 | 内部 hintRow 的 `margin-bottom:12px` | 由 `.section > .fieldSlot:last-child` 承担；`.section > .hintRow:last-child` 不命中 |
 | hintRow 是 section 直接末孩子 | hintRow 自身 `margin-bottom:12px` | `.section > .hintRow:last-child` 承担 |
-| 字段 → 外置 hint | field `padding-bottom:12px` 与 hintRow `margin-top:−6px` | 先 12 再 −6，净 6px；仅 field 仍复制 `padding:12px 0` 时成立 |
-| 包装层 | stack/fieldSlot/accountConfig/accountList/authFlow/confirmBox/fieldControl/menuRoot/viewport | `padding:0`；不得再加纵向 12px |
+| 端点控件 row → 外置说明 hintRow | row `padding-bottom:12px` 与 hintRow `margin-top:−6px` | 先 12 再 −6，净 6px |
+| 端点 hintRow → 下一账号 field | hintRow `margin-bottom:12px` 与下一 field `padding-top:12px` | 24px |
+| 账号 field → 当前账号状态 row | field `padding-bottom:12px` 与 row `padding-top:12px` | 24px |
+| 当前账号状态 row → 首个账号 | row `padding-bottom:12px` 与 `.accountList` 容器 `padding-top:12px` | 24px；不再经过父 field 的 6px gap |
+| 末账号 → 清除全部 head | 末行 `padding-bottom:0` + `.accountListRegion` 的 `padding-bottom:12px` + clear field `padding-top:12px` | 24px；列表内部行不额外加 padding |
+| 包装层 | stack/fieldSlot/accountConfig/authFlow/confirmBox/accountListRegion/accountList 内部/menuRoot/viewport | 只保留列出的 padding；accountList 仅 `padding-top:12px`，accountListRegion 仅 `padding-bottom:12px` |
+
+`.hintRow` 仍是 `display:flex; align-items:center; justify-content:space-between; gap:12px; margin:-6px 0 12px`；端点说明和 Qoder 状态都是纯字符串 `p.hint`，不嵌入按钮、组标题或 code。账号状态不使用 hintRow，而是独立 `.row[data-account-state]` 的 `rowDescription`。
 
 ## 4. 控件契约
 
@@ -229,22 +214,25 @@
 | MenuSurface / MenuRow | surface padding 4、border 0、radius-lg、elevation-prominent、min 144 / max 360 / width max-content / z1100；item min-height 34、padding `6px 8px`、gap 6、13/20；label 在前，仅 selected 追加 trailing 14px SVG check；selected transparent，focus 背景且 outline none |
 | Menu 定位 | portal 到 body；trigger `anchor-name` 与 surface `positionAnchor` 对应；`data-match-anchor-width` 以 `anchor-size(width)` 提供最小宽度；完整 `position-try-fallbacks`；viewport 独立滚动，不手写 left/top rect |
 | Dropdown 键盘 / 焦点 | autoFocus；方向键/Home/End 跳过 disabled；Escape、Shift+Tab、普通 Tab、outside pointer 按 rc5；选择后回 trigger；保留慢保存最终回焦 R30，用户竞争焦点时不抢 |
-| 字段 | `.field` gap 6 / padding `12px 0`；`head > labelGroup`，labelGroup flex 1，组内 label flex `0 1 auto`；hint 为独立 p，错误与警告 token 分离；fieldSlot padding 0 |
+| 端点行 | 固定端点为 `row[data-fixed-endpoint-row]`：左 `rowTitle`「搜索端点」，右 `fieldValue` 固定域，无按钮；Qoder 为 `row[data-qoder-endpoint-row]`：左 label（`for` 指 trigger），右 Dropdown。二者都不使用 `.field`、`fieldControl` 或 settings `menuRoot` 全宽接缝 |
+| 端点提示 | 说明在控件 row 后的 `.hintRow`：状态/说明为纯字符串 `p.hint`；错误为独立 `p.error[role=alert]`；`aria-describedby` 指向 status/description/error |
 | 账号 / 操作 | 账号 head 的 labelGroup flex 1，右侧 badges/accountActions 自然靠右，不用外层 justify 补偿；账号行基础 padding `12px 0`，首行 top 0、末行 bottom 0，行间 hairline 0.5px；按钮复制 rc5 small outline，Tag 复制官方几何/tone |
-| OFF gating | `ChannelConfigHost` 接收 `gated`，section 加 `.channelGated` / `data-off-gated`；`QoderEndpointRow` 与账号 `field[data-field="accounts"]` 再加 `.fieldGated`。添加账号、设当前、重登、删除、重试、端点下拉全部 `disabled`；账号文本与 hint 用 `label-dimmed`；清除全部 field 不挂 gated；OFF 不取消在飞授权/RPC |
+| 当前账号状态 | 独立 `.row[data-account-state]`（不在账号 field 内），内部 `span.rowDescription` 显示 loading/required/selected/no-current/error；错误状态不伪造 ready。它与列表之间固定 24px |
+| 账号列表区域 | `.accountList` 只加 `padding-top:12px`，首行仍 top 0；`.accountListRegion` 只加 `padding-bottom:12px` 与删除确认前的 6px gap；列表内部结构、行名、行说明、按钮、分隔线全部冻结 |
+| OFF gating | `ChannelConfigHost` 接收 `gated`，section 加 `.channelGated` / `data-off-gated`；端点 row 与 hintRow 加 `.rowGated`，账号 field 加 `.fieldGated`，账号状态 row 与列表区域加 `.rowGated`。添加账号、设当前、重登、删除、重试、端点下拉全部 `disabled`；文本用 `label-dimmed`；清除全部 field 不挂 gated；OFF 不取消在飞授权/RPC |
 | 展示框 | 授权 URL padding 12、0.5px border-l2、radius-lg、bg-base、code font、12/18、pre-wrap/anywhere；只读，不自动打开、不持久化 |
-| 状态与警告 | OFF 时渠道说明由 `lockedHint` 替换且下拉保值；下方配置区 `.channelGated` / `.fieldGated` 用 `label-dimmed` 灰化纯文本，控件沿用各自 `:disabled`；清除全部账号数据与清除确认不在 gated field 内，保持可用；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
+| 状态与警告 | OFF 时渠道说明由 `lockedHint` 替换且下拉保值；下方配置区用 `label-dimmed` 灰化纯文本，控件沿用各自 `:disabled`；清除全部账号数据与清除确认不在 gated 区内，保持可用；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
 | 业务边界 | 不提前实现真实 external-open；删除当前账号默认“暂不指定”替代；清除全部必须就地二次确认；不改变 settings.update、accounts/auth RPC 或 generation/queue 语义 |
 
 ### Trigger 外观补充
 
-DPG `settings-card.module.css:122-137` 与 DAE `settings-card.module.css:91-106` 的 trigger 均为 `border:none` + `var(--dsw-alias-bg-module-platform)`。按用户对本页视觉验收的明确要求，本卡采用这一实际插件先例，不再以 WebSearch 的 border-l4 作为保留额外边框的理由。仅 trigger 外观改变；rc5 的 34px / `0 12px` / gap 12 / radius-md、键盘、焦点、disabled、Qoder 全宽与 MenuSurface/elevation 均不变。
+DPG `settings-card.module.css:122-137` 与 DAE `settings-card.module.css:91-106` 的 trigger 均为 `border:none` + `var(--dsw-alias-bg-module-platform)`。按用户对本页视觉验收的明确要求，本卡采用这一实际插件先例，不再以 WebSearch 的 border-l4 作为保留额外边框的理由。仅 trigger 外观改变；rc5 的 34px / `0 12px` / gap 12 / radius-md、键盘、焦点、disabled 与 MenuSurface/elevation 均不变。
 
 ## 5. 证据边界
 
-当前只以静态源码、构建产物与 jsdom 验证真实 React DOM、事件、焦点、portal 结构、授权轮询/generation 与 RPC 调用形状。主会话随后仅在独立 `DSH_HOME` 中验收：
+当前只以静态源码、构建产物与 jsdom 验证真实 React DOM、事件、焦点、portal 结构、授权轮询/generation 与 RPC 调用形状。真实视觉仍未验收：
 
-- 真实计算样式（首末 −12px、hintRow −6px、34px、36 × 20、账号行基础 12px 与首末 0、行间 hairline、独立 backing portal 等）、明暗主题与窄宽度；
+- 真实计算样式（h3 后直接端点 row、hintRow 的 −6/24、状态 row 12 + accountList 12 = 24、末账号 12+12=24、34px、36 × 20、账号行基础 12px 与首末 0、行间 hairline、独立 backing portal 等）、明暗主题与窄宽度；
 - CSS anchor positioning 在滚动详情列中的实际位置、`position-try` fallback 与 portal 不裁剪；
 - zh/en 切换不重挂载、live slot key、Theme token、控制台无 slot entry crash；
 - 真实 Host configForms、实际运行观测 host、四渠道真实账号授权/搜索；

@@ -202,6 +202,50 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(clearHead.querySelector('[data-field-actions] [data-action="clear-all"]')).not.toBeNull()
   })
 
+  it('当前账号状态是独立 rowDescription，位于冻结账号列表上方且不在账号 field 内', async () => {
+    const current = accountSummary('buddy', 'account-a', { displayName: 'Account A' })
+    const alternative = accountSummary('buddy', 'account-b', { displayName: 'Account B' })
+    const { container } = await renderAccount('buddy', {
+      handlers: {
+        'accounts.list': () => ({ ok: true, value: [current, alternative] }),
+        'accounts.current': () => ({ ok: true, value: current }),
+      },
+    })
+
+    const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
+    const stateRow = query<HTMLElement>(container, '[data-account-state]')
+    const listRegion = query<HTMLElement>(container, '[data-account-list-region]')
+    const accountList = query<HTMLElement>(listRegion, '[data-account-list]')
+    const clearField = query<HTMLElement>(container, '[data-field="clear-accounts"]')
+
+    expect(stateRow.tagName).toBe('DIV')
+    expect(stateRow.className).toContain('row')
+    expect(stateRow.getAttribute('data-account-state')).toBe('selected')
+    expect(query<HTMLElement>(stateRow, '[class*="rowDescription"]').textContent)
+      .toContain('当前账号: Account A')
+    expect(stateRow.closest('[data-field]')).toBeNull()
+    expect(stateRow.closest('[data-hint-row]')).toBeNull()
+    expect(stateRow.compareDocumentPosition(listRegion) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .not.toBe(0)
+    expect(stateRow.nextElementSibling).toBe(listRegion)
+    expect(listRegion.firstElementChild).toBe(accountList)
+    expect(accountsField.compareDocumentPosition(stateRow) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .not.toBe(0)
+    expect(listRegion.nextElementSibling).toBe(clearField)
+    expect(listRegion.contains(accountList)).toBe(true)
+
+    // 账号列表内部结构、行名/说明/按钮全部冻结：仍由 AccountList 原样渲染。
+    const rows = [...accountList.querySelectorAll<HTMLElement>('[data-account-row]')]
+    expect(rows.map(row => row.getAttribute('data-account-id')))
+      .toEqual(['account-a', 'account-b'])
+    expect(rows[0]?.querySelector('[data-account-actions] button[data-action="delete"]'))
+      .not.toBeNull()
+    expect(rows[1]?.querySelector('[data-account-actions] button[data-action="set-current"]'))
+      .not.toBeNull()
+    expect(accountList.querySelector('[data-account-test], [data-test-account]')).toBeNull()
+    expect(accountList.querySelectorAll('button')).toHaveLength(5)
+  })
+
   it('显式设为当前只锁相关行；成功后当前标记移动，不自动影响其他账号', async () => {
     const a = accountSummary('buddy', 'account-a')
     const b = accountSummary('buddy', 'account-b')
@@ -848,15 +892,22 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
     expect(accountsField.getAttribute('data-off-gated')).toBe('true')
     expect(accountsField.className).toContain('fieldGated')
-    expect(accountsField.textContent).toContain('Account A')
-    expect(accountsField.textContent).toContain('Account B')
     expect(query<HTMLButtonElement>(accountsField, '[data-action="add-account"]').disabled)
       .toBe(true)
-    expect(query<HTMLButtonElement>(accountsField, '[data-action="set-current"]').disabled)
+
+    const stateRow = query<HTMLElement>(container, '[data-account-state]')
+    expect(stateRow.getAttribute('data-off-gated')).toBe('true')
+    expect(stateRow.className).toContain('rowGated')
+    const listRegion = query<HTMLElement>(container, '[data-account-list-region]')
+    expect(listRegion.getAttribute('data-off-gated')).toBe('true')
+    expect(listRegion.className).toContain('rowGated')
+    expect(listRegion.textContent).toContain('Account A')
+    expect(listRegion.textContent).toContain('Account B')
+    expect(query<HTMLButtonElement>(listRegion, '[data-action="set-current"]').disabled)
       .toBe(true)
-    expect(query<HTMLButtonElement>(accountsField, '[data-action="reauth-account"]').disabled)
+    expect(query<HTMLButtonElement>(listRegion, '[data-action="reauth-account"]').disabled)
       .toBe(true)
-    expect(query<HTMLButtonElement>(accountsField, '[data-action="delete"]').disabled)
+    expect(query<HTMLButtonElement>(listRegion, '[data-action="delete"]').disabled)
       .toBe(true)
 
     const clearField = query<HTMLElement>(container, '[data-field="clear-accounts"]')
@@ -876,10 +927,13 @@ describe('AccountChannelConfig（真实 DOM）', () => {
 
     const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
     expect(accountsField.getAttribute('data-off-gated')).toBe('true')
-    expect(query<HTMLElement>(accountsField, '[data-account-state]').textContent)
-      .toContain('需要账号')
+    const stateRow = query<HTMLElement>(container, '[data-account-state]')
+    expect(stateRow.textContent).toContain('需要账号')
+    expect(stateRow.getAttribute('data-off-gated')).toBe('true')
+    expect(stateRow.className).toContain('rowGated')
     expect(query<HTMLButtonElement>(accountsField, '[data-action="add-account"]').disabled)
       .toBe(true)
+    expect(container.querySelector('[data-account-list-region]')).toBeNull()
     expect(query<HTMLButtonElement>(container, '[data-action="clear-all"]').disabled).toBe(false)
   })
 
