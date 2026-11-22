@@ -55,8 +55,7 @@
 │ ┌─ div.row[data-row="channel"] padding:12px 0 gap:8 ─────────────────────┐ │
 │ │ div.rowText flex:1 padding-right:48px gap:6                             │ │
 │ │ span.rowTitle「搜索渠道」 13/500/19.5                                  │ │
-│ │ span.rowDescription「搜索渠道说明」 12/400/18                           │ │
-│ │ span.rowDescription 条件 OFF：lockedHint 替换原说明，不追加第三行      │ │
+│ │ span.rowDescription 单节点 12/400/18：ON「搜索渠道说明」/ OFF「lockedHint」，替换不追加第三行 │ │
 │ │ 条件 interactionBusy：span.rowDescription「请先完成或取消当前操作。」  │ │
 │ │ 条件 settings error：span.error[role=alert] margin: 0，红色不灰化        │ │
 │ │ span.menuRoot padding:0 anchor-name:--dsh-web-search-channels-menu-trigger-*               │ │

@@ -4,7 +4,8 @@
  * 无观测时不得把默认 center 冒充实际成功域；固定模式显示用户选择域。
  *
  * 同时覆盖设置卡中的非乐观保存：pending 保持旧值，Host 成功快照后才更新，
- * 失败回滚并只把错误显示在端点行；OFF 时仍可编辑当前渠道配置。
+ * 失败回滚并只把错误显示在端点行；OFF 时下方配置区整体灰化且仅清除全部账号
+ * 数据可用，端点编辑只在 ON 时允许。
  */
 import { createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
