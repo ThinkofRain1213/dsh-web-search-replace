@@ -108,9 +108,9 @@ export type AccountHandlers = Partial<Record<string, RpcResponder>>
  * @returns 一个 RPC 响应函数。
  */
 export function routeAccounts(handlers: AccountHandlers): RpcResponder {
-  return (call) => {
+  return (call, signal) => {
     const handler = handlers[call.method]
-    if (handler !== undefined) return handler(call)
+    if (handler !== undefined) return handler(call, signal)
     if (call.method === 'accounts.list') return { ok: true, value: [] }
     if (call.method === 'accounts.current') return { ok: true, value: null }
     throw new Error(`测试未声明账号 RPC 响应：${call.method}`)

@@ -21,7 +21,7 @@ import { waitWithAuthAbort } from '../channels/auth-abort.ts'
  */
 export async function dispatchAccountRpc(
   accounts: AccountService,
-  method: AccountRpcMethod,
+  method: Exclude<AccountRpcMethod, 'accounts.test'>,
   payload: unknown,
   signal?: AbortSignal,
 ): Promise<unknown> {

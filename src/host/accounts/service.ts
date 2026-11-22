@@ -59,6 +59,15 @@ export type ResolvedChannelCredential =
   | TencentResolvedChannelCredential
   | QoderResolvedChannelCredential
 
+/** 按账号读取的一次性 Host-only grant 快照；绝不进入 RPC DTO。 */
+export interface AccountGrantSnapshot {
+  readonly summary: AccountSummary
+  readonly credential: ResolvedChannelCredential | null
+  readonly vendorAccountId: string | null
+  /** 用于状态 CAS；缺失刷新材料时使用既有空串语义。 */
+  readonly expectedRefreshToken: string | null
+}
+
 /** 账号服务依赖。 */
 export interface AccountServiceOptions {
   readonly store: AccountStore
@@ -83,6 +92,52 @@ export class AccountService {
     if (accountId === null) return null
     const entry = await this.options.store.readEntry(exactChannel, accountId)
     return entry === undefined ? null : toSummary(entry)
+  }
+
+  /** 按精确 channel + accountId 读取一个脱敏账号，不读取 currentAccountId。 */
+  async getAccount(channel: ChannelId, accountId: string): Promise<AccountSummary | null> {
+    const exactChannel = requireChannel(channel)
+    const exactAccountId = requireAccountId(accountId)
+    const entry = await this.options.store.readEntry(exactChannel, exactAccountId)
+    return entry === undefined ? null : toSummary(entry)
+  }
+
+  /**
+   * 按精确账号读取执行期 grant；坏记录返回 credential=null 的安全摘要。
+   * 该方法绝不借用 currentAccountId，也不枚举其他渠道。
+   */
+  async resolveAccountCredential(
+    channel: ChannelId,
+    accountId: string,
+  ): Promise<AccountGrantSnapshot | null> {
+    const exactChannel = requireChannel(channel)
+    const exactAccountId = requireAccountId(accountId)
+    const entry = await this.options.store.readEntry(exactChannel, exactAccountId)
+    if (entry === undefined) return null
+    const summary = toSummary(entry)
+    if (entry.account === undefined) {
+      return Object.freeze({
+        summary,
+        credential: null,
+        vendorAccountId: null,
+        expectedRefreshToken: null,
+      })
+    }
+    const credential = projectSecret(entry.account)
+    if (credential === undefined) {
+      return Object.freeze({
+        summary,
+        credential: null,
+        vendorAccountId: null,
+        expectedRefreshToken: null,
+      })
+    }
+    return Object.freeze({
+      summary,
+      credential,
+      vendorAccountId: entry.account.vendorAccountId,
+      expectedRefreshToken: readSecretString(entry.account.secret, 'refreshToken') ?? '',
+    })
   }
 
   /**

@@ -267,6 +267,7 @@ export function AccountChannelConfig({
               accounts={state.accounts}
               current={state.current}
               busyAccountId={state.busyAccountId}
+              busyAction={state.busyAction}
               queue={state.queue}
               locked={state.status !== 'ready'
                 || state.authBusy
@@ -279,6 +280,8 @@ export function AccountChannelConfig({
               t={t}
               onSetCurrent={(accountId) => { void controller.setCurrent(accountId) }}
               onReauth={handleReauth}
+              onTest={(accountId) => { void controller.testAccount(accountId) }}
+              onCancelTest={(accountId) => { controller.cancelTest(accountId) }}
               onDelete={handleDeleteRequest}
             />
           )}

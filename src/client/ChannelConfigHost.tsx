@@ -61,7 +61,7 @@ export function ChannelConfigHost({
       data-channel={channel}
       data-off-gated={offGated}
     >
-      <h3 id={headingId} className={styles.heading}>{t(`channel.${channel}.name`)}</h3>
+      <h3 id={headingId} className={styles.heading}>{t('channel.config.title')}</h3>
 
       {channel === 'qoder'
         ? (

@@ -89,7 +89,9 @@ describe('账号列表首末组合间距（R53）', () => {
     expect(root.container.querySelector('[data-delete-confirmation]')).toBeNull()
     expect(accountList.querySelectorAll('[data-account-row]')).toHaveLength(2)
     expect(accountList.querySelector('[data-account-row][data-account-id="account-a"]')
-      ?.querySelector('[data-account-actions]')?.children).toHaveLength(2)
+      ?.querySelector('[data-account-actions]')?.children).toHaveLength(3)
+    expect(accountList.querySelector('[data-account-row][data-account-id="account-a"]')
+      ?.querySelector('[data-action="test-account"]')).not.toBeNull()
 
     const firstGap = verticalPadding('.row', 'bottom') + verticalPadding('.accountList', 'top')
     const lastGap = verticalPadding('.accountRow:last-child', 'bottom')

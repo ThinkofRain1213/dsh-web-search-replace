@@ -242,8 +242,8 @@ describe('AccountChannelConfig（真实 DOM）', () => {
       .not.toBeNull()
     expect(rows[1]?.querySelector('[data-account-actions] button[data-action="set-current"]'))
       .not.toBeNull()
-    expect(accountList.querySelector('[data-account-test], [data-test-account]')).toBeNull()
-    expect(accountList.querySelectorAll('button')).toHaveLength(5)
+    expect(accountList.querySelectorAll('[data-action="test-account"]')).toHaveLength(2)
+    expect(accountList.querySelectorAll('button')).toHaveLength(7)
   })
 
   it('显式设为当前只锁相关行；成功后当前标记移动，不自动影响其他账号', async () => {

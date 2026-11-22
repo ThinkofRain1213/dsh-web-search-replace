@@ -34,6 +34,7 @@ import type { HostRuntimeSnapshot } from '../shared/runtime.ts'
 import { AccountError } from './accounts/errors.ts'
 import { dispatchAccountRpc } from './accounts/rpc-methods.ts'
 import type { AccountService } from './accounts/service.ts'
+import type { AccountTestPort } from './accounts/test.ts'
 import { dispatchChannelAuthRpc } from './channels/auth-rpc.ts'
 import type { SettingsService } from './settings/service.ts'
 import { registerGenerationRoute } from './route-broker.ts'
@@ -58,6 +59,8 @@ export interface HostRuntimePort {
 export interface ManagementRpcOptions {
   readonly runtime?: HostRuntimePort
   readonly lifecycle?: PluginLifecycle
+  /** 用户显式 accounts.test；未装配时该方法不存在，绝不回退当前账号。 */
+  readonly accountTester?: AccountTestPort
 }
 
 /** 兼容旧 disposer 调用，同时暴露本代 async setup readiness。 */
@@ -208,6 +211,12 @@ async function dispatch(
 ): Promise<unknown> {
   if (isAccountRpcMethod(method)) {
     if (accounts === undefined) throw new UnknownManagementMethodError(method)
+    if (method === 'accounts.test') {
+      assertManagementRpcPayload(method, payload)
+      if (options.accountTester === undefined) throw new UnknownManagementMethodError(method)
+      if (signal === undefined) throw new UnknownManagementMethodError(method)
+      return options.accountTester.test(payload.channel, payload.accountId, signal)
+    }
     return dispatchAccountRpc(accounts, method, payload, signal)
   }
   if (isAuthRpcMethod(method)) {

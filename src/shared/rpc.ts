@@ -89,6 +89,7 @@ export type ManagementRpcResults = {
   'accounts.current': AccountSummary | null
   'accounts.setCurrent': AccountSummary | null
   'accounts.delete': AccountCollection
+  'accounts.test': AccountSummary
   'accounts.clearAll': ClearAccountsResult
   'runtime.get': HostRuntimeSnapshot
 } & AuthRpcResults

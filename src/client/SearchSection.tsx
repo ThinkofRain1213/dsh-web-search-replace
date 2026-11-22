@@ -10,7 +10,6 @@ import * as React from 'react'
 
 import { CHANNEL_IDS, type ChannelId } from '../shared/channels.ts'
 import type { SettingsErrorKey } from './controllers/settings.ts'
-import type { SearchStatusView } from './search-status.ts'
 import { Dropdown } from './components/Dropdown.tsx'
 import { Switch } from './components/Switch.tsx'
 import styles from './styles/settings-card.module.css'
@@ -25,8 +24,6 @@ export interface SearchSectionProps {
   readonly busy: boolean
   /** 删除确认、授权/刷新或已接受队列等统一交互锁。 */
   readonly interactionBusy: boolean
-  /** 同渠道 settings + account/status 推导出的 §5.5 状态。 */
-  readonly status: SearchStatusView
   /** Host 是否允许写入。 */
   readonly writable: boolean
   /** 最近一次保存失败的本地化键。 */
@@ -49,7 +46,6 @@ export function SearchSection({
   channel,
   busy,
   interactionBusy,
-  status,
   writable,
   error,
   t,
@@ -64,10 +60,6 @@ export function SearchSection({
   const label = t('search.enabled.label')
   const items = CHANNEL_IDS.map(id => ({ id, label: t(`channel.${id}.name`) }))
   const selectedLabel = t(`channel.${channel}.name`)
-  const statusText = status.kind === 'ready' && status.account !== undefined
-    ? `${t('search.status.ready')}：${selectedLabel} / ${status.account.displayName}`
-      + `（${status.account.maskedIdentifier} · ${t(`channel.accounts.status.${status.account.status}`)}）`
-    : t(`search.status.${status.kind}`)
 
   return (
     <section
@@ -78,12 +70,6 @@ export function SearchSection({
       data-enabled={enabled ? 'true' : 'false'}
     >
       <h3 id={headingId} className={styles.heading}>{t('settings.title')}</h3>
-
-      <div className={styles.row} data-search-status={status.kind} aria-live="polite">
-        <div className={styles.rowText}>
-          <span className={styles.rowDescription}>{statusText}</span>
-        </div>
-      </div>
 
       <div className={styles.row} data-row="enabled">
         <div className={styles.rowText}>

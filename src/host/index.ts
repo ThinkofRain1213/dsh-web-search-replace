@@ -9,6 +9,7 @@ import {
 } from './settings/service.ts'
 import { AccountStore, type AccountCredentialProvider } from './accounts/store.ts'
 import { AccountService } from './accounts/service.ts'
+import { AccountCapabilityTester } from './accounts/test.ts'
 import { PluginLifecycle } from './lifecycle.ts'
 import { RuntimeObservationStore } from './runtime.ts'
 import { acquireQoderWasmOwnerLease } from './channels/qoder/signer.ts'
@@ -107,6 +108,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
       }, signal)
     },
   })
+    const accountTester = new AccountCapabilityTester({ accounts, store, verifiers })
     flows.buddy = new BuddyAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.buddy })
     flows.workbuddy = new WorkbuddyAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.workbuddy })
     flows.qoder = new QoderInternationalAuthFlow({ store, accounts, ...fetcherOption(ctx), verifyCapability: verifiers.qoder })
@@ -169,6 +171,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
         authFlows,
         {
           lifecycle,
+          accountTester,
           runtime: {
             getSnapshot: () => {
               runtime!.captureSelection(settings.getSnapshot())

@@ -70,6 +70,7 @@ export const ACCOUNT_RPC_METHODS = [
   'accounts.current',
   'accounts.setCurrent',
   'accounts.delete',
+  'accounts.test',
   'accounts.clearAll',
 ] as const
 
@@ -88,6 +89,10 @@ export interface AccountRpcPayloads {
     readonly channel: ChannelId
     readonly accountId: string
     readonly replacementAccountId?: string | null
+  }
+  'accounts.test': {
+    readonly channel: ChannelId
+    readonly accountId: string
   }
   'accounts.clearAll': Record<string, never>
 }
@@ -188,6 +193,14 @@ export function assertAccountRpcPayload<M extends AccountRpcMethod>(
           throw new AccountRpcValidationError('accounts.delete 的 replacementAccountId 非法')
         }
       }
+      return
+    case 'accounts.test':
+      rejectUnknownKeys(payload, ['channel', 'accountId'], method)
+      requireChannel(payload, method)
+      if (!Object.hasOwn(payload, 'accountId')) {
+        throw new AccountRpcValidationError('accounts.test 缺少 accountId')
+      }
+      requireAccountId(payload.accountId, 'accounts.test')
       return
     case 'accounts.clearAll':
       if (Object.keys(payload).length !== 0) {

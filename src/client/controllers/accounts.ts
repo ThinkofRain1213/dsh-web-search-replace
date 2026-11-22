@@ -35,6 +35,7 @@ export type AccountsErrorKey =
   | 'channel.accounts.loadFailed'
   | 'channel.accounts.setCurrentFailed'
   | 'channel.accounts.deleteFailed'
+  | 'channel.accounts.testFailed'
   | 'channel.accounts.clearFailed'
   | 'channel.auth.startFailed'
   | 'channel.auth.cancelFailed'
@@ -62,7 +63,7 @@ export interface AccountsAuthView {
 /** 已接受但尚未开始执行的账号行操作。 */
 export interface AccountsQueuedOperation {
   readonly id: number
-  readonly kind: 'setCurrent' | 'reauth' | 'delete'
+  readonly kind: 'setCurrent' | 'reauth' | 'delete' | 'test'
   readonly accountId: string
 }
 
@@ -79,7 +80,7 @@ export interface AccountsState {
   readonly authBusy: boolean
   /** 只锁相关账号行的操作目标。 */
   readonly busyAccountId: string | null
-  readonly busyAction: 'setCurrent' | 'reauth' | 'delete' | null
+  readonly busyAction: 'setCurrent' | 'reauth' | 'delete' | 'test' | null
   readonly clearBusy: boolean
   /** 授权完成后的账号刷新在飞；刷新 settle 前禁止相互覆盖的写操作。 */
   readonly refreshBusy: boolean
@@ -353,6 +354,49 @@ export class AccountsController {
         busyAccountId: null,
         busyAction: null,
         error: 'channel.accounts.setCurrentFailed',
+      })
+    }
+  }
+
+  /** 用户显式测试一个账号；与其他行操作共用 FIFO、generation 和 action abort。 */
+  async testAccount(accountId: string): Promise<void> {
+    if (!this.state.accounts.some(account => account.id === accountId)) return
+    return this.enqueueOperation('test', accountId, async () => {
+      await this.performTest(accountId)
+    })
+  }
+
+  /** 执行单账号能力测试；只接受同渠道同账号的六字段最终摘要。 */
+  private async performTest(accountId: string): Promise<void> {
+    const connection = this.connection
+    if (connection === undefined) return
+    if (!this.state.accounts.some(account => account.id === accountId)) return
+    const generation = ++this.actionGeneration
+    this.patch({ busyAccountId: accountId, busyAction: 'test', error: null, notice: null })
+    try {
+      const result = await this.callRpc('action', 'accounts.test', {
+        channel: this.channel,
+        accountId,
+      })
+      if (!this.activeAction(generation)) return
+      if (!result.ok) throw new Error('accounts.test failed')
+      const tested = readCurrent(result.value, this.channel)
+      if (tested === null || tested.id !== accountId) {
+        throw new Error('accounts.test returned a different account')
+      }
+      this.patch({
+        accounts: this.state.accounts.map(account => account.id === accountId ? tested : account),
+        current: this.state.current?.id === accountId ? tested : this.state.current,
+        busyAccountId: null,
+        busyAction: null,
+        error: null,
+      })
+    } catch {
+      if (!this.activeAction(generation)) return
+      this.patch({
+        busyAccountId: null,
+        busyAction: null,
+        error: 'channel.accounts.testFailed',
       })
     }
   }
@@ -642,6 +686,24 @@ export class AccountsController {
     const [operation] = this.operationQueue.splice(index, 1)
     operation?.resolve()
     this.patch({})
+  }
+
+  /** 取消排队或活动中的测试；不得中止其他类型行操作。 */
+  cancelTest(accountId: string): void {
+    if (this.disposed) return
+    const index = this.operationQueue.findIndex(
+      operation => operation.kind === 'test' && operation.accountId === accountId,
+    )
+    if (index >= 0) {
+      const [operation] = this.operationQueue.splice(index, 1)
+      operation?.resolve()
+      this.patch({})
+      return
+    }
+    if (this.state.busyAccountId !== accountId || this.state.busyAction !== 'test') return
+    this.actionGeneration += 1
+    this.rpcControllers.get('action')?.abort(new DOMException('account test cancelled', 'AbortError'))
+    this.patch({ busyAccountId: null, busyAction: null, error: null })
   }
 
   /** 关闭终态授权提示；在飞授权不得被直接关闭。 */

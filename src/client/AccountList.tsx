@@ -7,7 +7,7 @@
 import * as React from 'react'
 
 import type { AccountSummary } from '../shared/accounts.ts'
-import type { AccountsQueuedOperation } from './controllers/accounts.ts'
+import type { AccountsQueuedOperation, AccountsState } from './controllers/accounts.ts'
 import styles from './styles/settings-card.module.css'
 
 /** 账号列表属性。 */
@@ -18,6 +18,8 @@ export interface AccountListProps {
   readonly current: AccountSummary | null
   /** 正在执行行操作的账号。 */
   readonly busyAccountId: string | null
+  /** 当前行操作类型；测试用于显示 checking/测试中。 */
+  readonly busyAction: AccountsState['busyAction']
   /** 已接受但尚未开始的行操作；用于显示“排队中”。 */
   readonly queue: readonly AccountsQueuedOperation[]
   /** 授权/重登或确认区在飞时锁定所有行。 */
@@ -30,6 +32,10 @@ export interface AccountListProps {
   readonly onSetCurrent: (accountId: string) => void
   /** 请求重新登录某账号。 */
   readonly onReauth: (accountId: string) => void
+  /** 用户显式测试某账号的真实 Search 能力。 */
+  readonly onTest: (accountId: string) => void
+  /** 取消排队或活动中的测试。 */
+  readonly onCancelTest: (accountId: string) => void
   /** 请求删除某账号（先展开确认）。 */
   readonly onDelete: (accountId: string) => void
 }
@@ -43,12 +49,15 @@ export function AccountList({
   accounts,
   current,
   busyAccountId,
+  busyAction,
   queue,
   locked,
   writable,
   t,
   onSetCurrent,
   onReauth,
+  onTest,
+  onCancelTest,
   onDelete,
 }: AccountListProps): React.ReactElement {
   return (
@@ -56,8 +65,12 @@ export function AccountList({
       {accounts.map((account) => {
         const isCurrent = current?.id === account.id
         const queued = queue.some(operation => operation.accountId === account.id)
+        const queuedTest = queue.some(operation => operation.kind === 'test' && operation.accountId === account.id)
         const working = busyAccountId === account.id
+        const testing = working && busyAction === 'test'
+        const cancellingTest = testing || queuedTest
         const rowLocked = locked || !writable || working || queued
+        const displayedStatus = testing ? 'checking' : account.status
         return (
           <div
             key={account.id}
@@ -85,9 +98,9 @@ export function AccountList({
               <div className={styles.accountStatusLine}>
                 <span
                   className={styles.accountStatus}
-                  data-account-status={account.status}
+                  data-account-status={displayedStatus}
                 >
-                  {t(`channel.accounts.status.${account.status}`)}
+                  {t(`channel.accounts.status.${displayedStatus}`)}
                 </span>
                 {queued && (
                   <span className={`${styles.accountBadge} ${styles.accountQueued}`} data-tone="neutral" data-account-queued="">
@@ -96,7 +109,7 @@ export function AccountList({
                 )}
                 {working && (
                   <span className={`${styles.accountBadge} ${styles.accountQueued}`} data-tone="neutral" data-account-busy="">
-                    {t('channel.accounts.working')}
+                    {testing ? t('channel.accounts.testing') : t('channel.accounts.working')}
                   </span>
                 )}
               </div>
@@ -112,6 +125,29 @@ export function AccountList({
                   onClick={() => { onSetCurrent(account.id) }}
                 >
                   {t('channel.accounts.setCurrent')}
+                </button>
+              )}
+              {cancellingTest ? (
+                <button
+                  type="button"
+                  className={styles.actionButton}
+                  data-action="cancel-test"
+                  data-account-id={account.id}
+                  disabled={locked || !writable}
+                  onClick={() => { onCancelTest(account.id) }}
+                >
+                  {t('channel.accounts.cancelTest')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.actionButton}
+                  data-action="test-account"
+                  data-account-id={account.id}
+                  disabled={rowLocked}
+                  onClick={() => { onTest(account.id) }}
+                >
+                  {t('channel.accounts.test')}
                 </button>
               )}
               <button

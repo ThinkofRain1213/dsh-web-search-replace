@@ -99,7 +99,7 @@ async function settle(): Promise<void> {
 }
 
 describe('SearchSection（真实 DOM）', () => {
-  it('加载后只有一个 search.channel 真源：下拉、当前配置区和状态一致', async () => {
+  it('加载后只有一个 search.channel 真源；顶部只保留启用开关与渠道下拉', async () => {
     const { container, t, getCalls, snapshot } = await renderCard({
       snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
     })
@@ -115,12 +115,18 @@ describe('SearchSection（真实 DOM）', () => {
     expect(search.firstElementChild?.tagName).toBe('H3')
     expect(search.querySelector('h3')?.textContent).toBe(t('settings.title'))
     expect(container.textContent).toContain('网页搜索渠道')
+    expect(search.querySelector('[data-search-status]')).toBeNull()
+    expect([...search.children].map(child => child.getAttribute('data-row'))).toEqual([null, 'enabled', 'channel'])
+    expect(search.querySelector('h3')?.nextElementSibling?.getAttribute('data-row')).toBe('enabled')
 
     const toggle = query<HTMLButtonElement>(container, '[role="switch"]')
     expect(toggle.tagName).toBe('BUTTON')
     expect(toggle.type).toBe('button')
     expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(toggle.getAttribute('aria-label')).toBe(t('search.enabled.label'))
+    expect(toggle.getAttribute('aria-label')).toBe('启用搜索替换')
+    expect(query<HTMLElement>(container, '[data-row="enabled"] [class*="rowTitle"]').textContent)
+      .toBe('启用搜索替换')
     expect(toggle.textContent).toBe('')
     expect(toggle.querySelector('span')).toBeTruthy()
     expect(toggle.tabIndex).toBe(0)
@@ -338,50 +344,47 @@ describe('SearchSection（真实 DOM）', () => {
     expect(container.querySelectorAll('[data-channel-config-host]')).toHaveLength(1)
   })
 
-  it('I6 ready 正例由当前账号真源驱动，含渠道、账号与脱敏状态', async () => {
+  it('ON 且账号 ready 也不渲染顶部状态；账号状态仍留在配置区', async () => {
     const current = accountSummary('workbuddy', 'ready-account', {
       displayName: 'Ready User', maskedIdentifier: 'r***@example.com', status: 'ready',
     })
-    const { container, t } = await renderCard({
+    const { container } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'workbuddy' }),
       accounts: {
         'accounts.list': () => ({ ok: true, value: [current] }),
         'accounts.current': () => ({ ok: true, value: current }),
       },
     })
-    const status = query<HTMLElement>(container, '[data-search-status]')
-    expect(status.getAttribute('data-search-status')).toBe('ready')
-    expect(status.textContent).toContain('已开启 · 已就绪')
-    expect(status.textContent).toContain(t('channel.workbuddy.name'))
-    expect(status.textContent).toContain('Ready User')
-    expect(status.textContent).toContain('r***@example.com')
-    expect(status.textContent).toContain('正常')
+    expect(container.querySelector('[data-search-status]')).toBeNull()
+    const accountRow = query<HTMLElement>(container, '[data-account-row][data-account-id="ready-account"]')
+    expect(accountRow.textContent).toContain('Ready User')
+    expect(accountRow.textContent).toContain('r***@example.com')
+    expect(accountRow.textContent).toContain('正常')
   })
 
-  it('I6 OFF 明确交还官方搜索；loading 不假装无账号', async () => {
+  it('OFF 与账号 loading 都不渲染顶部状态；loading 不假装无账号', async () => {
     const off = await renderCard({ snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }) })
-    expect(query<HTMLElement>(off.container, '[data-search-status]').getAttribute('data-search-status'))
-      .toBe('off')
-    expect(query<HTMLElement>(off.container, '[data-search-status]').textContent).toContain('官方')
+    expect(off.container.querySelector('[data-search-status]')).toBeNull()
 
     const pending = deferred<RpcResult<readonly unknown[]>>()
     const loading = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
       accounts: { 'accounts.list': () => pending.promise },
     })
-    const status = query<HTMLElement>(loading.container, '[data-search-status]')
-    expect(status.getAttribute('data-search-status')).toBe('loading')
-    expect(status.textContent).toContain('读取中')
-    expect(status.textContent).not.toContain('未选择当前账号')
+    expect(loading.container.querySelector('[data-search-status]')).toBeNull()
+    const accountState = query<HTMLElement>(loading.container, '[data-account-state]')
+    expect(accountState.getAttribute('data-account-state')).toBe('loading')
+    expect(accountState.textContent).toContain('正在读取账号')
+    expect(accountState.textContent).not.toContain('未选择当前账号')
     pending.resolve({ ok: true, value: [] })
     await flush()
   })
 
   it.each([
-    { status: 'reauth_required' as const, expected: 'reauth_required', text: '需要重新登录' },
-    { status: 'temporarily_unavailable' as const, expected: 'temporarily_unavailable', text: '暂时不可用' },
-    { status: 'credential_unavailable' as const, expected: 'credential_error', text: '配置或凭据读取失败' },
-  ])('I6 当前账号 $status 映射到 $expected', async ({ status, expected, text }) => {
+    { status: 'reauth_required' as const, text: '需要重新登录' },
+    { status: 'temporarily_unavailable' as const, text: '暂时不可用' },
+    { status: 'credential_unavailable' as const, text: '凭据不可用' },
+  ])('当前账号 $status 只显示在账号行，不回到顶部状态', async ({ status, text }) => {
     const current = accountSummary('buddy', 'account-status', { status })
     const { container } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
@@ -390,12 +393,13 @@ describe('SearchSection（真实 DOM）', () => {
         'accounts.current': () => ({ ok: true, value: current }),
       },
     })
-    const view = query<HTMLElement>(container, '[data-search-status]')
-    expect(view.getAttribute('data-search-status')).toBe(expected)
-    expect(view.textContent).toContain(text)
+    expect(container.querySelector('[data-search-status]')).toBeNull()
+    const row = query<HTMLElement>(container, '[data-account-row][data-account-id="account-status"]')
+    expect(query<HTMLElement>(row, '[data-account-status]').getAttribute('data-account-status')).toBe(status)
+    expect(row.textContent).toContain(text)
   })
 
-  it('I6 有账号但未选择与读取失败分别映射 no-current 与 credential/config error', async () => {
+  it('有账号但未选择与读取失败都保留账号区状态，不渲染顶部状态', async () => {
     const account = accountSummary('buddy', 'alternative')
     const noCurrent = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
@@ -404,16 +408,17 @@ describe('SearchSection（真实 DOM）', () => {
         'accounts.current': () => ({ ok: true, value: null }),
       },
     })
-    expect(query<HTMLElement>(noCurrent.container, '[data-search-status]')
-      .getAttribute('data-search-status')).toBe('no-current')
+    expect(noCurrent.container.querySelector('[data-search-status]')).toBeNull()
+    expect(query<HTMLElement>(noCurrent.container, '[data-account-state]').textContent)
+      .toContain('未选择当前账号')
 
     const failed = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
       accounts: { 'accounts.list': () => failure },
     })
-    const view = query<HTMLElement>(failed.container, '[data-search-status]')
-    expect(view.getAttribute('data-search-status')).toBe('credential_error')
-    expect(view.textContent).toContain('配置或凭据读取失败')
+    expect(failed.container.querySelector('[data-search-status]')).toBeNull()
+    expect(query<HTMLElement>(failed.container, '[data-account-error]').textContent)
+      .toContain('读取账号失败')
   })
 
   it('I6 渠道切换原子性：新渠道为空时不继承旧渠道 ready', async () => {
@@ -435,17 +440,16 @@ describe('SearchSection（真实 DOM）', () => {
         }),
       },
     })
-    expect(query<HTMLElement>(container, '[data-search-status]').getAttribute('data-search-status'))
-      .toBe('ready')
+    expect(container.querySelector('[data-search-status]')).toBeNull()
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     await click(trigger)
     await click(buttonByText(query(document, '[data-dropdown-menu]'), t('channel.qoder.name')))
     response.resolve({ ok: true, value: after })
     await settle()
-    const status = query<HTMLElement>(container, '[data-search-status]')
-    expect(status.getAttribute('data-search-status')).not.toBe('ready')
-    expect(status.getAttribute('data-search-status')).toBe('no-account')
-    expect(status.textContent).not.toContain('buddy-ready')
+    expect(container.querySelector('[data-search-status]')).toBeNull()
+    expect(query<HTMLElement>(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('qoder')
+    expect(query<HTMLElement>(container, '[data-account-state]').textContent).toContain('需要账号')
+    expect(container.textContent).not.toContain('buddy-ready')
   })
 
   it('busy 锁：写入在飞时禁用开关与下拉，重复点击不产生第二个 RPC', async () => {
@@ -825,7 +829,7 @@ describe('SearchSection（真实 DOM）', () => {
     })
 
     expect(container.textContent).toContain('Web search channels')
-    expect(query(container, '[role="switch"]').getAttribute('aria-label')).toBe('Enable web search')
+    expect(query(container, '[role="switch"]').getAttribute('aria-label')).toBe('Enable search replacement')
     expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').textContent)
       .toContain('Qoder China')
     expect(container.textContent).toContain('Account required')
