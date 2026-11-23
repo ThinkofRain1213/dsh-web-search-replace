@@ -182,7 +182,7 @@ export function AccountChannelConfig({
   )
   // 账号字段头本身是一条 row：rowTitle=账号，rowDescription=当前账号/状态说明，
   // 添加账号在右侧 badges。字段包装不再重复 field 的上下 12px，而是让字段头 row
-  // 的 padding-top 12 接端点说明、padding-bottom 12 接 .accountList 的 padding-top
+  // 的 padding-top 12 接端点说明、padding-bottom 12 接首个账号行的 padding-top
   // 12，分别形成 24px。账号列表内部行结构完全交给 AccountList 原样渲染。
   const accountsFieldClass = gated
     ? `${styles.accountField} ${styles.fieldGated}`
