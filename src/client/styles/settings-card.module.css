@@ -325,7 +325,7 @@
    rowTitle=账号、rowDescription=当前账号/状态说明，添加账号在右侧 badges。
    .accountField 不再重复 .field 的上下 12px，只保留列布局与条件块 gap，
    因此字段头 row 的 padding-top 12 接端点 hintRow margin-bottom 12，字段头
-   row 的 padding-bottom 12 接 .accountList padding-top 12，均形成 24px。 */
+   row 的 padding-bottom 12 接首个 accountRow 的 padding-top 12，均形成 24px。 */
 .accountField {
   display: flex;
   flex-direction: column;
@@ -335,27 +335,26 @@
 }
 
 /* R53：账号字段头 row 与列表之间的 24px 由 row padding-bottom 12 +
-   accountList padding-top 12 组成；列表内部行仍从 padding-top:0 开始。
-   首尾 0.5px hairline 改由首个/末个 accountRow 自己持有，容器不再画线，
-   底线不会随容器 padding 漂到 region/clear field 之间。 */
+   首行 padding-top 12 组成；首尾 0.5px hairline 由列表容器上下 border
+   持有，首个账号前与最后账号后各有 12px 内容留白，线不贴内容。 */
 .accountList {
   display: flex;
   flex-direction: column;
   gap: 0;
   min-width: 0;
   padding: 0;
-  padding-top: 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 
-/* 账号列表区域只负责末侧 12px（与清除 field 的 12px 合成 24px）和
-   删除确认与列表之间的 6px；首侧 24px 由字段头 row padding-bottom 12 +
-   accountList padding-top 12 负责，不给内部账号行增加任何间距。 */
+/* 账号列表区域只负责删除确认与列表之间的 6px；末侧 12px 由末个
+   accountRow 自己的 padding-bottom 负责，与清除 field 的 12px 合成 24px。 */
 .accountListRegion {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding-bottom: 12px;
+  padding: 0;
 }
 
 .accountRow {
@@ -370,18 +369,15 @@
   border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
-/* 列表与父 field 的 6px gap 已负责首侧；末侧由两层 field 的 12+12 负责。
-   首末 accountRow 不再各加一份 12px，避免首 18px、末 36px。
-   首尾线贴着首/末账号内容：首行自身持有 border-top，末行自身持有
-   border-bottom；相邻行线仍只由 .accountRow + .accountRow 提供一次。 */
+/* 首/末行不画线，只负责容器 hairline 与账号内容之间的 12px 留白：
+   首个账号前 12px、最后账号后 12px；单账号时同一行同时命中首末规则。
+   相邻行线仍只由 .accountRow + .accountRow 提供一次。 */
 .accountRow:first-child {
-  padding-top: 0;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  padding-top: 12px;
 }
 
 .accountRow:last-child {
-  padding-bottom: 0;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  padding-bottom: 12px;
 }
 
 .accountRowText {

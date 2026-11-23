@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** R53 收尾：账号字段头 row 与真实 accountList DOM 共同决定首末 24px，不能只检查单个类。 */
+/** R53 收尾：账号字段头 row 与真实 accountList DOM 共同决定首末 24px；列表容器持有首尾 hairline，首/末行各留 12px 内容间距。 */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
@@ -55,7 +55,7 @@ function verticalPadding(selector: string, edge: 'top' | 'bottom'): number {
 }
 
 describe('账号字段头与列表首末组合间距（R53 收尾）', () => {
-  it('字段头 row 底部 12 + accountList padding-top 12 = 24；末账号到清除 field 仍为 24', async () => {
+  it('字段头 row 底部 12 + 首行 padding-top 12 = 24；末行 bottom 12 + 清除 field top 12 = 24', async () => {
     const current = accountSummary('buddy', 'account-a', { displayName: 'Account A' })
     const alternative = accountSummary('buddy', 'account-b', { displayName: 'Account B' })
     const rpc = createConnectionDouble(routeAccounts({
@@ -102,12 +102,16 @@ describe('账号字段头与列表首末组合间距（R53 收尾）', () => {
     const firstGap = verticalPadding('.row', 'bottom')
       + verticalPadding('.accountField', 'bottom')
       + verticalPadding('.accountList', 'top')
+      + verticalPadding('.accountRow:first-child', 'top')
     const lastGap = verticalPadding('.accountRow:last-child', 'bottom')
       + verticalPadding('.accountListRegion', 'bottom') + verticalPadding('.field', 'top')
-    expect(firstGap, '字段头 row padding-bottom 12 + accountField bottom 0 + accountList top 12').toBe(24)
-    expect(lastGap, '末 accountRow bottom + list region bottom + 清除 field top').toBe(24)
-    expect(verticalPadding('.accountList', 'top')).toBe(12)
-    expect(verticalPadding('.accountListRegion', 'bottom')).toBe(12)
+    expect(firstGap, '字段头 row bottom 12 + accountField bottom 0 + accountList top 0 + 首行 top 12').toBe(24)
+    expect(lastGap, '末 accountRow bottom 12 + list region bottom 0 + 清除 field top 12').toBe(24)
+    expect(verticalPadding('.accountList', 'top'), '首侧内容留白改由首行承担').toBe(0)
+    expect(verticalPadding('.accountListRegion', 'bottom'), '末侧内容留白改由末行承担').toBe(0)
+    // 首尾线归列表容器，首/末内容各距线 12px。
+    expect(block('.accountList')).toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    expect(block('.accountList')).toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
     // 列表行间分隔线仍冻结。
     expect(CSS).toMatch(/\.accountRow \+ \.accountRow\s*\{[^}]*border-top:\s*0\.5px solid/)
   })
@@ -135,7 +139,7 @@ describe('账号字段头与列表首末组合间距（R53 收尾）', () => {
     expect(verticalPadding('.accountField', 'top'), '账号字段头由 row padding-top 12 接续').toBe(0)
   })
 
-  it('账号列表首/末行各持首尾 hairline；容器无 border；OFF rowGated 不覆盖行线，内部行结构不变', async () => {
+  it('账号列表容器持有首尾 hairline；首/末行各留 12px 内容间距；内部线唯一；OFF 不覆盖行线', async () => {
     const current = accountSummary('buddy', 'account-a', { displayName: 'Account A' })
     const alternative = accountSummary('buddy', 'account-b', { displayName: 'Account B' })
     const rpc = createConnectionDouble(routeAccounts({
@@ -168,27 +172,66 @@ describe('账号字段头与列表首末组合间距（R53 收尾）', () => {
     expect(rows[0]?.querySelector('[data-account-actions]')).not.toBeNull()
     expect(rows[1]?.querySelector('[data-account-actions]')).not.toBeNull()
 
-    // 首尾线归首/末 accountRow 自己：容器不再画线，避免底线与 region/clear field 的 padding 叠加。
-    expect(block('.accountList')).not.toMatch(/border-(top|bottom):/)
-    expect(block('.accountList')).toMatch(/padding-top:\s*12px;/)
-    expect(block('.accountRow:first-child'))
+    // 首尾线归列表容器：上下各一条 0.5px hairline，容器不承担任何内容 padding。
+    expect(block('.accountList')).toMatch(/padding:\s*0;/)
+    expect(block('.accountList')).not.toMatch(/padding-top:/)
+    expect(block('.accountList'))
       .toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
-    expect(block('.accountRow:first-child')).not.toMatch(/border-bottom:/)
-    expect(block('.accountRow:last-child'))
+    expect(block('.accountList'))
       .toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
-    expect(block('.accountRow:last-child')).not.toMatch(/border-top:/)
-    // 内部线只在相邻行之间出现一次，基础行不带 border，首/末行不再重复画线。
+    // 首/末行不再画线，只各自留 12px 内容间距：顶线↔首账号内容、末账号内容↔底线。
+    expect(block('.accountRow:first-child')).toMatch(/padding-top:\s*12px;/)
+    expect(block('.accountRow:first-child')).not.toMatch(/border-(top|bottom):/)
+    expect(block('.accountRow:last-child')).toMatch(/padding-bottom:\s*12px;/)
+    expect(block('.accountRow:last-child')).not.toMatch(/border-(top|bottom):/)
     expect(block('.accountRow')).not.toMatch(/border-(top|bottom):/)
+    // 内部线唯一：只有相邻行规则持有一条 border-top，无第二条重复线。
+    expect(CSS.match(/\.accountRow \+ \.accountRow\s*\{/g), '内部行线规则只出现一次').toHaveLength(1)
     expect(CSS).toMatch(/\.accountRow \+ \.accountRow\s*\{[^}]*border-top:\s*0\.5px solid/)
-    // 首行 top 0、末行 bottom 0；末账号 → 清除 field 仍为 24px。
-    expect(verticalPadding('.accountRow:first-child', 'top')).toBe(0)
-    expect(verticalPadding('.accountRow:last-child', 'bottom')).toBe(0)
+    // 顶线到首账号内容、末账号内容到底线各 12px；末账号 → 清除 field 仍 24px。
+    expect(verticalPadding('.accountRow:first-child', 'top'), '顶线到首账号内容').toBe(12)
+    expect(verticalPadding('.accountRow:last-child', 'bottom'), '末账号内容到底线').toBe(12)
     expect(verticalPadding('.accountRow:last-child', 'bottom')
       + verticalPadding('.accountListRegion', 'bottom')
       + verticalPadding('.field', 'top'), '末 accountRow bottom + list region bottom + 清除 field top').toBe(24)
-    // 灰化只作用于文本/控件，不能改写首/末行或内部行线。
+    // 灰化只作用于文本/控件，不能改写容器首尾线或内部行线。
     expect(CSS).not.toMatch(/\.rowGated\s+\.accountRow[^{]*\{[^}]*border/)
     expect(CSS).not.toMatch(/\.fieldGated\s+\.accountRow[^{]*\{[^}]*border/)
+    expect(CSS).not.toMatch(/\.rowGated\s+\.accountList\s*\{[^}]*border/)
+    expect(CSS).not.toMatch(/\.fieldGated\s+\.accountList\s*\{[^}]*border/)
+  })
+
+  it('单账号列表：首末行是同一元素，容器上下各一条线、行内上下各 12px 留白', async () => {
+    const only = accountSummary('buddy', 'account-a', { displayName: 'Only Account' })
+    const rpc = createConnectionDouble(routeAccounts({
+      'accounts.list': () => ({ ok: true, value: [only] }),
+      'accounts.current': () => ({ ok: true, value: only }),
+    }))
+    const root = mount(createElement(AccountChannelConfig, {
+      channel: 'buddy',
+      connection: rpc.connection,
+      t: translator('zh'),
+      writable: true,
+    }))
+    mounted.push(root)
+    await flush()
+
+    const list = query<HTMLElement>(root.container, '[data-account-list]')
+    const rows = [...list.querySelectorAll<HTMLElement>('[data-account-row]')]
+    expect(rows).toHaveLength(1)
+    expect(list.children).toHaveLength(1)
+    expect(rows[0]).toBe(list.firstElementChild)
+    expect(rows[0]).toBe(list.lastElementChild)
+
+    // 同一行同时命中 :first-child/:last-child：上下各 12px，内容不贴任一条线。
+    expect(verticalPadding('.accountRow:first-child', 'top'), '顶线到唯一账号内容').toBe(12)
+    expect(verticalPadding('.accountRow:last-child', 'bottom'), '唯一账号内容到底线').toBe(12)
+    // 容器仍只有上下两条 hairline，行自身不画线。
+    expect(block('.accountList')).toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    expect(block('.accountList')).toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    expect(block('.accountRow')).not.toMatch(/border-(top|bottom):/)
+    expect(block('.accountRow:first-child')).not.toMatch(/border-(top|bottom):/)
+    expect(block('.accountRow:last-child')).not.toMatch(/border-(top|bottom):/)
   })
 
   it('Qoder endpoint error 在 hintRow 内；hintRow 后直接是账号字段Slot，error→账号字段头 24px', async () => {
