@@ -100,6 +100,11 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(container.textContent).toContain('当前使用')
     expect(container.querySelector('[data-account-state]')?.getAttribute('data-account-state'))
       .toBe('selected')
+    const accountsHead = query<HTMLElement>(container, '[data-field="accounts"] [data-field-head]')
+    expect(accountsHead.getAttribute('data-account-state')).toBe('selected')
+    expect(query<HTMLElement>(accountsHead, '[data-field-label]').textContent).toBe('账号')
+    expect(query<HTMLElement>(accountsHead, '[data-account-hint]').textContent)
+      .toContain('Own Account')
     expect(calls.every(call => (
       (call.payload as { channel?: string }).channel === channel
     ))).toBe(true)
@@ -195,14 +200,20 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(rows[1]?.querySelector('[data-account-actions]')).not.toBeNull()
 
     const accountsHead = query<HTMLElement>(container, '[data-field="accounts"] [data-field-head]')
-    expect(query<HTMLElement>(accountsHead, '[data-label-group]').textContent).toBe('账号')
+    expect(accountsHead.getAttribute('data-account-state')).toBe('selected')
+    expect(query<HTMLElement>(accountsHead, '[data-field-label]').textContent).toBe('账号')
+    expect(query<HTMLElement>(accountsHead, '[data-field-label]').className).toContain('rowTitle')
+    expect(query<HTMLElement>(accountsHead, '[data-account-hint]').textContent)
+      .toBe('当前账号: Account A')
+    expect(query<HTMLElement>(accountsHead, '[data-account-hint]').className)
+      .toContain('rowDescription')
     expect(accountsHead.querySelector('[data-field-actions] [data-action="add-account"]')).not.toBeNull()
     const clearHead = query<HTMLElement>(container, '[data-field="clear-accounts"] [data-field-head]')
     expect(query<HTMLElement>(clearHead, '[data-label-group]').textContent).toBe('清除全部账号数据')
     expect(clearHead.querySelector('[data-field-actions] [data-action="clear-all"]')).not.toBeNull()
   })
 
-  it('当前账号状态是独立 rowDescription，位于冻结账号列表上方且不在账号 field 内', async () => {
+  it('当前账号是账号字段头 rowDescription，不再另起独立状态 row，账号列表仍冻结', async () => {
     const current = accountSummary('buddy', 'account-a', { displayName: 'Account A' })
     const alternative = accountSummary('buddy', 'account-b', { displayName: 'Account B' })
     const { container } = await renderAccount('buddy', {
@@ -213,26 +224,34 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     })
 
     const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
-    const stateRow = query<HTMLElement>(container, '[data-account-state]')
+    const accountsHead = query<HTMLElement>(accountsField, '[data-field-head]')
     const listRegion = query<HTMLElement>(container, '[data-account-list-region]')
     const accountList = query<HTMLElement>(listRegion, '[data-account-list]')
     const clearField = query<HTMLElement>(container, '[data-field="clear-accounts"]')
 
-    expect(stateRow.tagName).toBe('DIV')
-    expect(stateRow.className).toContain('row')
-    expect(stateRow.getAttribute('data-account-state')).toBe('selected')
-    expect(query<HTMLElement>(stateRow, '[class*="rowDescription"]').textContent)
-      .toContain('当前账号: Account A')
-    expect(stateRow.closest('[data-field]')).toBeNull()
-    expect(stateRow.closest('[data-hint-row]')).toBeNull()
-    expect(stateRow.compareDocumentPosition(listRegion) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .not.toBe(0)
-    expect(stateRow.nextElementSibling).toBe(listRegion)
+    // 「当前账号」是账号字段头这一行：rowTitle=账号，rowDescription=当前账号。
+    expect(accountsHead.tagName).toBe('DIV')
+    expect(accountsHead.className).toContain('row')
+    expect(accountsHead.getAttribute('data-account-state')).toBe('selected')
+    expect(query<HTMLElement>(accountsHead, '[data-field-label]').textContent).toBe('账号')
+    expect(query<HTMLElement>(accountsHead, '[data-field-label]').className)
+      .toContain('rowTitle')
+    const description = query<HTMLElement>(accountsHead, '[data-account-hint]')
+    expect(description.className).toContain('rowDescription')
+    expect(description.textContent).toBe('当前账号: Account A')
+    expect(accountsHead.querySelector('[data-field-actions] [data-action="add-account"]'))
+      .not.toBeNull()
+
+    // 状态标记只在字段头上；字段头之后直接进入列表区域，没有独立状态 row。
+    expect(container.querySelectorAll('[data-account-state]')).toHaveLength(1)
+    expect(accountsHead.closest('[data-field]')).toBe(accountsField)
+    expect(accountsField.nextElementSibling).toBe(listRegion)
+    expect(accountsField.contains(accountList)).toBe(false)
     expect(listRegion.firstElementChild).toBe(accountList)
-    expect(accountsField.compareDocumentPosition(stateRow) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .not.toBe(0)
     expect(listRegion.nextElementSibling).toBe(clearField)
     expect(listRegion.contains(accountList)).toBe(true)
+    expect(accountList.nextElementSibling).toBeNull()
+    expect(container.querySelector('[data-delete-confirmation]')).toBeNull()
 
     // 账号列表内部结构、行名/说明/按钮全部冻结：仍由 AccountList 原样渲染。
     const rows = [...accountList.querySelectorAll<HTMLElement>('[data-account-row]')]
@@ -244,6 +263,26 @@ describe('AccountChannelConfig（真实 DOM）', () => {
       .not.toBeNull()
     expect(accountList.querySelectorAll('[data-action="test-account"]')).toHaveLength(2)
     expect(accountList.querySelectorAll('button')).toHaveLength(7)
+  })
+
+  it('读取失败时字段头不渲染空白状态说明，错误仍由 errorRow 红字承载', async () => {
+    const { container } = await renderAccount('buddy', {
+      handlers: { 'accounts.list': () => failure },
+    })
+
+    const accountsField = query<HTMLElement>(container, '[data-field="accounts"]')
+    const accountsHead = query<HTMLElement>(accountsField, '[data-field-head]')
+    const errorRow = query<HTMLElement>(accountsField, '[class*="errorRow"]')
+
+    expect(accountsHead.getAttribute('data-account-state')).toBe('error')
+    expect(accountsHead.querySelector('[data-account-hint]')).toBeNull()
+    expect(accountsHead.querySelector('[class*="rowDescription"]')).toBeNull()
+    // 字段头后紧接错误行，不再隔着一整条空白状态 row。
+    expect(accountsHead.nextElementSibling).toBe(errorRow)
+    expect(query<HTMLElement>(errorRow, '[data-account-error]').getAttribute('role')).toBe('alert')
+    expect(accountsField.nextElementSibling).toBe(
+      query<HTMLElement>(container, '[data-field="clear-accounts"]'),
+    )
   })
 
   it('显式设为当前只锁相关行；成功后当前标记移动，不自动影响其他账号', async () => {
@@ -898,6 +937,7 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     const stateRow = query<HTMLElement>(container, '[data-account-state]')
     expect(stateRow.getAttribute('data-off-gated')).toBe('true')
     expect(stateRow.className).toContain('rowGated')
+    expect(stateRow.closest('[data-field="accounts"]')).toBe(accountsField)
     const listRegion = query<HTMLElement>(container, '[data-account-list-region]')
     expect(listRegion.getAttribute('data-off-gated')).toBe('true')
     expect(listRegion.className).toContain('rowGated')
@@ -931,6 +971,7 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(stateRow.textContent).toContain('需要账号')
     expect(stateRow.getAttribute('data-off-gated')).toBe('true')
     expect(stateRow.className).toContain('rowGated')
+    expect(stateRow.closest('[data-field="accounts"]')).toBe(accountsField)
     expect(query<HTMLButtonElement>(accountsField, '[data-action="add-account"]').disabled)
       .toBe(true)
     expect(container.querySelector('[data-account-list-region]')).toBeNull()
@@ -1017,6 +1058,12 @@ describe('AccountChannelConfig（真实 DOM）', () => {
       rendered.container,
       '[data-action="delete"][data-account-id="account-b"]',
     ).disabled).toBe(false)
+    const head = query<HTMLElement>(rendered.container, '[data-field="accounts"] [data-field-head]')
+    expect(head.getAttribute('data-account-state')).toBe('selected')
+    expect(head.className).not.toContain('rowGated')
+    expect(head.getAttribute('data-off-gated')).toBeNull()
+    expect(query<HTMLElement>(head, '[data-account-hint]').textContent)
+      .toContain(rendered.t('channel.account.current'))
   })
 
   it('英文文案覆盖当前/备选、状态、操作、删除与清除确认', async () => {
@@ -1040,5 +1087,9 @@ describe('AccountChannelConfig（真实 DOM）', () => {
     expect(container.textContent).toContain('Add account')
     expect(container.textContent).toContain('Clear all account data')
     expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/)
+    const head = query<HTMLElement>(container, '[data-field="accounts"] [data-field-head]')
+    expect(query<HTMLElement>(head, '[data-field-label]').textContent).toBe('Account')
+    expect(query<HTMLElement>(head, '[data-account-hint]').textContent)
+      .toBe('Current account: Account A')
   })
 })

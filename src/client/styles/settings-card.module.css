@@ -321,7 +321,20 @@
   padding: 0;
 }
 
-/* R53：账号状态 row 与列表之间的 24px 由 row padding-bottom 12 +
+/* R53 收尾（用户视觉复核）：账号字段头就是一条标准 row：rowText 内
+   rowTitle=账号、rowDescription=当前账号/状态说明，添加账号在右侧 badges。
+   .accountField 不再重复 .field 的上下 12px，只保留列布局与条件块 gap，
+   因此字段头 row 的 padding-top 12 接端点 hintRow margin-bottom 12，字段头
+   row 的 padding-bottom 12 接 .accountList padding-top 12，均形成 24px。 */
+.accountField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+}
+
+/* R53：账号字段头 row 与列表之间的 24px 由 row padding-bottom 12 +
    accountList padding-top 12 组成；列表内部行仍从 padding-top:0 开始。
    列表容器自身画首行前与末行后的 0.5px hairline；行内/行间线不改。 */
 .accountList {
@@ -336,7 +349,8 @@
 }
 
 /* 账号列表区域只负责末侧 12px（与清除 field 的 12px 合成 24px）和
-   删除确认与列表之间的 6px；不给内部账号行增加任何间距。 */
+   删除确认与列表之间的 6px；首侧 24px 由字段头 row padding-bottom 12 +
+   accountList padding-top 12 负责，不给内部账号行增加任何间距。 */
 .accountListRegion {
   display: flex;
   flex-direction: column;

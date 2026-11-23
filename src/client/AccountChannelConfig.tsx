@@ -164,6 +164,9 @@ export function AccountChannelConfig({
       : state.current === null
         ? 'required'
         : 'selected'
+  // R53 收尾（用户视觉复核）：「当前账号」是账号字段头这一行的说明，不是列表上方
+  // 的另一条 row。loading/required/selected/no-current 直接成为字段头的
+  // rowDescription；error 只把状态放在字段头上，错误红字仍由 errorRow 承载。
   const hintText = state.status === 'loading'
     ? t('channel.accounts.loading')
     : state.status === 'error'
@@ -177,10 +180,14 @@ export function AccountChannelConfig({
   const channelNames = CHANNEL_IDS.map(id => t(`channel.${id}.name`)).join(
     t('channel.accounts.listSeparator'),
   )
-  const accountsFieldClass = gated ? `${styles.field} ${styles.fieldGated}` : styles.field
-  // R53：当前账号是独立 row，账号列表容器只负责与它保持 24px，并给清除 field
-  // 保留末侧 12px；账号列表内部行结构完全交给 AccountList 原样渲染。
-  const stateRowClass = gated ? `${styles.row} ${styles.rowGated}` : styles.row
+  // 账号字段头本身是一条 row：rowTitle=账号，rowDescription=当前账号/状态说明，
+  // 添加账号在右侧 badges。字段包装不再重复 field 的上下 12px，而是让字段头 row
+  // 的 padding-top 12 接端点说明、padding-bottom 12 接 .accountList 的 padding-top
+  // 12，分别形成 24px。账号列表内部行结构完全交给 AccountList 原样渲染。
+  const accountsFieldClass = gated
+    ? `${styles.accountField} ${styles.fieldGated}`
+    : styles.accountField
+  const headRowClass = gated ? `${styles.row} ${styles.rowGated}` : styles.row
   const listRegionClass = gated
     ? `${styles.accountListRegion} ${styles.rowGated}`
     : styles.accountListRegion
@@ -193,9 +200,17 @@ export function AccountChannelConfig({
         data-field="accounts"
         data-off-gated={gated ? 'true' : undefined}
       >
-        <div className={styles.head} data-field-head="">
-          <div className={styles.labelGroup} data-label-group="">
-            <span className={styles.label} data-field-label="">{t('channel.account.label')}</span>
+        <div
+          className={headRowClass}
+          data-field-head=""
+          data-account-state={hintState}
+          data-off-gated={offGated}
+        >
+          <div className={styles.rowText}>
+            <span className={styles.rowTitle} data-field-label="">{t('channel.account.label')}</span>
+            {hintText !== '' && (
+              <span className={styles.rowDescription} data-account-hint="">{hintText}</span>
+            )}
           </div>
           <div className={styles.badges} data-field-actions="">
             <button
@@ -244,16 +259,6 @@ export function AccountChannelConfig({
             onDismiss={() => { controller.dismissAuth() }}
           />
         )}
-      </div>
-
-      <div
-        className={stateRowClass}
-        data-account-state={hintState}
-        data-off-gated={offGated}
-      >
-        <div className={styles.rowText}>
-          <span className={styles.rowDescription}>{hintText}</span>
-        </div>
       </div>
 
       {(state.accounts.length > 0 || deletingAccount !== null) && (

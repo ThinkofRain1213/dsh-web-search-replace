@@ -154,6 +154,23 @@ describe('完整设置卡剖面', () => {
     expect(profile).toContain('.accountRow + .accountRow')
   })
 
+  it('R53 收尾：账号字段头使用 rowTitle + rowDescription，不再有独立状态 row', () => {
+    const profile = profileBlocks[0] ?? ''
+    // 账号字段头就是一条 row：左侧 rowText（标题 + 当前账号说明），右侧添加账号。
+    expect(profile).toContain('accountField')
+    expect(profile).toMatch(/row\[data-field-head\]\[data-account-state\]/)
+    expect(profile).toMatch(/rowTitle\[data-field-label\]「账号」/)
+    expect(profile).toMatch(/rowDescription\[data-account-hint\]/)
+    expect(profile).toMatch(/accountField ▸ padding[^\n]*0px/)
+    expect(profile).toMatch(/字段头 row[^\n]*padding-bottom[^\n]*12px/)
+    // 状态说明不再是列表上方另一条 row：剖面不再记录状态 row 的 padding-top。
+    expect(profile).not.toMatch(/row\[data-account-state\] ▸ padding-top/)
+    expect(profile).not.toMatch(/当前账号状态 row/)
+    // 首末间距仍在剖面里明确写成同一组 12+12。
+    expect(profile).toMatch(/字段头 row padding-bottom 12[^\n]*accountList top 12/)
+    expect(profile).toMatch(/accountListRegion bottom 12[^\n]*清除 field top 12[^\n]*24px/)
+  })
+
   it('R52：OFF 说明替换与下方配置区灰化只写进剖面', () => {
     const profile = profileBlocks[0] ?? ''
     expect(profileSource).toContain('lockedHint')
@@ -303,9 +320,10 @@ describe('设置卡 CSS 契约', () => {
   })
 
   it('账号/条件块包装层、警告、展示框与 rc5 Button/Tag 保持统一契约', () => {
-    for (const selector of ['.accountConfig', '.authFlow', '.confirmBox', '.choiceList', '.menuRoot']) {
+    for (const selector of ['.accountConfig', '.accountField', '.authFlow', '.confirmBox', '.choiceList', '.menuRoot']) {
       expect(cssBlock(css, selector), `${selector} 必须 padding:0`).toMatch(/padding:\s*0;/)
     }
+    expect(cssBlock(css, '.accountField')).toMatch(/gap:\s*6px;/)
     expect(cssBlock(css, '.accountList')).toMatch(/padding-top:\s*12px;/)
     expect(cssBlock(css, '.accountList')).toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
     expect(cssBlock(css, '.accountList')).toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
