@@ -16,6 +16,7 @@ import type { SearchSettingsSnapshot } from '../../src/shared/contracts.ts'
 import type { RpcResult } from '../../src/shared/rpc.ts'
 import {
   accountSummary,
+  authStatus,
   routeAccounts,
   type AccountHandlers,
 } from './support/accounts-harness.ts'
@@ -98,6 +99,12 @@ async function settle(): Promise<void> {
   await flush()
 }
 
+/** 读取渠道行全部 rowDescription 文案；用于证明同一时刻只有一条说明。 */
+function channelDescriptions(container: ParentNode): string[] {
+  return [...container.querySelectorAll<HTMLElement>('[data-row="channel"] [class*="rowDescription"]')]
+    .map(node => node.textContent ?? '')
+}
+
 describe('SearchSection（真实 DOM）', () => {
   it('加载后只有一个 search.channel 真源；顶部只保留启用开关与渠道下拉', async () => {
     const { container, t, getCalls, snapshot } = await renderCard({
@@ -166,6 +173,75 @@ describe('SearchSection（真实 DOM）', () => {
     const trigger = query<HTMLButtonElement>(row, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(true)
     expect(trigger.closest('[data-row="channel"]')?.getAttribute('data-gated')).toBe('true')
+  })
+
+  it('OFF 且交互锁定时 interactionLockedHint 优先于 lockedHint，取消后回到 lockedHint', async () => {
+    const { container, t } = await renderCard({
+      snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
+    })
+    const row = query<HTMLElement>(container, '[data-row="channel"]')
+    const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
+    expect(row.getAttribute('data-gated')).toBe('true')
+
+    await click(query(container, '[data-action="clear-all"]'))
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
+    expect(row.textContent).not.toContain(t('search.channel.lockedHint'))
+    expect(row.textContent).not.toContain(t('search.channel.description'))
+    expect(trigger.disabled).toBe(true)
+
+    await click(query(container, '[data-action="cancel-clear-all"]'))
+    expect(channelDescriptions(container)).toEqual([t('search.channel.lockedHint')])
+    expect(row.textContent).not.toContain(t('search.channel.interactionLockedHint'))
+    expect(trigger.disabled).toBe(true)
+  })
+
+  it('账号测试进行中渠道说明只有一行提示，测试结束恢复原说明', async () => {
+    const account = accountSummary('buddy', 'account-a')
+    const testing = deferred<RpcResult<AccountSummary>>()
+    const { container, t } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'accounts.list': () => ({ ok: true, value: [account] }),
+        'accounts.current': () => ({ ok: true, value: account }),
+        'accounts.test': () => testing.promise,
+      },
+    })
+
+    await click(query(container, '[data-action="test-account"][data-account-id="account-a"]'))
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
+    expect(query<HTMLElement>(container, '[data-row="channel"]').textContent)
+      .not.toContain(t('search.channel.description'))
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(true)
+
+    testing.resolve({ ok: true, value: accountSummary('buddy', 'account-a') })
+    await flush()
+    expect(channelDescriptions(container)).toEqual([t('search.channel.description')])
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(false)
+  })
+
+  it('授权等待中渠道说明只有一行提示，取消后恢复原说明', async () => {
+    const { container, t } = await renderCard({
+      snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
+      accounts: {
+        'auth.start': () => ({ ok: true, value: authStatus('buddy') }),
+        'auth.cancel': () => ({
+          ok: true,
+          value: authStatus('buddy', { status: 'cancelled', authUrl: null }),
+        }),
+      },
+    })
+
+    await click(query(container, '[data-action="add-account"]'))
+    await flush()
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
+    expect(query<HTMLElement>(container, '[data-row="channel"]').textContent)
+      .not.toContain(t('search.channel.description'))
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(true)
+
+    await click(query(container, '[data-action="cancel-auth"]'))
+    await flush()
+    expect(channelDescriptions(container)).toEqual([t('search.channel.description')])
+    expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(false)
   })
 
   it('OFF 时下方渠道配置整体灰化，仅清除全部账号数据保留可用', async () => {
@@ -485,7 +561,7 @@ describe('SearchSection（真实 DOM）', () => {
 
   it('I7 删除确认锁定主下拉并显示先完成或取消当前操作', async () => {
     const account = accountSummary('buddy', 'account-a')
-    const { container } = await renderCard({
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
       accounts: {
         'accounts.list': () => ({ ok: true, value: [account] }),
@@ -495,22 +571,27 @@ describe('SearchSection（真实 DOM）', () => {
     await click(query(container, '[data-action="delete"]'))
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(true)
-    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
-      .toContain('先完成或取消当前操作')
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
+    expect(query<HTMLElement>(container, '[data-row="channel"]').textContent)
+      .not.toContain(t('search.channel.description'))
     await click(trigger)
     expect(document.querySelector('[data-dropdown-menu]')).toBeNull()
+    await click(query(container, '[data-action="cancel-delete"]'))
+    expect(channelDescriptions(container)).toEqual([t('search.channel.description')])
   })
 
   it('I7 已接受删除排队时锁定主下拉，不能切走并丢弃队列', async () => {
     const a = accountSummary('buddy', 'account-a')
     const b = accountSummary('buddy', 'account-b')
     const setCurrentResponse = deferred<RpcResult<AccountSummary | null>>()
-    const { container } = await renderCard({
+    const deletion = deferred<RpcResult<AccountCollection>>()
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
       accounts: {
         'accounts.list': () => ({ ok: true, value: [a, b] }),
         'accounts.current': () => ({ ok: true, value: a }),
         'accounts.setCurrent': () => setCurrentResponse.promise,
+        'accounts.delete': () => deletion.promise,
       },
     })
     await click(query(container, '[data-action="set-current"][data-account-id="account-b"]'))
@@ -519,16 +600,24 @@ describe('SearchSection（真实 DOM）', () => {
     expect(container.textContent).toContain('排队中')
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(true)
-    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
-      .toContain('先完成或取消当前操作')
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
+    expect(query<HTMLElement>(container, '[data-row="channel"]').textContent)
+      .not.toContain(t('search.channel.description'))
+
     setCurrentResponse.resolve({ ok: true, value: b })
     await flush()
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
+
+    deletion.resolve({ ok: true, value: { accounts: [b], current: b } })
+    await flush()
+    expect(channelDescriptions(container)).toEqual([t('search.channel.description')])
+    expect(trigger.disabled).toBe(false)
   })
 
   it('I7 删除执行中锁定主下拉，settle 后才恢复', async () => {
     const account = accountSummary('buddy', 'account-a')
     const deletion = deferred<RpcResult<AccountCollection>>()
-    const { container } = await renderCard({
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
       accounts: {
         'accounts.list': () => ({ ok: true, value: [account] }),
@@ -540,18 +629,18 @@ describe('SearchSection（真实 DOM）', () => {
     await click(query(container, '[data-delete-confirmation] [data-action="confirm-delete"]'))
     const trigger = query<HTMLButtonElement>(container, '[data-dropdown-trigger]')
     expect(trigger.disabled).toBe(true)
-    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
-      .toContain('先完成或取消当前操作')
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
     deletion.resolve({ ok: true, value: { accounts: [], current: null } })
     await flush()
     expect(trigger.disabled).toBe(false)
+    expect(channelDescriptions(container)).toEqual([t('search.channel.description')])
   })
 
   it('I7 授权完成后的账号刷新也汇入统一 interaction busy', async () => {
     const account = accountSummary('buddy', 'account-a')
     const secondList = deferred<RpcResult<readonly AccountSummary[]>>()
     let listCalls = 0
-    const { container } = await renderCard({
+    const { container, t } = await renderCard({
       snapshot: makeSnapshot({ enabled: true, channel: 'buddy' }),
       accounts: {
         'accounts.list': () => {
@@ -571,11 +660,11 @@ describe('SearchSection（真实 DOM）', () => {
     await click(query(container, '[data-action="add-account"]'))
     await flush()
     expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(true)
-    expect(query<HTMLElement>(container, '[data-interaction-busy-hint]').textContent)
-      .toContain('先完成或取消当前操作')
+    expect(channelDescriptions(container)).toEqual([t('search.channel.interactionLockedHint')])
     secondList.resolve({ ok: true, value: [account] })
     await flush()
     expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').disabled).toBe(false)
+    expect(channelDescriptions(container)).toEqual([t('search.channel.description')])
   })
 
   it('开关保存失败时保持旧值并显示未被灰化选择器覆盖的错误红字', async () => {

@@ -2,7 +2,9 @@
  * 搜索设置区：启用开关与渠道下拉。
  *
  * 开关与下拉都从同一 `search.enabled/channel` 状态派生；OFF 时渠道下拉
- * 禁用并灰化但保留当前值，并用 `lockedHint` 替换说明而不是追加第三行。
+ * 禁用并灰化但保留当前值。渠道行始终只有一个 `rowDescription`，优先级为
+ * 交互锁 `interactionLockedHint` > OFF `lockedHint` > 正常 `description`，
+ * 只替换不追加；错误红字仍是独立的 `role=alert`。
  * 下方渠道配置区由 SettingsCard 整体传入 OFF gating。渠道选项顺序来自共享
  * `CHANNEL_IDS`，可见名称来自 locale。
  */
@@ -60,6 +62,12 @@ export function SearchSection({
   const label = t('search.enabled.label')
   const items = CHANNEL_IDS.map(id => ({ id, label: t(`channel.${id}.name`) }))
   const selectedLabel = t(`channel.${channel}.name`)
+  // 单一说明节点只换文案：交互锁优先于 OFF，OFF 优先于正常说明。
+  const channelDescription = interactionBusy
+    ? t('search.channel.interactionLockedHint')
+    : gated
+      ? t('search.channel.lockedHint')
+      : t('search.channel.description')
 
   return (
     <section
@@ -91,14 +99,7 @@ export function SearchSection({
       >
         <div className={styles.rowText}>
           <span id={channelLabelId} className={styles.rowTitle}>{t('search.channel.label')}</span>
-          <span className={styles.rowDescription}>
-            {gated ? t('search.channel.lockedHint') : t('search.channel.description')}
-          </span>
-          {interactionBusy && (
-            <span className={styles.rowDescription} data-interaction-busy-hint="">
-              {t('search.channel.interactionLockedHint')}
-            </span>
-          )}
+          <span className={styles.rowDescription}>{channelDescription}</span>
           {error !== null && (
             <span className={styles.error} role="alert" data-error="settings-save-failed">
               {t(error)}

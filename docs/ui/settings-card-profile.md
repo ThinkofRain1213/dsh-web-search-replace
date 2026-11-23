@@ -6,7 +6,7 @@
 
 ## 1. 唯一真源与不可变业务 IA
 
-设置卡只认一个 `search.channel`：下拉值、配置区标题、账号区与端点行都由它派生；同一时刻只渲染一个 `ChannelConfigHost`，不存在第二渠道查看选择器。`OFF` 时渠道下拉用 `lockedHint` 替换原说明（不追加第三行）并整行灰化；下方 `ChannelConfigHost` 得到 `gated`，标题、固定端点、Qoder 端点偏好、账号字段头与账号列表整体灰化只读，添加/设当前/测试/重登/删除/重试与端点修改都禁用；仅「清除全部账号数据」及其就地确认保留可用。OFF 不取消已经开始的授权/RPC 请求。
+设置卡只认一个 `search.channel`：下拉值、配置区标题、账号区与端点行都由它派生；同一时刻只渲染一个 `ChannelConfigHost`，不存在第二渠道查看选择器。`OFF` 时渠道下拉用 `lockedHint` 替换原说明（不追加第三行）并整行灰化；账号测试/授权/已接受队列/删除或清除确认等交互锁期间，同一说明节点用 `interactionLockedHint` 替换，优先级高于 OFF 的 `lockedHint`，解除后回到原说明。下方 `ChannelConfigHost` 得到 `gated`，标题、固定端点、Qoder 端点偏好、账号字段头与账号列表整体灰化只读，添加/设当前/测试/重登/删除/重试与端点修改都禁用；仅「清除全部账号数据」及其就地确认保留可用。OFF 不取消已经开始的授权/RPC 请求。
 
 R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端点配置，避免 CodeBuddy 组名与下一行渠道说明重复；`channel.*.description` 不再出现在详情页。端点统一为横向 `row`：固定端点是「左侧搜索端点 + 右侧固定域名」，Qoder 是「左侧搜索端点 + 右侧 Dropdown」，不再使用纵向 label/value/hint 三段。端点说明放在紧随控件 row 的 `hintRow`；Qoder 的状态与说明都是纯字符串 `p`，不嵌入按钮或组标题。
 
@@ -54,9 +54,8 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 │ ┌─ div.row[data-row="channel"] padding:12px 0 gap:8 ─────────────────────┐ │
 │ │ div.rowText flex:1 padding-right:48px gap:6                             │ │
 │ │ span.rowTitle「搜索渠道」 13/500/19.5                                  │ │
-│ │ span.rowDescription 单节点 12/400/18：ON「搜索渠道说明」/ OFF「lockedHint」，替换不追加第三行 │ │
-│ │ 条件 interactionBusy：span.rowDescription「请先完成或取消当前操作。」  │ │
-│ │ 条件 settings error：span.error[role=alert] margin: 0，红色不灰化        │ │
+│ │ span.rowDescription 单节点 12/400/18：interactionBusy「interactionLockedHint」/ OFF「lockedHint」/ ON「搜索渠道说明」，只替换不追加 │ │
+│ │ 条件 settings error：span.error[role=alert] margin: 0，红色不灰化；交互锁解除后说明回到原文案 │ │
 │ │ span.menuRoot padding:0 anchor-name:--dsh-web-search-channels-menu-trigger-*               │ │
 │ │ button.selector height:34px padding:0 12px gap:12 radius-md border:none bg-module-platform │ │
 │ │ span.selectorLabel → svg.chevron 14px aria-hidden                      │ │
@@ -227,7 +226,7 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 | 账号列表区域 | `.accountList` 使用 `padding:0` 并持有上下 `border:0.5px solid var(--dsw-alias-border-l2)`，首个账号前、最后账号后各留 12px 内容间距；首行 `.accountRow:first-child` 只加 `padding-top:12px`，末行 `.accountRow:last-child` 只加 `padding-bottom:12px`，二者都不再画线；单账号时同一行同时命中首末规则，容器上下各一条线、行内上下各 12px；`.accountListRegion` 只保留删除确认前的 6px gap（`padding:0`）；列表内部结构、行名、行说明、按钮、行间分隔线全部冻结 |
 | OFF gating | `ChannelConfigHost` 接收 `gated`，section 加 `.channelGated` / `data-off-gated`；端点 row 与 hintRow 加 `.rowGated`，账号 field 加 `.fieldGated`，账号字段头 row 与列表区域加 `.rowGated`。添加账号、设当前、测试、重登、删除、重试、端点下拉全部 `disabled`；文本用 `label-dimmed`；clear-all field 不挂 gated；列表容器首尾 0.5px hairline 与行间线不被 rowGated 覆盖；OFF 不取消在飞授权/RPC |
 | 展示框 | 授权 URL padding 12、0.5px border-l2、radius-lg、bg-base、code font、12/18、pre-wrap/anywhere；只读，不自动打开、不持久化 |
-| 状态与警告 | OFF 时渠道说明由 `lockedHint` 替换且下拉保值；下方配置区用 `label-dimmed` 灰化纯文本，控件沿用各自 `:disabled`；清除全部账号数据与清除确认不在 gated 区内，保持可用；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
+| 状态与警告 | 渠道行始终只有一个 `rowDescription`，优先级为交互锁 `interactionLockedHint` > OFF `lockedHint` > 正常说明，仅替换不追加；交互锁覆盖 OFF 时显示 `interactionLockedHint`，解除后回到 `lockedHint`；下方配置区用 `label-dimmed` 灰化纯文本，控件沿用各自 `:disabled`；清除全部账号数据与清除确认不在 gated 区内，保持可用；普通错误 `state-error-primary`，删除/清除危险影响 `state-warn-primary`；红字不被 gated 覆盖 |
 | 业务边界 | 不提前实现真实 external-open；删除当前账号默认“暂不指定”替代；清除全部必须就地二次确认；保留 settings.update 与既有 accounts/auth RPC。新增 `accounts.test` 仅是用户显式管理 RPC，复用既有 generation/queue/abort，不是 Agent tool，不自动测试、不切换当前账号 |
 
 ### Trigger 外观补充
