@@ -83,7 +83,7 @@ function createHarness(fetcher: typeof fetch, verifiers?: ChannelCapabilityVerif
     }),
   })
   const call = async (
-    payload: { channel: unknown; accountId: unknown },
+    payload: unknown,
     caller = new AbortController(),
   ): Promise<RpcResult<unknown>> => {
     const response = await handleManagementRpcRequest(
@@ -196,6 +196,25 @@ describe('accounts.test 记录、渠道与快照边界', () => {
     }
     expect(fetchCalls).toBe(0)
     expect(harness.fixture.credentials.writes).toEqual([])
+    expectNoSecrets(result)
+  })
+
+  it.each([
+    { name: 'null', payload: null },
+    { name: '数组', payload: [] },
+    { name: '字符串', payload: 'malformed' },
+  ])('非对象 $name payload 返回 accounts/invalid，且不读账号、不发网络', async ({ payload }) => {
+    let fetchCalls = 0
+    const harness = createHarness(async () => { fetchCalls += 1; return json({}) })
+    harness.fixture.credentials.reads.length = 0
+    harness.fixture.credentials.writes.length = 0
+
+    const result = await harness.call(payload)
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'accounts/invalid', details: {} } })
+    expect(harness.fixture.credentials.reads).toEqual([])
+    expect(harness.fixture.credentials.writes).toEqual([])
+    expect(fetchCalls).toBe(0)
     expectNoSecrets(result)
   })
 

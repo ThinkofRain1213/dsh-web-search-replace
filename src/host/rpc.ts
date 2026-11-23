@@ -19,6 +19,7 @@ import {
 } from '../shared/rpc.ts'
 import {
   AccountRpcValidationError,
+  assertAccountRpcPayload,
   isAccountRpcMethod,
 } from '../shared/accounts.ts'
 import {
@@ -212,7 +213,7 @@ async function dispatch(
   if (isAccountRpcMethod(method)) {
     if (accounts === undefined) throw new UnknownManagementMethodError(method)
     if (method === 'accounts.test') {
-      assertManagementRpcPayload(method, payload)
+      assertAccountRpcPayload(method, payload)
       if (options.accountTester === undefined) throw new UnknownManagementMethodError(method)
       if (signal === undefined) throw new UnknownManagementMethodError(method)
       return options.accountTester.test(payload.channel, payload.accountId, signal)
