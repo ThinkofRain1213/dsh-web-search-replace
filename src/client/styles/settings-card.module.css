@@ -336,8 +336,7 @@
 
 /* R53：账号字段头 row 与列表之间的 24px 由 row padding-bottom 12 +
    accountList padding-top 12 组成；列表内部行仍从 padding-top:0 开始。
-   首尾 0.5px hairline 改由首个/末个 accountRow 自己持有，容器不再画线，
-   底线不会随容器 padding 漂到 region/clear field 之间。 */
+   列表容器自身画首行前与末行后的 0.5px hairline；行内/行间线不改。 */
 .accountList {
   display: flex;
   flex-direction: column;
@@ -345,6 +344,8 @@
   min-width: 0;
   padding: 0;
   padding-top: 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 /* 账号列表区域只负责末侧 12px（与清除 field 的 12px 合成 24px）和
@@ -371,17 +372,13 @@
 }
 
 /* 列表与父 field 的 6px gap 已负责首侧；末侧由两层 field 的 12+12 负责。
-   首末 accountRow 不再各加一份 12px，避免首 18px、末 36px。
-   首尾线贴着首/末账号内容：首行自身持有 border-top，末行自身持有
-   border-bottom；相邻行线仍只由 .accountRow + .accountRow 提供一次。 */
+   首末 accountRow 不再各加一份 12px，避免首 18px、末 36px。 */
 .accountRow:first-child {
   padding-top: 0;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 .accountRow:last-child {
   padding-bottom: 0;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 .accountRowText {
