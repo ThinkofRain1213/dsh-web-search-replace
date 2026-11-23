@@ -135,10 +135,11 @@ describe('账号字段头与列表首末组合间距（R53 收尾）', () => {
     expect(verticalPadding('.accountField', 'top'), '账号字段头由 row padding-top 12 接续').toBe(0)
   })
 
-  it('账号列表容器有上下 0.5px hairline；OFF rowGated 不覆盖 border，内部行结构不变', async () => {
+  it('账号列表首/末行各持首尾 hairline；容器无 border；OFF rowGated 不覆盖行线，内部行结构不变', async () => {
     const current = accountSummary('buddy', 'account-a', { displayName: 'Account A' })
+    const alternative = accountSummary('buddy', 'account-b', { displayName: 'Account B' })
     const rpc = createConnectionDouble(routeAccounts({
-      'accounts.list': () => ({ ok: true, value: [current] }),
+      'accounts.list': () => ({ ok: true, value: [current, alternative] }),
       'accounts.current': () => ({ ok: true, value: current }),
     }))
     const root = mount(createElement(AccountChannelConfig, {
@@ -156,16 +157,38 @@ describe('账号字段头与列表首末组合间距（R53 收尾）', () => {
     expect(list.parentElement).toBe(region)
     expect(region.className).toContain('rowGated')
     expect(region.getAttribute('data-off-gated')).toBe('true')
-    expect(list.querySelectorAll('[data-account-row]')).toHaveLength(1)
-    expect(list.querySelector('[data-account-row]')?.querySelector('[data-account-actions]'))
-      .not.toBeNull()
+    const rows = [...list.querySelectorAll<HTMLElement>('[data-account-row]')]
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.className).toContain('accountRow')
+    expect(rows[1]?.className).toContain('accountRow')
+    // 首末账号行就是列表的首末孩子，没有额外容器分隔层。
+    expect([...list.children]).toEqual(rows)
+    expect(list.firstElementChild).toBe(rows[0])
+    expect(list.lastElementChild).toBe(rows[1])
+    expect(rows[0]?.querySelector('[data-account-actions]')).not.toBeNull()
+    expect(rows[1]?.querySelector('[data-account-actions]')).not.toBeNull()
 
-    expect(block('.accountList')).toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
-    expect(block('.accountList')).toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    // 首尾线归首/末 accountRow 自己：容器不再画线，避免底线与 region/clear field 的 padding 叠加。
+    expect(block('.accountList')).not.toMatch(/border-(top|bottom):/)
     expect(block('.accountList')).toMatch(/padding-top:\s*12px;/)
-    // 灰化只作用于文本/控件，不能改写列表容器的上下 border。
-    expect(CSS).not.toMatch(/\.rowGated\s+\.accountList\s*\{[^}]*border/)
-    expect(CSS).not.toMatch(/\.fieldGated\s+\.accountList\s*\{[^}]*border/)
+    expect(block('.accountRow:first-child'))
+      .toMatch(/border-top:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    expect(block('.accountRow:first-child')).not.toMatch(/border-bottom:/)
+    expect(block('.accountRow:last-child'))
+      .toMatch(/border-bottom:\s*0\.5px solid var\(--dsw-alias-border-l2\);/)
+    expect(block('.accountRow:last-child')).not.toMatch(/border-top:/)
+    // 内部线只在相邻行之间出现一次，基础行不带 border，首/末行不再重复画线。
+    expect(block('.accountRow')).not.toMatch(/border-(top|bottom):/)
+    expect(CSS).toMatch(/\.accountRow \+ \.accountRow\s*\{[^}]*border-top:\s*0\.5px solid/)
+    // 首行 top 0、末行 bottom 0；末账号 → 清除 field 仍为 24px。
+    expect(verticalPadding('.accountRow:first-child', 'top')).toBe(0)
+    expect(verticalPadding('.accountRow:last-child', 'bottom')).toBe(0)
+    expect(verticalPadding('.accountRow:last-child', 'bottom')
+      + verticalPadding('.accountListRegion', 'bottom')
+      + verticalPadding('.field', 'top'), '末 accountRow bottom + list region bottom + 清除 field top').toBe(24)
+    // 灰化只作用于文本/控件，不能改写首/末行或内部行线。
+    expect(CSS).not.toMatch(/\.rowGated\s+\.accountRow[^{]*\{[^}]*border/)
+    expect(CSS).not.toMatch(/\.fieldGated\s+\.accountRow[^{]*\{[^}]*border/)
   })
 
   it('Qoder endpoint error 在 hintRow 内；hintRow 后直接是账号字段Slot，error→账号字段头 24px', async () => {
