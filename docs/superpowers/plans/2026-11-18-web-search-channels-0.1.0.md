@@ -74,7 +74,7 @@ Expected: FAIL，提示 `package.json` 或目标文件不存在。
 
 - [ ] **Step 3: 实现最小可安装骨架**
 
-若目录尚未初始化，只执行 `git init`，不添加 remote。Host 导出一个不注册业务能力的空 `apply`。Client 只渲染一张带 `.stack` 的“网页搜索替换 / 设置加载中”骨架，不伪造搜索按钮或账号。`build-client.mjs` 用 esbuild 产出 CJS 后包成 `window.__ModuleLoader__.load({id:package.name,factory})`，React/ReactDOM external；CSS Modules 哈希 filename 带包名。locale 提供真实中英文 `meta.title/description`。
+若目录尚未初始化，只执行 `git init`，不添加 remote。Host 导出一个不注册业务能力的空 `apply`。Client 只渲染一张带 `.stack` 的“Web Search Replacement / 设置加载中”骨架，不伪造搜索按钮或账号。`build-client.mjs` 用 esbuild 产出 CJS 后包成 `window.__ModuleLoader__.load({id:package.name,factory})`，React/ReactDOM external；CSS Modules 哈希 filename 带包名。locale 提供真实中英文 `meta.title/description`。
 
 - [ ] **Step 4: 运行单测与构建，确认骨架和产物通过**
 

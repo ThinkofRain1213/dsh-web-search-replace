@@ -1,5 +1,5 @@
 /**
- * 「网页搜索替换」bundle 设置卡（`plugins.bundle.config`，key = 包名）。
+ * 「Web Search Replacement」bundle 设置卡（`plugins.bundle.config`，key = 包名）。
  *
  * rc5 的 bundle 配置 slot 只传 `view: 'page'`，不传 `form`；因此这里通过
  * `configForms.get('dsh-web-search-replace')` 读取/订阅唯一设置快照，保存

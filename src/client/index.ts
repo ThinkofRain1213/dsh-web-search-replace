@@ -1,5 +1,5 @@
 /**
- * Client 半体：把「网页搜索替换」设置卡注册进 Plugins 页面的
+ * Client 半体：把「Web Search Replacement」设置卡注册进 Plugins 页面的
  * `plugins.bundle.config` 槽位（key = 包名）。
  *
  * 本文件不导入任何 Harness Client 包的值（只允许 `import type`），

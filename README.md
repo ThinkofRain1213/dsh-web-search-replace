@@ -142,7 +142,7 @@ pnpm 回退，也不会为了规避环境要求而恢复可能执行安装脚本
 
 在 DSH 的 **Plugins** 页面用 **Add plugin** 安装本目录，或由
 `plugin_manager.install_bundle` 指向本目录。安装后 bundle 详情页的配置区应出现
-“网页搜索替换”设置卡；真实安装与呈现仍属于上面的未完成验收项。
+“Web Search Replacement”设置卡；真实安装与呈现仍属于上面的未完成验收项。
 
 ## 已知边界
 
