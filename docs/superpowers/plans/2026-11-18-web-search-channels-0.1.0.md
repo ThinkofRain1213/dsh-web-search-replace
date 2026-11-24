@@ -1,4 +1,4 @@
-# Web Search Channels 0.1.0 Implementation Plan
+# Web Search Replacement 0.1.0 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
