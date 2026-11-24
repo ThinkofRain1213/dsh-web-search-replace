@@ -3,7 +3,7 @@
  *
  * 锁死的契约：
  * 1. 五个方法 `accounts.list/current/setCurrent/delete/clearAll` 走同一条
- *    `/api/web-search-channels` 精确路由与统一 `{ok,value}|{ok,error}` 信封。
+ *    `/api/web-search-replace` 精确路由与统一 `{ok,value}|{ok,error}` 信封。
  * 2. 成功结果只含账号六字段；token/refresh/machine_id/签名材料/厂商身份不得
  *    出现在任何响应、错误、details 或 cause 中。
  * 3. 非法 payload、跨渠道操作与未知方法都以固定错误码失败，不回显输入值。

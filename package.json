@@ -1,5 +1,5 @@
 {
-  "name": "dsh-web-search-channels",
+  "name": "dsh-web-search-replace",
   "version": "0.1.0",
   "private": true,
   "description": "Replace DSH web search with the credentials of a channel you choose.",

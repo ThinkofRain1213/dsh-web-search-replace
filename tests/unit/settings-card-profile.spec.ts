@@ -282,8 +282,8 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.menuSelectedFill')).toMatch(/background:\s*var\(--dsw-alias-interactive-bg-hover\);/)
     expect(cssBlock(css, '.menuSurface[data-menu-phase] > *, .menuBacking[data-menu-phase]')).toMatch(/animation-duration:\s*0ms;/)
     expect(css).toMatch(/\.menuItem:disabled,\s*\.menuItem\[aria-disabled='true'\]\s*\{[^}]*opacity:\s*0\.4;/)
-    expect(css).toContain('@position-try --dsh-web-search-channels-menu-above')
-    expect(css).toContain('@position-try --dsh-web-search-channels-menu-wide-window')
+    expect(css).toContain('@position-try --dsh-web-search-replace-menu-above')
+    expect(css).toContain('@position-try --dsh-web-search-replace-menu-wide-window')
   })
 
   it('门控只灰化文本/选择器，错误红字不被覆盖', () => {
@@ -370,7 +370,7 @@ describe('设置卡 CSS 契约', () => {
     expect(cssBlock(css, '.bubble')).toMatch(/position:\s*fixed;/)
     expect(cssBlock(css, '.bubble')).toMatch(/border-radius:\s*var\(--dsw-radius-sm\)/)
     expect(cssBlock(css, '.bubble')).toMatch(/background:\s*var\(--dsw-alias-tooltip-bg\)/)
-    expect(cssBlock(css, '.bubble')).toMatch(/animation:\s*dsh-web-search-channels-tooltip-in 150ms var\(--ds-ease-in-out\)/)
+    expect(cssBlock(css, '.bubble')).toMatch(/animation:\s*dsh-web-search-replace-tooltip-in 150ms var\(--ds-ease-in-out\)/)
     expect(cssBlock(css, '.bubble[data-portal]')).toMatch(/z-index:\s*1100;/)
     expect(cssBlock(css, '.keys')).toMatch(/display:\s*inline-flex;/)
     expect(cssBlock(css, '.keys')).toMatch(/font-size:\s*12px;/)
@@ -379,7 +379,7 @@ describe('设置卡 CSS 契约', () => {
 
   it('保持既有构建约束：CSS Modules 子集、无第二套样式与 font 简写', () => {
     expect(css).not.toMatch(/:global|composes|url\(/)
-    expect(css).not.toMatch(/@keyframes\s+(?!dsh-web-search-channels-(?:menu-(?:in|out)|tooltip-in)\b)/)
+    expect(css).not.toMatch(/@keyframes\s+(?!dsh-web-search-replace-(?:menu-(?:in|out)|tooltip-in)\b)/)
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation-duration:\s*0ms;/)
     expect(layoutCss).not.toMatch(/\bfont:\s*inherit/)
     expect(css).toContain('--dsw-alias-label-primary')

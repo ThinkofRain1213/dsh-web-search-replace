@@ -671,7 +671,7 @@ describe('CodeBuddy 授权成功落码与当前账号', () => {
     })
     expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBe(accountId)
     expect(fixture.credentials.writes).toHaveLength(1)
-    expect(fixture.credentials.writes[0]).toBe(`dsh-web-search-channels/buddy-${accountId}`)
+    expect(fixture.credentials.writes[0]).toBe(`dsh-web-search-replace/buddy-${accountId}`)
     expect(fixture.credentials.keys().some((key) => key.includes('workbuddy'))).toBe(false)
 
     const tokenCall = calls.find((call) => call.url.includes('/auth/token'))

@@ -1,10 +1,10 @@
-# 网页搜索渠道（`dsh-web-search-channels`）
+# Web Search Replacement (`dsh-web-search-replace`)
 
 让任意声明支持的模型都能通过用户显式选择的 CodeBuddy、WorkBuddy、
 Qoder 国际版或 Qoder 中国版独立账号完成网页搜索，不再把网页搜索能力绑定在
 DeepSeek 模型渠道上。`0.1.0` 只接管 `web_search`；`web_fetch` 保持官方实现不变。
 
-- 包名：`dsh-web-search-channels`
+- 包名：`dsh-web-search-replace`
 - 当前版本：`0.1.0`
 - 目标运行环境：DeepSeek Harness Desktop `0.2.2-rc.5` 及其自带 Web GUI
 
@@ -58,11 +58,17 @@ DNS/TCP/TLS 连接失败、明显超时或上游 5xx 时顺序尝试另一域名
 请求与额外配额**；自动模式不是零成本测速，不做并行双发或后台测速。
 
 成功域名作为本机全局的**最近成功域**持久保存于 Host-only 记录
-`dsh-web-search-channels/qoder-last-successful-host`：所有 Qoder 国际版账号共用，
+`dsh-web-search-replace/qoder-last-successful-host`：所有 Qoder 国际版账号共用，
 DSH 重启后仍优先使用，换账号不清空。网络环境变化后，旧优选域可能先失败一次再
 自动纠正；固定 `center`/`api2` 模式不切换且忽略该记录。
 
 ## 账号生命周期
+
+包名从 `dsh-web-search-channels` 改为 `dsh-web-search-replace` 后，Host 在首次
+activation 时会把旧 credentials scope `dsh-web-search-channels` 下的账号记录与
+Qoder 最近成功域记录一次性迁移到新 scope，并在复制成功后删除旧 scope 记录；
+迁移失败时 activation 失败并保留旧记录供下次重试，旧 scope 不会继续作为运行时
+读取入口。
 
 四个渠道的账号、当前账号、凭据和刷新状态完全独立，不跨渠道复用。设置页可就地
 添加账号、重新登录、设置当前账号、删除账号，以及显式清除全部账号数据。每个账号另有
@@ -136,7 +142,7 @@ pnpm 回退，也不会为了规避环境要求而恢复可能执行安装脚本
 
 在 DSH 的 **Plugins** 页面用 **Add plugin** 安装本目录，或由
 `plugin_manager.install_bundle` 指向本目录。安装后 bundle 详情页的配置区应出现
-“网页搜索渠道”设置卡；真实安装与呈现仍属于上面的未完成验收项。
+“网页搜索替换”设置卡；真实安装与呈现仍属于上面的未完成验收项。
 
 ## 已知边界
 
@@ -151,7 +157,7 @@ pnpm 回退，也不会为了规避环境要求而恢复可能执行安装脚本
 
 ```text
 package.json                          # 包身份、exports、dsh.bundle / dsh.client
-cordis.patch.yml                      # 插入 id = name = dsh-web-search-channels 的插件行
+cordis.patch.yml                      # 插入 id = name = dsh-web-search-replace 的插件行
 src/host/                             # Host：tools/execute 接管、渠道驱动、账号、生命周期
 src/client/                           # Client：设置卡、账号/授权 UI、自有无依赖控件
 src/shared/                           # 共享契约、渠道注册表、RPC 类型

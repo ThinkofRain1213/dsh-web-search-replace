@@ -42,7 +42,21 @@ import {
 } from './errors.ts'
 
 /** 本插件在 DSH credentials 中的 scope（等于插件注册名）。 */
-export const ACCOUNT_CREDENTIAL_SCOPE = 'dsh-web-search-channels'
+export const ACCOUNT_CREDENTIAL_SCOPE = 'dsh-web-search-replace'
+
+/**
+ * 改名前的 credentials scope。只允许一次性迁移代码引用；迁移成功后旧 scope
+ * 下必须零记录，不得继续作为运行时读取入口。
+ */
+export const LEGACY_ACCOUNT_CREDENTIAL_SCOPE = 'dsh-web-search-channels'
+
+/** 旧 scope 一次性迁移结果。 */
+export interface CredentialScopeMigrationResult {
+  /** 实际复制到新 scope 的记录数（新 scope 已存在同名记录时不计）。 */
+  readonly migrated: number
+  /** 已删除的旧 scope 记录数。 */
+  readonly removed: number
+}
 
 /** R43/R44 的非账号路由记录 ID；clearAll 绝不能把它当成账号删除。 */
 export const QODER_LAST_SUCCESSFUL_HOST_RECORD_ID = 'qoder-last-successful-host'
@@ -354,6 +368,42 @@ export class AccountStore {
     if (parsed.kind === 'missing' || parsed.kind === 'foreign') return false
     await this.deleteRaw(key)
     return true
+  }
+
+  /**
+   * 一次性迁移旧包名 scope 下的全部记录到当前 scope，并在复制成功后删除旧记录。
+   *
+   * 迁移范围包括四渠道账号 grant 与 `qoder-last-successful-host` 路由记录；
+   * `modifyRecord` 只在新 key 尚不存在时写入，避免覆盖更新代数据；旧 key 无论
+   * 是否已经存在新副本都会删除，以保证旧 scope 零残留。重复调用是幂等的。
+   *
+   * @throws {AccountError} 底层凭据存储失败，或迁移后仍能枚举到旧 scope 记录时。
+   */
+  async migrateLegacyCredentialScope(): Promise<CredentialScopeMigrationResult> {
+    const legacyPrefix = `${LEGACY_ACCOUNT_CREDENTIAL_SCOPE}/`
+    const entries = await this.listRaw()
+    const legacyKeys = entries
+      .map(entry => entry.key)
+      .filter(key => key.startsWith(legacyPrefix))
+    let migrated = 0
+    for (const legacyKey of legacyKeys) {
+      const recordId = legacyKey.slice(legacyPrefix.length)
+      if (recordId.length === 0) continue
+      const key = buildCredentialKey(ACCOUNT_CREDENTIAL_SCOPE, recordId)
+      const record = await this.readRaw(legacyKey)
+      if (record !== undefined) {
+        await this.modifyRaw(key, async (current) => {
+          if (current !== undefined) return undefined
+          migrated += 1
+          return record
+        })
+      }
+      await this.deleteRaw(legacyKey)
+    }
+    const remaining = (await this.listRaw())
+      .filter(entry => entry.key.startsWith(legacyPrefix))
+    if (remaining.length > 0) throw accountStorageFailed()
+    return { migrated, removed: legacyKeys.length }
   }
 
   /** 删除本插件 scope 的全部账号记录，返回删除数量；不触碰其他插件 scope。 */

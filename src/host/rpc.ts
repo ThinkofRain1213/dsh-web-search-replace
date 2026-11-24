@@ -2,7 +2,7 @@
  * Host 管理 RPC：在 Connection 的共享 `/api` 通道上注册精确路由。
  *
  * 采用 JetHub 验证过的形状：Host 用 `connection.fetch.register` 注册
- * `/api/web-search-channels`，Client 用 `connection.rpc.call` 发送
+ * `/api/web-search-replace`，Client 用 `connection.rpc.call` 发送
  * `{ type: 'client-request', rpcId, method, payload }` 信封。Host 严格校验
  * 信封、method 与 payload，并统一返回 `{ ok: true, value } | { ok: false, error }`。
  *

@@ -160,7 +160,7 @@ function printInventory(role, name, info) {
 async function verifyReal() {
   if (!existsSync(SELF_PATH)) throw new Error(`缺少本包最终产物 ${SELF_PATH}（请先 pnpm build）`)
   const self = analyze(await readFile(SELF_PATH, 'utf8'), 'self')
-  printInventory('self', 'dsh-web-search-channels', self)
+  printInventory('self', 'dsh-web-search-replace', self)
   for (const styleId of self.styleIds) console.log(`verify-css-isolation:   stylesheet ${styleId}`)
 
   let totalIntersection = 0

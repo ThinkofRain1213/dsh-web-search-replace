@@ -22,7 +22,7 @@
   /* Unbreakable tokens (URLs, paths) must not push past max-width. */
   overflow-wrap: break-word;
   pointer-events: none;
-  animation: dsh-web-search-channels-tooltip-in 150ms var(--ds-ease-in-out);
+  animation: dsh-web-search-replace-tooltip-in 150ms var(--ds-ease-in-out);
 }
 
 .bubble[data-portal] { z-index: 1100; }
@@ -57,7 +57,7 @@
   transform: translate(-100%, -100%);
 }
 
-@keyframes dsh-web-search-channels-tooltip-in {
+@keyframes dsh-web-search-replace-tooltip-in {
   from { opacity: 0; }
 }
 

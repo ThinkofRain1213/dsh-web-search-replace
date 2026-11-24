@@ -21,6 +21,7 @@ import {
   accountRecordKey,
   buildCredentialKey,
   CREDENTIAL_KEY_SEGMENT_PATTERN,
+  LEGACY_ACCOUNT_CREDENTIAL_SCOPE,
 } from '../../src/host/accounts/store.ts'
 import { QODER_LAST_SUCCESSFUL_HOST_KEY } from '../../src/host/channels/qoder/route-store.ts'
 import type { ChannelId } from '../../src/shared/channels.ts'
@@ -76,7 +77,7 @@ describe('凭据 key 语法与账号 ID 生成', () => {
     const key = accountRecordKey('buddy', record.accountId)
     expect(key.startsWith(`${SCOPE}/`)).toBe(true)
     const [scope, id] = key.split('/')
-    expect(scope).toBe('dsh-web-search-channels')
+    expect(scope).toBe('dsh-web-search-replace')
     expect(scope).toMatch(CREDENTIAL_KEY_SEGMENT_PATTERN)
     expect(id).toMatch(CREDENTIAL_KEY_SEGMENT_PATTERN)
     expect(id).toContain('buddy')
@@ -149,11 +150,11 @@ describe('凭据 key 语法与账号 ID 生成', () => {
       ['Upper', 'buddy-a1'],
       ['dsh_web', 'buddy-a1'],
       ['1plugin', 'buddy-a1'],
-      ['dsh-web-search-channels', 'Buddy-a1'],
-      ['dsh-web-search-channels', '../buddy'],
-      ['dsh-web-search-channels', 'buddy/a1'],
-      ['dsh-web-search-channels', '-buddy'],
-      ['dsh-web-search-channels', ''],
+      ['dsh-web-search-replace', 'Buddy-a1'],
+      ['dsh-web-search-replace', '../buddy'],
+      ['dsh-web-search-replace', 'buddy/a1'],
+      ['dsh-web-search-replace', '-buddy'],
+      ['dsh-web-search-replace', ''],
     ] as const) {
       expect(() => buildCredentialKey(scope, id)).toThrow(TypeError)
     }
@@ -171,6 +172,87 @@ describe('凭据 key 语法与账号 ID 生成', () => {
     expect(payload.accountId).toBe(record.accountId)
     expect(payload.vendorAccountId).toBe(vendor)
     expect(payload.version).toBe(1)
+  })
+})
+
+describe('旧包名 credentials scope 迁移', () => {
+  const accountId = 'a1234567890ab'
+  const oldAccountKey = `${LEGACY_ACCOUNT_CREDENTIAL_SCOPE}/buddy-${accountId}`
+  const newAccountKey = `${ACCOUNT_CREDENTIAL_SCOPE}/buddy-${accountId}`
+  const oldRouteKey = `${LEGACY_ACCOUNT_CREDENTIAL_SCOPE}/qoder-last-successful-host`
+  const newRouteKey = `${ACCOUNT_CREDENTIAL_SCOPE}/qoder-last-successful-host`
+
+  function legacyAccountPayload(displayName = 'Legacy account'): Record<string, unknown> {
+    return {
+      version: 1,
+      channelId: 'buddy',
+      accountId,
+      vendorAccountId: 'legacy-vendor@example.test',
+      displayName,
+      maskedIdentifier: 'l***t',
+      endpointLabel: 'copilot.tencent.com',
+      status: 'ready',
+      secret: { accessToken: 'LEGACY_TOKEN', refreshToken: 'LEGACY_REFRESH' },
+    }
+  }
+
+  it('把账号与 Qoder 路由记录复制到新 scope，并删除全部旧 scope 记录', async () => {
+    const credentials = new MemoryCredentials()
+    credentials.seed(oldAccountKey, { kind: 'grant', payload: legacyAccountPayload() })
+    credentials.seed(oldRouteKey, { kind: 'grant', payload: { host: 'api2.qoder.sh' } })
+    const store = new AccountStore({ credentials })
+
+    await expect(store.migrateLegacyCredentialScope()).resolves.toEqual({
+      migrated: 2,
+      removed: 2,
+    })
+    expect([...credentials.keys()].sort()).toEqual([newAccountKey, newRouteKey].sort())
+    expect(credentials.raw(oldAccountKey)).toBeUndefined()
+    expect(credentials.raw(oldRouteKey)).toBeUndefined()
+    expect(credentials.raw(newAccountKey)?.payload).toEqual(legacyAccountPayload())
+    expect(credentials.raw(newRouteKey)?.payload).toEqual({ host: 'api2.qoder.sh' })
+    expect((await store.listEntries('buddy'))[0]?.accountId).toBe(accountId)
+
+    // 重复迁移必须幂等，并且不产生旧 scope 残留。
+    await expect(store.migrateLegacyCredentialScope()).resolves.toEqual({
+      migrated: 0,
+      removed: 0,
+    })
+    expect(credentials.keys().every(key => key.startsWith(`${ACCOUNT_CREDENTIAL_SCOPE}/`))).toBe(true)
+  })
+
+  it('新 scope 已有同 ID 记录时保留新记录，仅删除旧 scope 残留', async () => {
+    const credentials = new MemoryCredentials()
+    credentials.seed(oldAccountKey, { kind: 'grant', payload: legacyAccountPayload('Old account') })
+    credentials.seed(newAccountKey, { kind: 'grant', payload: legacyAccountPayload('Current account') })
+    const store = new AccountStore({ credentials })
+
+    await expect(store.migrateLegacyCredentialScope()).resolves.toEqual({
+      migrated: 0,
+      removed: 1,
+    })
+    expect(credentials.raw(newAccountKey)?.payload).toMatchObject({ displayName: 'Current account' })
+    expect(credentials.keys()).toEqual([newAccountKey])
+  })
+
+  it('复制失败时保留旧记录并抛账号域错误，重试可完成迁移', async () => {
+    const credentials = new MemoryCredentials()
+    credentials.seed(oldAccountKey, { kind: 'grant', payload: legacyAccountPayload() })
+    const store = new AccountStore({ credentials })
+    credentials.failNextModify = new Error('simulated migration write failure')
+
+    await expect(store.migrateLegacyCredentialScope()).rejects.toMatchObject({
+      code: 'accounts/storage-failed',
+    })
+    expect(credentials.raw(oldAccountKey)).toBeDefined()
+    expect(credentials.raw(newAccountKey)).toBeUndefined()
+
+    await expect(store.migrateLegacyCredentialScope()).resolves.toEqual({
+      migrated: 1,
+      removed: 1,
+    })
+    expect(credentials.raw(oldAccountKey)).toBeUndefined()
+    expect(credentials.raw(newAccountKey)?.payload).toEqual(legacyAccountPayload())
   })
 })
 

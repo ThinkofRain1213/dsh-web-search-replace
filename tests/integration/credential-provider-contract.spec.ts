@@ -46,7 +46,7 @@ describe('真实 credentials provider（隔离临时文件）', () => {
   it('missing→undefined、list 不含 payload、modify 排他且 undefined no-op', async () => {
     const { provider, path, dispose } = await createProvider()
     try {
-      const key = buildCredentialKey('dsh-web-search-channels', 'qoder-fixture')
+      const key = buildCredentialKey('dsh-web-search-replace', 'qoder-fixture')
       expect(await provider.readRecord(key)).toBeUndefined()
 
       let releaseFirst!: () => void
@@ -90,12 +90,12 @@ describe('真实 credentials provider（隔离临时文件）', () => {
   it('mutate 错误传播且不写；pre-callback abort 可阻止，post-callback abort 只能 await 物理提交', async () => {
     const { provider, dispose } = await createProvider()
     try {
-      const failedKey = buildCredentialKey('dsh-web-search-channels', 'buddy-failure')
+      const failedKey = buildCredentialKey('dsh-web-search-replace', 'buddy-failure')
       const sentinel = new Error('fixture mutation failed')
       await expect(provider.modifyRecord(failedKey, async () => { throw sentinel })).rejects.toBe(sentinel)
       expect(await provider.readRecord(failedKey)).toBeUndefined()
 
-      const cancelledKey = buildCredentialKey('dsh-web-search-channels', 'buddy-cancelled')
+      const cancelledKey = buildCredentialKey('dsh-web-search-replace', 'buddy-cancelled')
       const beforeCallback = new AbortController()
       beforeCallback.abort()
       await expect(provider.modifyRecord(cancelledKey, async () => {
@@ -104,7 +104,7 @@ describe('真实 credentials provider（隔离临时文件）', () => {
       })).rejects.toThrow('settings/cancelled')
       expect(await provider.readRecord(cancelledKey)).toBeUndefined()
 
-      const committedKey = buildCredentialKey('dsh-web-search-channels', 'buddy-committed')
+      const committedKey = buildCredentialKey('dsh-web-search-replace', 'buddy-committed')
       const afterCallback = new AbortController()
       const committed = await provider.modifyRecord(committedKey, async () => {
         const next = { kind: 'grant', payload: { physicallyCommitted: true } } as const
@@ -138,7 +138,7 @@ describe('真实 credentials provider（隔离临时文件）', () => {
       const reread = new QoderRouteStore({ credentials: restarted.provider, readSelection: () => selection })
       expect(await reread.read()).toBe('api2.qoder.sh')
       expect(await restarted.provider.listRecords()).toContainEqual({
-        key: buildCredentialKey('dsh-web-search-channels', 'qoder-last-successful-host'),
+        key: buildCredentialKey('dsh-web-search-replace', 'qoder-last-successful-host'),
         kind: 'grant',
       })
     } finally {

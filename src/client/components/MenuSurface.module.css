@@ -12,7 +12,7 @@
 }
 
 .menuSurface {
-  anchor-name: var(--dsh-web-search-channels-menu-anchor);
+  anchor-name: var(--dsh-web-search-replace-menu-anchor);
   isolation: isolate;
 }
 
@@ -38,7 +38,7 @@
 html[data-platform='darwin'] .menuBacking {
   display: block;
   position: fixed;
-  position-anchor: var(--dsh-web-search-channels-menu-anchor);
+  position-anchor: var(--dsh-web-search-replace-menu-anchor);
   top: anchor(top);
   left: anchor(left);
   width: anchor-size(width, 0px);
@@ -51,15 +51,15 @@ html[data-platform='darwin'] .menuBacking {
 /* Opacity on the container would prevent its material from blurring the page.
  * Enter animations release their compositing layers so nested menus can blur too. */
 .menuSurface[data-menu-phase='enter'] > *,
-.menuBacking[data-menu-phase='enter'] { animation: dsh-web-search-channels-menu-in var(--dsh-web-search-channels-menu-enter) ease-out; }
+.menuBacking[data-menu-phase='enter'] { animation: dsh-web-search-replace-menu-in var(--dsh-web-search-replace-menu-enter) ease-out; }
 .menuSurface[data-menu-phase='dismiss'] > *,
 .menuBacking[data-menu-phase='dismiss'],
 .menuSurface[data-menu-phase='replace'] > *,
-.menuBacking[data-menu-phase='replace'] { animation: dsh-web-search-channels-menu-out var(--dsh-web-search-channels-menu-dismiss) ease-in both; }
+.menuBacking[data-menu-phase='replace'] { animation: dsh-web-search-replace-menu-out var(--dsh-web-search-replace-menu-dismiss) ease-in both; }
 .menuSurface[data-menu-phase='replace'] > *,
-.menuBacking[data-menu-phase='replace'] { animation-duration: var(--dsh-web-search-channels-menu-replace); }
-@keyframes dsh-web-search-channels-menu-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes dsh-web-search-channels-menu-out { from { opacity: 1; } to { opacity: 0; } }
+.menuBacking[data-menu-phase='replace'] { animation-duration: var(--dsh-web-search-replace-menu-replace); }
+@keyframes dsh-web-search-replace-menu-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dsh-web-search-replace-menu-out { from { opacity: 1; } to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .menuSurface[data-menu-phase] > *, .menuBacking[data-menu-phase] { animation-duration: 0ms; }
 }

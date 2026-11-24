@@ -269,7 +269,7 @@ export function Menu({ open, anchor, items = [], children, submenuBackLabel, sel
   submenuEvents.current = submenu
   const close = useRef(onClose)
   close.current = onClose
-  const anchorName = `--dsh-web-search-channels-menu-trigger-${menuId.replaceAll(':', '')}`
+  const anchorName = `--dsh-web-search-replace-menu-trigger-${menuId.replaceAll(':', '')}`
   const [externalAnchor, setExternalAnchor] = useState<HTMLElement | null>(null)
   const positioned = !portal || anchorRef === undefined || externalAnchor !== null
   // External refs can attach after this component or replace their element

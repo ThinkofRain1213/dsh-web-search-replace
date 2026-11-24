@@ -38,7 +38,7 @@ import {
   type TestLocale,
 } from './support/settings-harness.ts'
 
-const PACKAGE_NAME = 'dsh-web-search-channels'
+const PACKAGE_NAME = 'dsh-web-search-replace'
 const failure = {
   ok: false as const,
   error: { code: 'settings/internal', message: 'settings operation failed', details: {} },
@@ -111,7 +111,7 @@ describe('SearchSection（真实 DOM）', () => {
       snapshot: makeSnapshot({ enabled: false, channel: 'buddy' }),
     })
 
-    const stack = query<HTMLElement>(container, '[data-dsh-web-search-channels="settings-card"]')
+    const stack = query<HTMLElement>(container, '[data-dsh-web-search-replace="settings-card"]')
     expect(stack.className).toContain('stack')
     expect(query(container, '[data-search-section]')).toBeTruthy()
     expect(query(container, '[data-channel-config-host]').getAttribute('data-channel')).toBe('buddy')
@@ -121,7 +121,7 @@ describe('SearchSection（真实 DOM）', () => {
     const search = query<HTMLElement>(container, '[data-search-section]')
     expect(search.firstElementChild?.tagName).toBe('H3')
     expect(search.querySelector('h3')?.textContent).toBe(t('settings.title'))
-    expect(container.textContent).toContain('网页搜索渠道')
+    expect(container.textContent).toContain('网页搜索替换')
     expect(search.querySelector('[data-search-status]')).toBeNull()
     expect([...search.children].map(child => child.getAttribute('data-row'))).toEqual([null, 'enabled', 'channel'])
     expect(search.querySelector('h3')?.nextElementSibling?.getAttribute('data-row')).toBe('enabled')
@@ -917,7 +917,7 @@ describe('SearchSection（真实 DOM）', () => {
       responder: () => response.promise,
     })
 
-    expect(container.textContent).toContain('Web search channels')
+    expect(container.textContent).toContain('Web Search Replacement')
     expect(query(container, '[role="switch"]').getAttribute('aria-label')).toBe('Enable search replacement')
     expect(query<HTMLButtonElement>(container, '[data-dropdown-trigger]').textContent)
       .toContain('Qoder China')

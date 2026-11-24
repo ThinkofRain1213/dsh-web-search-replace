@@ -207,7 +207,7 @@ describe('Client 服务注入（真实 Cordis）', () => {
     const face = injectedFace(card)
     expect(face.configForms).toBe(forms.configForms)
     expect(face.connection).toBe(rpc.connection)
-    expect((face.t as (key: string) => string)('settings.title')).toBe('网页搜索渠道')
+    expect((face.t as (key: string) => string)('settings.title')).toBe('网页搜索替换')
 
     // 服务提供者卸载：子作用域释放，卡片注册被清理。
     await formsProvider.dispose()
@@ -251,7 +251,7 @@ describe('Client 服务注入（真实 Cordis）', () => {
     mounted.push(mountedRoot)
     await flush()
 
-    const stack = query<HTMLElement>(mountedRoot.container, '[data-dsh-web-search-channels="settings-card"]')
+    const stack = query<HTMLElement>(mountedRoot.container, '[data-dsh-web-search-replace="settings-card"]')
     expect(stack.getAttribute('data-settings-status')).toBe('ready')
     expect(forms.getCalls).toContain(clientModule.PACKAGE_NAME)
 
@@ -263,7 +263,7 @@ describe('Client 服务注入（真实 Cordis）', () => {
     expect(query(config, '[data-account-state]').getAttribute('data-account-state')).toBe('required')
     expect(config.textContent).toContain('需要账号')
     expect(mountedRoot.container.querySelector('[role="alert"]')).toBeNull()
-    expect(locale.namespaces.get(clientModule.NS)?.zh['settings.title']).toBe('网页搜索渠道')
+    expect(locale.namespaces.get(clientModule.NS)?.zh['settings.title']).toBe('网页搜索替换')
   })
 
   it('真实 Host schema 投影值与服务作用域注入组合后卡片 ready', async () => {
@@ -296,7 +296,7 @@ describe('Client 服务注入（真实 Cordis）', () => {
     mounted.push(mountedRoot)
     await flush()
 
-    const stack = query<HTMLElement>(mountedRoot.container, '[data-dsh-web-search-channels="settings-card"]')
+    const stack = query<HTMLElement>(mountedRoot.container, '[data-dsh-web-search-replace="settings-card"]')
     expect(stack.getAttribute('data-settings-status')).toBe('ready')
     const toggle = query<HTMLButtonElement>(mountedRoot.container, '[role="switch"]')
     expect(toggle.getAttribute('aria-checked')).toBe('false')

@@ -4,7 +4,7 @@
 
 ## 1. RPC 与 DTO
 
-- 路径沿用 `POST /api/web-search-channels`，管理方法为 `accounts.test`。
+- 路径沿用 `POST /api/web-search-replace`，管理方法为 `accounts.test`。
 - payload 严格为 `{ channel: 'buddy' | 'workbuddy' | 'qoder' | 'qodercn', accountId: string }`；拒绝未知字段、非法渠道和非法账号 ID。
 - 成功结果为该账号的六字段 `AccountSummary`：`id / displayName / channelId / endpointLabel / status / maskedIdentifier`。
 - 不存在的账号或错误渠道返回 `accounts/not-found`；非法 payload 返回 `accounts/invalid`；存储错误使用固定账号域错误。未装配 tester 的局部 Host 不提供此方法。

@@ -1,5 +1,5 @@
 /**
- * Client 半体：把「网页搜索渠道」设置卡注册进 Plugins 页面的
+ * Client 半体：把「网页搜索替换」设置卡注册进 Plugins 页面的
  * `plugins.bundle.config` 槽位（key = 包名）。
  *
  * 本文件不导入任何 Harness Client 包的值（只允许 `import type`），
@@ -104,7 +104,7 @@ export interface ClientContext {
  * @param ctx - 浏览器插件上下文。
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-web-search-channels: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-web-search-replace: dictionaries')
   const t = ctx.locale.bind(NS)
   // configForms/connection 只在服务作用域内读取并捕获：Cordis 保证两项服务
   // 在该作用域生命周期内就绪；任一提供者替换或卸载时整张卡片随之重建。
@@ -122,7 +122,7 @@ export function apply(ctx: ClientContext): void {
           connection,
         }),
       }, SettingsCard)),
-      'dsh-web-search-channels: plugins-page card',
+      'dsh-web-search-replace: plugins-page card',
     )
   })
 }

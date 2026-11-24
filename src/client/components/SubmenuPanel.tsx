@@ -10,8 +10,8 @@ import { MenuSurface } from './MenuSurface.tsx'
 import css from './Menu.module.css'
 
 /** Name the parent card anchor, and hide the child card until its layout is known. */
-function anchors(submenu: ReturnType<typeof useMenuSubmenu>, hidden: boolean): CSSProperties & Record<`--dsh-web-search-channels-submenu-${string}`, string> {
-  return { '--dsh-web-search-channels-submenu-parent': submenu.parentAnchor, ...hidden ? { visibility: 'hidden' } : {} }
+function anchors(submenu: ReturnType<typeof useMenuSubmenu>, hidden: boolean): CSSProperties & Record<`--dsh-web-search-replace-submenu-${string}`, string> {
+  return { '--dsh-web-search-replace-submenu-parent': submenu.parentAnchor, ...hidden ? { visibility: 'hidden' } : {} }
 }
 
 /** Render one child list with a non-selecting back row in single-page placement.

@@ -21,7 +21,7 @@ import { createSettingsDouble } from './support/settings-double.ts'
 import { MemoryCredentials } from './support/memory-credentials.ts'
 
 const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
-const PACKAGE_NAME = 'dsh-web-search-channels'
+const PACKAGE_NAME = 'dsh-web-search-replace'
 
 /** 读取仓库相对路径的 UTF-8 文本。 */
 function readText(relativePath: string): string {
@@ -159,6 +159,7 @@ describe('Host 入口', () => {
     const routes = new Map<string, { path: string }>()
     let effects = 0
     let disposal: (() => Promise<void>) | undefined
+    let effectResult: Promise<unknown> | undefined
     const ctx = {
       connection: {
         fetch: {
@@ -173,8 +174,8 @@ describe('Host 入口', () => {
       credentials: new MemoryCredentials(),
       fiber: {
         entry: {
-          id: 'dsh-web-search-channels',
-          options: { id: 'dsh-web-search-channels', name: 'dsh-web-search-channels', config: {} },
+          id: 'dsh-web-search-replace',
+          options: { id: 'dsh-web-search-replace', name: 'dsh-web-search-replace', config: {} },
           fiber: {},
         },
       },
@@ -182,7 +183,10 @@ describe('Host 入口', () => {
       effect(execute: () => Promise<() => Promise<void>> | (() => Promise<void>) | void) {
         effects += 1
         const result = execute()
-        if (result instanceof Promise) return result.then((dispose) => { disposal = dispose })
+        if (result instanceof Promise) {
+          effectResult = result.then((dispose) => { disposal = dispose })
+          return effectResult
+        }
         disposal = result ?? undefined
         return disposal
       },
@@ -190,8 +194,8 @@ describe('Host 入口', () => {
 
     expect(() => { host.apply(ctx as never, double.config) }).not.toThrow()
     expect(effects).toBe(1)
-    expect(routes.has('/api/web-search-channels')).toBe(true)
-    await Promise.resolve()
+    await effectResult
+    expect(routes.has('/api/web-search-replace')).toBe(true)
     await disposal?.()
   })
 })
@@ -263,7 +267,7 @@ describe('Client 入口', () => {
     expect(typeof styles.default.stack).toBe('string')
     expect(styles.default.stack).not.toBe('')
     expect(page).toContain(`class="${styles.default.stack}"`)
-    expect(page).toContain('网页搜索渠道')
+    expect(page).toContain('网页搜索替换')
     expect(page).toContain('设置加载中')
   })
 
@@ -294,7 +298,7 @@ describe('Client 入口', () => {
 
     locale.setActive('en')
     const english = renderToStaticMarkup(createElement(component as never, { view: 'page', ...injected }))
-    expect(english).toContain('Web search channels')
+    expect(english).toContain('Web Search Replacement')
     expect(english).toContain('Loading settings')
   })
 
@@ -323,8 +327,8 @@ describe('样式与 locale 资源', () => {
       expect(dict.meta.description.trim()).not.toBe('')
     }
 
-    expect(zh.meta.title).toBe('网页搜索渠道')
-    expect(en.meta.title).toBe('Web search channels')
+    expect(zh.meta.title).toBe('网页搜索替换')
+    expect(en.meta.title).toBe('Web Search Replacement')
     expect(zh.meta.title).not.toBe(en.meta.title)
     expect(zh.meta.title).toMatch(/[\u4e00-\u9fff]/)
     expect(en.meta.title).toMatch(/^[A-Za-z0-9 .:·—-]+$/)

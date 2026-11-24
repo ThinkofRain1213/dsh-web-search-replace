@@ -90,20 +90,20 @@ describe('generation-safe management route broker', () => {
     const old = registerManagementRpc(conn, service(false, 'buddy'))
     const current = registerManagementRpc(conn, service(true, 'qoder'))
     await old()
-    const route = routes.get('/api/web-search-channels')
+    const route = routes.get('/api/web-search-replace')
     expect(route).toBeDefined()
-    const response = await route!.fetch(new Request('http://local/api/web-search-channels', {
+    const response = await route!.fetch(new Request('http://local/api/web-search-replace', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        type: 'client-request', rpcId: 'current', method: 'web-search-channels',
+        type: 'client-request', rpcId: 'current', method: 'web-search-replace',
         payload: { method: 'settings.get', payload: {} },
       }),
     }))
     const body = await response.json() as any
     expect(body.result.value.search.channel).toBe('qoder')
     await current()
-    expect(routes.has('/api/web-search-channels')).toBe(false)
+    expect(routes.has('/api/web-search-replace')).toBe(false)
   })
 
   it('旧底层 disposer blocked→新 register→释放：新 ready 等待串行队列且新 route 存活', async () => {
@@ -121,18 +121,18 @@ describe('generation-safe management route broker', () => {
     await currentReady
     await disposing
     expect(ready).toBe(true)
-    const route = routes.get('/api/web-search-channels')
+    const route = routes.get('/api/web-search-replace')
     expect(route).toBeDefined()
-    const response = await route!.fetch(new Request('http://local/api/web-search-channels', {
+    const response = await route!.fetch(new Request('http://local/api/web-search-replace', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        type: 'client-request', rpcId: 'current', method: 'web-search-channels',
+        type: 'client-request', rpcId: 'current', method: 'web-search-replace',
         payload: { method: 'settings.get', payload: {} },
       }),
     }))
     expect((await response.json() as any).result.value.search.channel).toBe('qoder')
     await current()
-    expect(routes.has('/api/web-search-channels')).toBe(false)
+    expect(routes.has('/api/web-search-replace')).toBe(false)
   })
 
   it('A/B/C/D：第二个 queued operation 正 await 时，后续 register 不得绕过完整 queue tail', async () => {
@@ -159,18 +159,18 @@ describe('generation-safe management route broker', () => {
     gateB.release()
     await dReadyPromise
     await disposingC
-    const route = routes.get('/api/web-search-channels')
+    const route = routes.get('/api/web-search-replace')
     expect(route).toBeDefined()
-    const response = await route!.fetch(new Request('http://local/api/web-search-channels', {
+    const response = await route!.fetch(new Request('http://local/api/web-search-replace', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        type: 'client-request', rpcId: 'd', method: 'web-search-channels',
+        type: 'client-request', rpcId: 'd', method: 'web-search-replace',
         payload: { method: 'settings.get', payload: {} },
       }),
     }))
     expect((await response.json() as any).result.value.search.channel).toBe('qoder')
     await d()
-    expect(routes.has('/api/web-search-channels')).toBe(false)
+    expect(routes.has('/api/web-search-replace')).toBe(false)
   })
 
   it('失败 settle 后仍 drain 后续 queued register/dispose，bucket 与底层 route 一致', async () => {
@@ -183,10 +183,10 @@ describe('generation-safe management route broker', () => {
     await expect(failed.ready).rejects.toThrow('injected register failure')
     const recovered = registerManagementRpc(conn, service(true, 'qoder'))
     await recovered.ready
-    expect(routes.has('/api/web-search-channels')).toBe(true)
+    expect(routes.has('/api/web-search-replace')).toBe(true)
     await first()
     await recovered()
-    expect(routes.has('/api/web-search-channels')).toBe(false)
+    expect(routes.has('/api/web-search-replace')).toBe(false)
   })
 
   it('注册失败保留一致 bucket 状态，后续注册可恢复并最终清理', async () => {
@@ -198,13 +198,13 @@ describe('generation-safe management route broker', () => {
     failNextRegister()
     const failed = registerManagementRpc(conn, service(true, 'qoder'))
     await expect(failed.ready).rejects.toThrow('injected register failure')
-    expect(routes.has('/api/web-search-channels')).toBe(false)
+    expect(routes.has('/api/web-search-replace')).toBe(false)
 
     const recovered = registerManagementRpc(conn, service(true, 'qoder'))
     await recovered.ready
-    expect(routes.has('/api/web-search-channels')).toBe(true)
+    expect(routes.has('/api/web-search-replace')).toBe(true)
     await recovered()
-    expect(routes.has('/api/web-search-channels')).toBe(false)
+    expect(routes.has('/api/web-search-replace')).toBe(false)
   })
 })
 

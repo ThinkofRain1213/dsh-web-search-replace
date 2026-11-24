@@ -34,11 +34,11 @@ export const MenuSurface = forwardRef<HTMLDivElement, MenuSurfaceProps>(function
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- The portal ref is attached before layout effects run.
     document.body.appendChild(backingRef.current!)
   }, [])
-  const anchorStyle: CSSProperties & Record<`--dsh-web-search-channels-menu-${string}`, string> = {
-    '--dsh-web-search-channels-menu-anchor': `--dsh-web-search-channels-menu-${id.replaceAll(':', '')}`,
-    '--dsh-web-search-channels-menu-enter': `${MENU_TRANSITION_MS.enter}ms`,
-    '--dsh-web-search-channels-menu-dismiss': `${MENU_TRANSITION_MS.dismiss}ms`,
-    '--dsh-web-search-channels-menu-replace': `${MENU_TRANSITION_MS.replace}ms`,
+  const anchorStyle: CSSProperties & Record<`--dsh-web-search-replace-menu-${string}`, string> = {
+    '--dsh-web-search-replace-menu-anchor': `--dsh-web-search-replace-menu-${id.replaceAll(':', '')}`,
+    '--dsh-web-search-replace-menu-enter': `${MENU_TRANSITION_MS.enter}ms`,
+    '--dsh-web-search-replace-menu-dismiss': `${MENU_TRANSITION_MS.dismiss}ms`,
+    '--dsh-web-search-replace-menu-replace': `${MENU_TRANSITION_MS.replace}ms`,
   }
   return <>
     <div {...props} ref={ref} data-menu-material="translucent" data-menu-phase={phase}

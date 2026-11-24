@@ -552,7 +552,7 @@ describe('WorkBuddy 独立账号与当前账号', () => {
     expect(fixture.settingsDouble.getState().buddy.currentAccountId).toBeNull()
     expect(fixture.credentials.writes).toHaveLength(1)
     expect(fixture.credentials.writes[0]).toBe(
-      `dsh-web-search-channels/workbuddy-${accountId}`,
+      `dsh-web-search-replace/workbuddy-${accountId}`,
     )
     expect(fixture.credentials.keys().some((key) => key.includes('/buddy-'))).toBe(false)
     expect(await fixture.store.listEntries('buddy')).toHaveLength(0)

@@ -5,7 +5,7 @@
  * 避免把共享注册表的 `displayName`（仅用于 Host/日志）当成 locale 文案。
  */
 export const zh: Record<string, string> = {
-  'settings.title': '网页搜索渠道',
+  'settings.title': '网页搜索替换',
   'settings.loading': '设置加载中',
   'settings.unavailable': '设置不可用',
   'settings.saveFailed': '保存失败，已恢复原设置',
@@ -125,7 +125,7 @@ export const zh: Record<string, string> = {
 }
 
 export const en: Record<string, string> = {
-  'settings.title': 'Web search channels',
+  'settings.title': 'Web Search Replacement',
   'settings.loading': 'Loading settings',
   'settings.unavailable': 'Settings are unavailable',
   'settings.saveFailed': 'Save failed; the previous settings were restored',

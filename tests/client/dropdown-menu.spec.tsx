@@ -50,12 +50,12 @@ describe('Dropdown rc5 MenuSurface / MenuRow（真实 DOM）', () => {
     const { container, trigger, unmount } = renderDropdown()
     await click(trigger)
 
-    expect(trigger.lastElementChild?.getAttribute('data-icon')).toBe('dsh-web-search-channels-chevron-down-outline')
+    expect(trigger.lastElementChild?.getAttribute('data-icon')).toBe('dsh-web-search-replace-chevron-down-outline')
     expect(trigger.lastElementChild?.getAttribute('width')).toBe('14')
     const root = query<HTMLElement>(container, '[data-menu-root]')
     const menu = query<HTMLElement>(document, '[data-dropdown-menu]')
     const anchorName = root.style.getPropertyValue('anchor-name')
-    expect(anchorName).toContain('--dsh-web-search-channels-menu-trigger-')
+    expect(anchorName).toContain('--dsh-web-search-replace-menu-trigger-')
     expect(menu.style.getPropertyValue('position-anchor')).toBe(anchorName)
     expect(menu.hasAttribute('data-match-anchor-width')).toBe(true)
     expect(menu.getAttribute('data-anchor-side')).toBe('bottom')
@@ -87,7 +87,7 @@ describe('Dropdown rc5 MenuSurface / MenuRow（真实 DOM）', () => {
     expect(selected?.firstElementChild?.className).toContain('menuItemLabel')
     const check = selected?.lastElementChild
     expect(check?.tagName).toBe('svg')
-    expect(check?.getAttribute('data-icon')).toBe('dsh-web-search-channels-check-outline')
+    expect(check?.getAttribute('data-icon')).toBe('dsh-web-search-replace-check-outline')
     expect(check?.getAttribute('aria-hidden')).toBe('true')
     expect(check?.classList.toString()).toContain('menuCheck')
     expect(check?.querySelector('path')?.getAttribute('d')).toBe(

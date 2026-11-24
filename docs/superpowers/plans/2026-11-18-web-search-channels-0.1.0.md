@@ -25,7 +25,7 @@
 - Qoder `machine_id` 是每次登录新生成的随机、非秘密设备标识（不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密）；设备绑定协议要求它出现在授权 URL 中，因此只允许它作为该次授权 URL 的 `machine_id` 查询参数进入发起流程的 Client 可见 `authUrl`。它仍保存于对应 qoder grant 供签名和续期使用，但不得进入日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化，此例外不适用于 token、刷新材料或其他签名秘密。
 - 最低验收矩阵：Desktop `0.2.2-rc.5` 及其 Web GUI、Native + PTC、Magpie/WPS 灵犀的 Kimi-K3.1 Pro 与 DeepSeek V4.1 Flash、DeepSeek 官方路由 OFF 对照。任一声明项失败阻断发布，不得从报告中删项。
 - 当前验收基线：`0.2.2-rc.5`（用户于 2026-11-21 明确“全部改为 rc5”，rc.3 不再是发布阻断）。rc.3 时期记录的设置页 UI 数值只有经 rc.5 复核后才沿用到实现与验收；测试仍保留 `DSH_TEST_EXPECTED_VERSION` 显式覆盖能力。
-- 第三方设置卡只用 `plugins.bundle.config`，key 必须等于 npm 包名 `dsh-web-search-channels`；该 slot 只请求 `view:'page'`，不使用 `plugins.item`，不期待 Host 传 `form`。
+- 第三方设置卡只用 `plugins.bundle.config`，key 必须等于 npm 包名 `dsh-web-search-replace`；该 slot 只请求 `view:'page'`，不使用 `plugins.item`，不期待 Host 传 `form`。
 - 设置页以 rc.5 为当前基线，沿用复审后的规范数值（经 rc.5 复核后生效）：下拉锚点 `34px / 0 12px`；Menu 项 `min-height:34px; padding:6px 8px; gap:6px`；Switch 轨道 `36×20`、thumb `16×16`、`translateX(16px)`、`120ms`；`.fieldSlot { padding:0; min-width:0 }`，内部 `.field` 才是 `padding:12px 0; gap:6px`。
 - section 的 `h3` 不命中首末 `−12px`；只有 `.row/.group` 自身 12px padding 或 `.fieldSlot` 内部 `.field`/`.hintRow` 才应用对应补偿。section 直接末孩子为 `.hintRow` 时才用 `.section > .hintRow:last-child`。
 - 不得运行时值导入任何 Harness Client 包；只允许 `import type`。不得打入第二份 React/ReactDOM 或 Host Client 包。所有可见文案至少提供 zh/en。
@@ -61,11 +61,11 @@
 - Test: `tests/unit/build-manifest.spec.ts`
 
 **Interfaces:**
-- Produces: 包名 `dsh-web-search-channels`；Host `apply(ctx, config)`；Client lazy-CJS `apply(ctx)`；`plugins.bundle.config` key 与包名一致。
+- Produces: 包名 `dsh-web-search-replace`；Host `apply(ctx, config)`；Client lazy-CJS `apply(ctx)`；`plugins.bundle.config` key 与包名一致。
 
 - [ ] **Step 1: 先写失败的 manifest/构建契约测试**
 
-断言：版本 `0.1.0`；`exports['.']='./lib/index.js'`、`exports['./client']='./lib/client.js'`；patch 行 `id=name='dsh-web-search-channels'`；`dsh.client.platform='web'`。区分两层注入：`package.json.dsh.client.inject` 含 `@deepseek-ai/dsh-client-ui-plugin-manager`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-connection`、`@deepseek-ai/dsh-client-locale`；Client 模块运行时 `inject` 含 `slots,locale,configForms,connection`。最终产物不得含 Host Client 值导入或第二份 React。
+断言：版本 `0.1.0`；`exports['.']='./lib/index.js'`、`exports['./client']='./lib/client.js'`；patch 行 `id=name='dsh-web-search-replace'`；`dsh.client.platform='web'`。区分两层注入：`package.json.dsh.client.inject` 含 `@deepseek-ai/dsh-client-ui-plugin-manager`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-connection`、`@deepseek-ai/dsh-client-locale`；Client 模块运行时 `inject` 含 `slots,locale,configForms,connection`。最终产物不得含 Host Client 值导入或第二份 React。
 
 - [ ] **Step 2: 运行测试，确认因骨架不存在而失败**
 
@@ -74,7 +74,7 @@ Expected: FAIL，提示 `package.json` 或目标文件不存在。
 
 - [ ] **Step 3: 实现最小可安装骨架**
 
-若目录尚未初始化，只执行 `git init`，不添加 remote。Host 导出一个不注册业务能力的空 `apply`。Client 只渲染一张带 `.stack` 的“网页搜索渠道 / 设置加载中”骨架，不伪造搜索按钮或账号。`build-client.mjs` 用 esbuild 产出 CJS 后包成 `window.__ModuleLoader__.load({id:package.name,factory})`，React/ReactDOM external；CSS Modules 哈希 filename 带包名。locale 提供真实中英文 `meta.title/description`。
+若目录尚未初始化，只执行 `git init`，不添加 remote。Host 导出一个不注册业务能力的空 `apply`。Client 只渲染一张带 `.stack` 的“网页搜索替换 / 设置加载中”骨架，不伪造搜索按钮或账号。`build-client.mjs` 用 esbuild 产出 CJS 后包成 `window.__ModuleLoader__.load({id:package.name,factory})`，React/ReactDOM external；CSS Modules 哈希 filename 带包名。locale 提供真实中英文 `meta.title/description`。
 
 - [ ] **Step 4: 运行单测与构建，确认骨架和产物通过**
 
@@ -121,7 +121,7 @@ Expected: FAIL，提示模块或导出不存在。
 
 - [ ] **Step 3: 实现注册表、volatile Config、设置服务和通用 RPC**
 
-`ChannelDefinition` 只描述本渠道能力、域名、配置类型和账号边界；协议族字段仅供实现复用。`SettingsService` 通过 `configEditor.edit` 写配置，成功后重读；失败不发布新快照。RPC 复用 JetHub 风格的 `connection.fetch.register` + `connection.rpc.call('/api','web-search-channels',{method,payload},signal)`，严格校验 method/payload，不返回秘密。
+`ChannelDefinition` 只描述本渠道能力、域名、配置类型和账号边界；协议族字段仅供实现复用。`SettingsService` 通过 `configEditor.edit` 写配置，成功后重读；失败不发布新快照。RPC 复用 JetHub 风格的 `connection.fetch.register` + `connection.rpc.call('/api','web-search-replace',{method,payload},signal)`，严格校验 method/payload，不返回秘密。
 
 - [ ] **Step 4: 运行测试，确认设置与 RPC 通过**
 
@@ -545,7 +545,7 @@ Expected: FAIL，提示组件或完整剖面不存在。
 
 - [ ] **Step 3: 实现 rc5 自有控件与动态搜索区**
 
-Switch 必须 `role=switch/aria-checked/aria-label`，36×20、thumb16、120ms、disabled .5。Dropdown 锚点 34px/`0 12px`，Menu 项 34/6 8/gap6/13 20，portal+autoFocus+minWidthFromAnchor，选择后焦点回 trigger。不得运行时 import Host Client 包。设置控制器用 `configForms.get('dsh-web-search-channels')` 读取与订阅快照，写入只走 Task 2 的 settings RPC；slot props 不读取 `form`（rc.3 实测 bundle.config 不传 `form`，该结论需在 rc.5 复核后沿用）。
+Switch 必须 `role=switch/aria-checked/aria-label`，36×20、thumb16、120ms、disabled .5。Dropdown 锚点 34px/`0 12px`，Menu 项 34/6 8/gap6/13 20，portal+autoFocus+minWidthFromAnchor，选择后焦点回 trigger。不得运行时 import Host Client 包。设置控制器用 `configForms.get('dsh-web-search-replace')` 读取与订阅快照，写入只走 Task 2 的 settings RPC；slot props 不读取 `form`（rc.3 实测 bundle.config 不传 `form`，该结论需在 rc.5 复核后沿用）。
 
 - [ ] **Step 4: 实现动态配置与精确布局**
 

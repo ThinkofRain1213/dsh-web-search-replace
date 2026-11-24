@@ -32,7 +32,7 @@ function createService() {
   const double = createSettingsDouble()
   const service = new SettingsService({
     configEditor: double.editor,
-    entry: { id: 'dsh-web-search-channels' } as never,
+    entry: { id: 'dsh-web-search-replace' } as never,
     config: double.config,
   })
   return { service, double }
@@ -123,7 +123,7 @@ describe('AuthFlowPort.channel 与 registry 在任何工作前 fail closed', () 
 describe('legacy settings.setCurrentAccount 与 runtime.get 共享合同', () => {
   it('账号服务缺失时 legacy RPC 返回 bad-request，不能写 raw intent', async () => {
     const { service, double } = createService()
-    const request = new Request('http://127.0.0.1/api/web-search-channels', {
+    const request = new Request('http://127.0.0.1/api/web-search-replace', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

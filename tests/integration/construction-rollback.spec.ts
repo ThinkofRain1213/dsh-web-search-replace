@@ -72,8 +72,8 @@ function createContext() {
     configEditor: double.editor,
     fiber: {
       entry: {
-        id: 'dsh-web-search-channels',
-        options: { id: 'dsh-web-search-channels', name: 'dsh-web-search-channels', config: {} },
+        id: 'dsh-web-search-replace',
+        options: { id: 'dsh-web-search-replace', name: 'dsh-web-search-replace', config: {} },
         fiber: {},
       },
     },

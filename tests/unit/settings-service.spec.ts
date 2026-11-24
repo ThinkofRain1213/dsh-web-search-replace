@@ -18,7 +18,7 @@ function createService() {
   const double = createSettingsDouble()
   const service = new SettingsService({
     configEditor: double.editor,
-    entry: { id: 'dsh-web-search-channels' } as never,
+    entry: { id: 'dsh-web-search-replace' } as never,
     config: double.config,
   })
   return { service, double }
@@ -97,7 +97,7 @@ describe('SettingsService.updateSearch', () => {
     })
     const service = new SettingsService({
       configEditor: double.editor,
-      entry: { id: 'dsh-web-search-channels' } as never,
+      entry: { id: 'dsh-web-search-replace' } as never,
       config: double.config,
     })
 
@@ -172,7 +172,7 @@ describe('SettingsService.setCurrentAccount', () => {
     })
     const service = new SettingsService({
       configEditor: double.editor,
-      entry: { id: 'dsh-web-search-channels' } as never,
+      entry: { id: 'dsh-web-search-replace' } as never,
       config: double.config,
     })
 
@@ -207,7 +207,7 @@ describe('SettingsService.setCurrentAccount', () => {
     })
     const service = new SettingsService({
       configEditor: double.editor,
-      entry: { id: 'dsh-web-search-channels' } as never,
+      entry: { id: 'dsh-web-search-replace' } as never,
       config: double.config,
     })
 
@@ -228,7 +228,7 @@ describe('SettingsService.setCurrentAccount', () => {
     })
     const service = new SettingsService({
       configEditor: double.editor,
-      entry: { id: 'dsh-web-search-channels' } as never,
+      entry: { id: 'dsh-web-search-replace' } as never,
       config: double.config,
     })
     double.failNextWrite('profile is locked')

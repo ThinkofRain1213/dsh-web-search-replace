@@ -10,6 +10,10 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { __testing as signerTesting } from '../../src/host/channels/qoder/signer.ts'
+import {
+  ACCOUNT_CREDENTIAL_SCOPE,
+  LEGACY_ACCOUNT_CREDENTIAL_SCOPE,
+} from '../../src/host/accounts/store.ts'
 import { createCordisHost, type HostApply } from './cordis-host.fixture.ts'
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -58,6 +62,38 @@ describe('真实 Cordis 宿主上的 Host activation', () => {
     expect(host.routes.size).toBe(0)
     expect(host.fiber.getEffects()).toEqual([])
     expect(host.fiber.uid).toBeNull()
+  })
+
+  it('真实 activation 启动时迁移旧包名 scope，并在注册入口前清除旧记录', async () => {
+    const legacyAccountKey = `${LEGACY_ACCOUNT_CREDENTIAL_SCOPE}/buddy-a1234567890ab`
+    const legacyRouteKey = `${LEGACY_ACCOUNT_CREDENTIAL_SCOPE}/qoder-last-successful-host`
+    const host = createCordisHost({
+      seedCredentials(credentials) {
+        credentials.seed(legacyAccountKey, {
+          kind: 'grant',
+          payload: {
+            version: 1,
+            channelId: 'buddy',
+            accountId: 'a1234567890ab',
+            vendorAccountId: 'legacy-activation@example.test',
+            displayName: 'Legacy activation account',
+            maskedIdentifier: 'l***t',
+            endpointLabel: 'copilot.tencent.com',
+            status: 'ready',
+            secret: { accessToken: 'LEGACY_ACTIVATION_TOKEN', refreshToken: 'LEGACY_ACTIVATION_REFRESH' },
+          },
+        })
+        credentials.seed(legacyRouteKey, { kind: 'grant', payload: { host: 'api2.qoder.sh' } })
+      },
+    })
+    await host.activation
+
+    expect([...host.credentials.keys()].sort()).toEqual([
+      `${ACCOUNT_CREDENTIAL_SCOPE}/buddy-a1234567890ab`,
+      `${ACCOUNT_CREDENTIAL_SCOPE}/qoder-last-successful-host`,
+    ].sort())
+    expect(host.credentials.keys().some(key => key.startsWith(`${LEGACY_ACCOUNT_CREDENTIAL_SCOPE}/`))).toBe(false)
+    await host.dispose()
   })
 
   it('两次 apply 的 activationId 不同，且各自卸载后无 route/WASM/effect 残留', async () => {

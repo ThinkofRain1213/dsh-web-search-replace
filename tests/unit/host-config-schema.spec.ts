@@ -57,7 +57,7 @@ describe('Host 设置 schema 反序列化（真实 Config + Schemastery）', () 
     const double = createSettingsDouble()
     const service = new SettingsService({
       configEditor: double.editor,
-      entry: { id: 'dsh-web-search-channels' } as never,
+      entry: { id: 'dsh-web-search-replace' } as never,
       config,
     })
 

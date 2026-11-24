@@ -39,7 +39,7 @@ export function Dropdown({
   className,
 }: DropdownProps): React.ReactElement {
   const generatedId = React.useId().replaceAll(':', '')
-  const triggerId = id ?? `dsh-web-search-channels-dropdown-${generatedId}`
+  const triggerId = id ?? `dsh-web-search-replace-dropdown-${generatedId}`
   const valueId = `${triggerId}-value`
   const [open, setOpen] = React.useState(false)
   const [initialFocus, setInitialFocus] = React.useState<'first' | 'last'>('first')

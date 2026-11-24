@@ -2,7 +2,7 @@
  * Task 2：管理 RPC 的传输形状、严格校验与统一结果。
  *
  * Host 通过 `connection.fetch.register({ path, methods, requestBody, fetch })`
- * 注册精确路由；Client 通过 `connection.rpc.call('/api', 'web-search-channels',
+ * 注册精确路由；Client 通过 `connection.rpc.call('/api', 'web-search-replace',
  * { method, payload }, signal)` 调用。测试直接搭一条与真实 Connection 相同的
  * client-request/server-response 信封，避免只测单侧。
  */
@@ -439,11 +439,11 @@ async function rawCall(
 }
 
 describe('管理 RPC 路由注册', () => {
-  it('复用精确路径 /api/web-search-channels 与 POST 缓冲请求体', () => {
+  it('复用精确路径 /api/web-search-replace 与 POST 缓冲请求体', () => {
     const { routes } = createRpcHarness()
     const route = routes.get(MANAGEMENT_RPC_PATH)
     expect(route).toBeDefined()
-    expect(route?.path).toBe('/api/web-search-channels')
+    expect(route?.path).toBe('/api/web-search-replace')
     expect(route?.methods).toEqual(['POST'])
     expect(route?.requestBody).toBe('buffered')
     expect(MANAGEMENT_RPC_PATH).toBe(`/api/${MANAGEMENT_RPC_ENDPOINT}`)

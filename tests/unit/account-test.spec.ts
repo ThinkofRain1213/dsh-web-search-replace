@@ -88,7 +88,7 @@ function createHarness(fetcher: typeof fetch, verifiers?: ChannelCapabilityVerif
   ): Promise<RpcResult<unknown>> => {
     const response = await handleManagementRpcRequest(
       fixture.settings,
-      new Request('https://host.test/api/web-search-channels', {
+      new Request('https://host.test/api/web-search-replace', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({

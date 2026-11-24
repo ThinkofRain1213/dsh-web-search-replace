@@ -27,14 +27,16 @@ import { createSettingsDouble } from '../unit/support/settings-double.ts'
 /** 真实 Loader 在 entry 上下文上使用的全局键（@deepseek-ai/cordis-plugin-loader）。 */
 export const LOADER_ENTRY_KEY = Symbol.for('cordis.entry')
 
-export const HOST_ENTRY_ID = 'dsh-web-search-channels'
-export const MANAGEMENT_RPC_PATH = '/api/web-search-channels'
+export const HOST_ENTRY_ID = 'dsh-web-search-replace'
+export const MANAGEMENT_RPC_PATH = '/api/web-search-replace'
 
 /** 替换插件 apply 的入口；用于构造失败回滚场景。 */
 export type HostApply = (ctx: Context, config: SearchConfig) => void | Promise<void>
 
 export interface CordisHostOptions {
   readonly apply?: HostApply
+  /** 在 apply 前向内存 credentials 注入历史记录，用于迁移回归。 */
+  readonly seedCredentials?: (credentials: MemoryCredentials) => void
 }
 
 export interface CordisHost {
@@ -57,6 +59,7 @@ export interface CordisHost {
  */
 export function createCordisHost(options: CordisHostOptions = {}): CordisHost {
   const credentials = new MemoryCredentials()
+  options.seedCredentials?.(credentials)
   const double = createSettingsDouble()
   const routes = new Map<string, ManagementRpcRoute>()
   let markRegistered!: () => void
@@ -122,7 +125,7 @@ export function createCordisHost(options: CordisHostOptions = {}): CordisHost {
       body: JSON.stringify({
         type: 'client-request',
         rpcId: 'runtime',
-        method: 'web-search-channels',
+        method: 'web-search-replace',
         payload: { method: 'runtime.get', payload: {} },
       }),
     }))

@@ -40,7 +40,7 @@ function hashClassName(relativePath, className) {
 
 /** esbuild 插件：把 `.module.css` 编译成「注入样式 + 导出类名映射」的 JS 模块。 */
 const cssModules = {
-  name: 'dsh-web-search-channels-css-modules',
+  name: 'dsh-web-search-replace-css-modules',
   setup(pluginBuild) {
     pluginBuild.onLoad({ filter: /\.module\.css$/ }, async (args) => {
       const relativePath = path.relative(ROOT, args.path).split(path.sep).join('/')

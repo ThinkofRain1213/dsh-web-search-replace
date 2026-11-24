@@ -42,88 +42,88 @@
 
 /* Every candidate reserves layout-window margins while browser zoom moves the page. */
 .menuPortal {
-  --dsh-web-search-channels-menu-window-top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  --dsh-web-search-replace-menu-window-top: max(12px, var(--dsh-frame-overlay-top, 12px));
   position: fixed;
   position-area: none;
-  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
+  top: max(var(--dsh-web-search-replace-menu-window-top), calc(anchor(bottom) + 4px));
   bottom: 12px;
   left: max(12px, anchor(left));
   right: 12px;
   justify-self: start;
   align-self: start;
   margin: 0;
-  position-try-fallbacks: --dsh-web-search-channels-menu-wide-below, --dsh-web-search-channels-menu-above, --dsh-web-search-channels-menu-wide-above, --dsh-web-search-channels-menu-window, --dsh-web-search-channels-menu-wide-window;
+  position-try-fallbacks: --dsh-web-search-replace-menu-wide-below, --dsh-web-search-replace-menu-above, --dsh-web-search-replace-menu-wide-above, --dsh-web-search-replace-menu-window, --dsh-web-search-replace-menu-wide-window;
   width: max-content;
   height: fit-content;
   z-index: 1100;
 }
 .menuPortal[data-anchor-side='top'] {
-  top: var(--dsh-web-search-channels-menu-window-top);
+  top: var(--dsh-web-search-replace-menu-window-top);
   bottom: max(12px, calc(anchor(top) + 4px));
   align-self: end;
-  position-try-fallbacks: --dsh-web-search-channels-menu-wide-above, --dsh-web-search-channels-menu-below, --dsh-web-search-channels-menu-wide-below, --dsh-web-search-channels-menu-window, --dsh-web-search-channels-menu-wide-window;
+  position-try-fallbacks: --dsh-web-search-replace-menu-wide-above, --dsh-web-search-replace-menu-below, --dsh-web-search-replace-menu-wide-below, --dsh-web-search-replace-menu-window, --dsh-web-search-replace-menu-wide-window;
 }
 .menuPortal[data-anchor-side='right'] {
-  top: max(var(--dsh-web-search-channels-menu-window-top), anchor(top));
+  top: max(var(--dsh-web-search-replace-menu-window-top), anchor(top));
   bottom: 12px;
   left: max(12px, calc(anchor(right) + 4px));
   right: 12px;
-  position-try-fallbacks: --dsh-web-search-channels-menu-left, --dsh-web-search-channels-menu-wide-below, --dsh-web-search-channels-menu-window, --dsh-web-search-channels-menu-wide-window;
+  position-try-fallbacks: --dsh-web-search-replace-menu-left, --dsh-web-search-replace-menu-wide-below, --dsh-web-search-replace-menu-window, --dsh-web-search-replace-menu-wide-window;
 }
 .menuPortal[data-anchor-align='end']:not([data-anchor-side='right']) {
   left: 12px;
   right: max(12px, anchor(right));
   justify-self: end;
-  --dsh-web-search-channels-menu-wide-align: start;
+  --dsh-web-search-replace-menu-wide-align: start;
 }
 .menuPortal[data-match-anchor-width] { min-width: min(anchor-size(width), calc(100vw - 24px)); }
-.menuPortal[data-context-menu] { --dsh-web-search-channels-menu-window-top: 12px; }
+.menuPortal[data-context-menu] { --dsh-web-search-replace-menu-window-top: 12px; }
 
-@position-try --dsh-web-search-channels-menu-below {
-  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
+@position-try --dsh-web-search-replace-menu-below {
+  top: max(var(--dsh-web-search-replace-menu-window-top), calc(anchor(bottom) + 4px));
   bottom: 12px;
   align-self: start;
 }
-@position-try --dsh-web-search-channels-menu-above {
-  top: var(--dsh-web-search-channels-menu-window-top);
+@position-try --dsh-web-search-replace-menu-above {
+  top: var(--dsh-web-search-replace-menu-window-top);
   bottom: max(12px, calc(anchor(top) + 4px));
   align-self: end;
 }
-@position-try --dsh-web-search-channels-menu-wide-below {
-  top: max(var(--dsh-web-search-channels-menu-window-top), calc(anchor(bottom) + 4px));
+@position-try --dsh-web-search-replace-menu-wide-below {
+  top: max(var(--dsh-web-search-replace-menu-window-top), calc(anchor(bottom) + 4px));
   bottom: 12px;
   left: 12px;
   right: 12px;
   align-self: start;
-  justify-self: safe var(--dsh-web-search-channels-menu-wide-align, end);
+  justify-self: safe var(--dsh-web-search-replace-menu-wide-align, end);
 }
-@position-try --dsh-web-search-channels-menu-wide-above {
-  top: var(--dsh-web-search-channels-menu-window-top);
+@position-try --dsh-web-search-replace-menu-wide-above {
+  top: var(--dsh-web-search-replace-menu-window-top);
   bottom: max(12px, calc(anchor(top) + 4px));
   left: 12px;
   right: 12px;
   align-self: end;
-  justify-self: safe var(--dsh-web-search-channels-menu-wide-align, end);
+  justify-self: safe var(--dsh-web-search-replace-menu-wide-align, end);
 }
-@position-try --dsh-web-search-channels-menu-left {
+@position-try --dsh-web-search-replace-menu-left {
   left: 12px;
   right: max(12px, calc(anchor(left) + 4px));
   justify-self: end;
 }
 /* A tall card keeps its trigger alignment before horizontal clamping is needed. */
-@position-try --dsh-web-search-channels-menu-window {
-  top: var(--dsh-web-search-channels-menu-window-top);
+@position-try --dsh-web-search-replace-menu-window {
+  top: var(--dsh-web-search-replace-menu-window-top);
   bottom: 12px;
   align-self: safe start;
 }
 
-@position-try --dsh-web-search-channels-menu-wide-window {
-  top: var(--dsh-web-search-channels-menu-window-top);
+@position-try --dsh-web-search-replace-menu-wide-window {
+  top: var(--dsh-web-search-replace-menu-window-top);
   left: 12px;
   right: 12px;
   bottom: 12px;
   align-self: safe start;
-  justify-self: safe var(--dsh-web-search-channels-menu-wide-align, end);
+  justify-self: safe var(--dsh-web-search-replace-menu-wide-align, end);
 }
 
 /* Open above the anchor (empty-state workspace chip: figma 122:9481). */
@@ -380,34 +380,34 @@
  * supplies the active row's offset within the parent card and the child card's
  * natural height. */
 .menuSubmenu {
-  --dsh-web-search-channels-menu-window-top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  --dsh-web-search-replace-menu-window-top: max(12px, var(--dsh-frame-overlay-top, 12px));
   position: fixed;
-  position-anchor: var(--dsh-web-search-channels-submenu-parent);
+  position-anchor: var(--dsh-web-search-replace-submenu-parent);
   position-visibility: always;
   margin: 0;
   z-index: 1101;
   width: max-content;
   min-width: min(163px, calc(100vw - 24px));
   max-width: min(360px, calc(100vw - 24px));
-  max-height: calc(100dvh - 12px - var(--dsh-web-search-channels-menu-window-top));
+  max-height: calc(100dvh - 12px - var(--dsh-web-search-replace-menu-window-top));
 }
-.menuSubmenu[data-contextual] { --dsh-web-search-channels-menu-window-top: 12px; }
+.menuSubmenu[data-contextual] { --dsh-web-search-replace-menu-window-top: 12px; }
 
 /* Side card: beside the parent card with a 4px gap, top edge on the active row,
  * moved up when its height does not fit below the row. The only placement
  * fallback is the left side. */
 .menuSubmenu[data-submenu-layout='side'] {
-  top: max(var(--dsh-web-search-channels-menu-window-top), min(
-    calc(anchor(top) + var(--dsh-web-search-channels-submenu-row-offset, 0px)),
-    calc(100dvh - 12px - var(--dsh-web-search-channels-submenu-height, 0px))
+  top: max(var(--dsh-web-search-replace-menu-window-top), min(
+    calc(anchor(top) + var(--dsh-web-search-replace-submenu-row-offset, 0px)),
+    calc(100dvh - 12px - var(--dsh-web-search-replace-submenu-height, 0px))
   ));
   left: calc(anchor(right) + 4px);
   right: 12px;
   justify-self: start;
   height: max-content;
-  position-try-fallbacks: --dsh-web-search-channels-submenu-left;
+  position-try-fallbacks: --dsh-web-search-replace-submenu-left;
 }
-@position-try --dsh-web-search-channels-submenu-left {
+@position-try --dsh-web-search-replace-submenu-left {
   left: 12px;
   right: calc(anchor(left) + 4px);
   justify-self: end;
@@ -415,7 +415,7 @@
 
 /* Single-panel page: the child takes the parent card's place and at least its width. */
 .menuSubmenu[data-submenu-layout='page'] {
-  top: max(var(--dsh-web-search-channels-menu-window-top), anchor(top));
+  top: max(var(--dsh-web-search-replace-menu-window-top), anchor(top));
   bottom: 12px;
   left: max(12px, anchor(left));
   right: 12px;

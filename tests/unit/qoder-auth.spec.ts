@@ -677,7 +677,7 @@ describe('Qoder 国际版授权生命周期', () => {
     })
     expect(fixture.settingsDouble.getState().qoder.currentAccountId).toBe(accountId)
     expect(fixture.credentials.writes).toHaveLength(1)
-    expect(fixture.credentials.writes[0]).toBe(`dsh-web-search-channels/qoder-${accountId}`)
+    expect(fixture.credentials.writes[0]).toBe(`dsh-web-search-replace/qoder-${accountId}`)
   })
 
   it('已有活动流程时拒绝第二个 start，取消后不再拒绝', async () => {

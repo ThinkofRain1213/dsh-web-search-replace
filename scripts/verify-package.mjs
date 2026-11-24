@@ -284,7 +284,7 @@ async function runCheck(name, run) {
 const staticChecks = [
   ['package.json 清单与验证聚合', async () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    assert(manifest.name === 'dsh-web-search-channels', `包名应为 dsh-web-search-channels，实际 ${manifest.name}`)
+    assert(manifest.name === 'dsh-web-search-replace', `包名应为 dsh-web-search-replace，实际 ${manifest.name}`)
     assert(manifest.version === '0.1.0', `版本应为 0.1.0，实际 ${manifest.version}`)
     assert(manifest.exports?.['.'] === './lib/index.js', 'exports["."] 必须指向 Host 产物')
     assert(manifest.exports?.['./client'] === './lib/client.js', 'exports["./client"] 必须指向 Client 产物')

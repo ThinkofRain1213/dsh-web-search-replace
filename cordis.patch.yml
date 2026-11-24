@@ -3,5 +3,5 @@
 # the web app load ./lib/client.js as the browser half. The row id, the row
 # name, and the settings-slot key are the same package name on purpose.
 - insert:
-    - id: dsh-web-search-channels
-      name: dsh-web-search-channels
+    - id: dsh-web-search-replace
+      name: dsh-web-search-replace

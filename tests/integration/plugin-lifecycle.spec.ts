@@ -49,8 +49,8 @@ async function createFixture(options: {
     configEditor: double.editor,
     fiber: {
       entry: {
-        id: 'dsh-web-search-channels',
-        options: { id: 'dsh-web-search-channels', name: 'dsh-web-search-channels', config: {} },
+        id: 'dsh-web-search-replace',
+        options: { id: 'dsh-web-search-replace', name: 'dsh-web-search-replace', config: {} },
         fiber: {},
       },
     },
@@ -101,12 +101,12 @@ async function createFixture(options: {
     for (const dispose of disposers.splice(0).reverse()) await dispose()
   }
   const runtimeGet = async () => {
-    const route = routes.get('/api/web-search-channels')
+    const route = routes.get('/api/web-search-replace')
     expect(route).toBeDefined()
-    const response = await route!.fetch(new Request('http://local/api/web-search-channels', {
+    const response = await route!.fetch(new Request('http://local/api/web-search-replace', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        type: 'client-request', rpcId: 'runtime', method: 'web-search-channels',
+        type: 'client-request', rpcId: 'runtime', method: 'web-search-replace',
         payload: { method: 'runtime.get', payload: {} },
       }),
     }))
@@ -184,7 +184,7 @@ describe('真实 Host 根组合', () => {
     })
     const result = await fixture.executeTool({ queries: ['qoder auto'] })
     expect(result.result.value.sources).toEqual([{ url: 'https://root.test/qoder' }])
-    expect(fixture.credentials.raw('dsh-web-search-channels/qoder-last-successful-host')).toEqual({
+    expect(fixture.credentials.raw('dsh-web-search-replace/qoder-last-successful-host')).toEqual({
       kind: 'grant', payload: { host: 'api2.qoder.sh' },
     })
 
@@ -192,11 +192,11 @@ describe('真实 Host 根组合', () => {
     expect(runtime.result.ok).toBe(true)
     expect(runtime.result.value.qoder.autoActualHost).toBe('api2.qoder.sh')
     expect(Object.keys(runtime.result.value).sort()).toEqual(['activationId', 'qoder', 'revision'])
-    const settingsRoute = fixture.routes.get('/api/web-search-channels')!
-    const settingsResponse = await settingsRoute.fetch(new Request('http://local/api/web-search-channels', {
+    const settingsRoute = fixture.routes.get('/api/web-search-replace')!
+    const settingsResponse = await settingsRoute.fetch(new Request('http://local/api/web-search-replace', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        type: 'client-request', rpcId: 'settings', method: 'web-search-channels',
+        type: 'client-request', rpcId: 'settings', method: 'web-search-replace',
         payload: { method: 'settings.get', payload: {} },
       }),
     }))
@@ -227,7 +227,7 @@ describe('真实 Host 根组合', () => {
     fixture.volatile()
     release()
     await running
-    expect(fixture.credentials.raw('dsh-web-search-channels/qoder-last-successful-host')).toBeUndefined()
+    expect(fixture.credentials.raw('dsh-web-search-replace/qoder-last-successful-host')).toBeUndefined()
     const runtime = await fixture.runtimeGet()
     expect(runtime.result.value.qoder.autoActualHost).toBeNull()
     await fixture.dispose()

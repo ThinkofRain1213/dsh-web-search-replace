@@ -18,11 +18,11 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 
 ```text
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ div.stack[data-dsh-web-search-channels="settings-card"] padding:0 gap:0     ║
+║ div.stack[data-dsh-web-search-replace="settings-card"] padding:0 gap:0     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ┌─ 互斥分支 state.status="loading"：section.section padding:16px 0 ──────────┐
 │ ┆ .section ▸ padding-top ··········································· 16px │
-│ h3.heading「网页搜索渠道」 margin: 0 font:13/600 line-height:1.5             │
+│ h3.heading「网页搜索替换」 margin: 0 font:13/600 line-height:1.5             │
 │ ┆ .row[data-settings-status="loading"] ▸ padding-top ··············· 12px │
 │ div.rowText padding-right:48px gap:6 › p.hint「设置加载中」 margin: 0       │
 │ ┆ .row ▸ padding-bottom ··········································· 12px │
@@ -31,7 +31,7 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 └─────────────────────────────────────────────────────────────────────────────┘
 ┌─ 互斥分支 state.status="unavailable"：section.section padding:16px 0 ──────┐
 │ ┆ .section ▸ padding-top ··········································· 16px │
-│ h3.heading「网页搜索渠道」 margin: 0 font:13/600 line-height:1.5             │
+│ h3.heading「网页搜索替换」 margin: 0 font:13/600 line-height:1.5             │
 │ ┆ .row[data-settings-status="unavailable"] ▸ padding-top ··········· 12px │
 │ div.rowText padding-right:48px gap:6 › p.error[role=alert] margin: 0        │
 │ ┆ .row ▸ padding-bottom ··········································· 12px │
@@ -40,7 +40,7 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 └─────────────────────────────────────────────────────────────────────────────┘
 ┌─ 互斥分支 state.status="ready"：section[data-search-section] padding:16px 0 ┐
 │ ┆ .section ▸ padding-top ··········································· 16px │
-│ h3.heading「网页搜索渠道」 margin: 0 font:13/600 line-height:1.5             │
+│ h3.heading「网页搜索替换」 margin: 0 font:13/600 line-height:1.5             │
 │ ┆ .heading ▸ margin-bottom ········································· 0px │
 │ ┆ .row[data-row="enabled"] ▸ padding-top ··························· 12px │
 │ ┌─ div.row[data-row="enabled"] padding:12px 0 gap:8 ─────────────────────┐ │
@@ -56,7 +56,7 @@ R53 起不再渲染 `div.row[data-channel-description]`：h3 后直接进入端�
 │ │ span.rowTitle「搜索渠道」 13/500/19.5                                  │ │
 │ │ span.rowDescription 单节点 12/400/18：interactionBusy「interactionLockedHint」/ OFF「lockedHint」/ ON「搜索渠道说明」，只替换不追加 │ │
 │ │ 条件 settings error：span.error[role=alert] margin: 0，红色不灰化；交互锁解除后说明回到原文案 │ │
-│ │ span.menuRoot padding:0 anchor-name:--dsh-web-search-channels-menu-trigger-*               │ │
+│ │ span.menuRoot padding:0 anchor-name:--dsh-web-search-replace-menu-trigger-*               │ │
 │ │ button.selector height:34px padding:0 12px gap:12 radius-md border:none bg-module-platform │ │
 │ │ span.selectorLabel → svg.chevron 14px aria-hidden                      │ │
 │ │ 条件 open：body 下 portal A = div.menuSurface，逻辑归属 trigger，不占 stack │ │

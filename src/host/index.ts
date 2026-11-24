@@ -54,7 +54,7 @@ export interface HostContext {
 export function apply(ctx: HostContext, config: SearchConfig): void | Promise<void> {
   const entry = ctx.fiber.entry
   if (!isLoaderEntry(entry)) {
-    throw new TypeError('web-search-channels requires the active Loader entry')
+    throw new TypeError('web-search-replace requires the active Loader entry')
   }
 
   // 每次 apply 就是一代 activation；ID 由本插件生成。真实 Cordis plugin
@@ -160,6 +160,9 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
       runtime?.dispose()
     }
     try {
+      // 旧包名 scope 的记录在本次 activation 建立任何入口前迁移并删除，
+      // 避免插件以新名字运行时仍把旧 scope 当成可读数据源。
+      await store.migrateLegacyCredentialScope()
       unsubscribe = asDisposer(ctx.on('loader/volatile-update', () => {
         const snapshot = settings.refreshFromVolatile()
         runtime!.captureSelection(snapshot)
@@ -193,7 +196,7 @@ export function apply(ctx: HostContext, config: SearchConfig): void | Promise<vo
       await cleanup()
       throw error
     }
-    }, 'web-search-channels: activation')
+    }, 'web-search-replace: activation')
   } catch (error) {
     return rollbackConstruction({ lifecycle, runtime, wasmLease, flows, error })
   }

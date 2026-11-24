@@ -1,4 +1,4 @@
-# 网页搜索渠道插件设计
+# 网页搜索替换插件设计
 
 - 日期：2026-11-18
 - 状态：已于 2026-11-18 获用户批准；builder 可实施性审查、四渠道与运行/验收支持矩阵、Qoder 国际版端点策略均已纳入
@@ -13,7 +13,7 @@
 
 产品不是 codearts / Jet Hub 的附属功能，也不要求用户安装 Jet Hub。插件自己拥有账号登录、凭据刷新、当前账号选择、重新登录、删除、配置持久化、工具接管和异常恢复。
 
-界面工作名称为“网页搜索与抓取”，`0.1.0` 实际只交付搜索。内部项目名暂用 `dsh-web-search-channels`；“搜索替换”只作为讨论用语，避免被理解为文本查找替换。
+界面工作名称为“网页搜索与抓取”，`0.1.0` 实际只交付搜索。内部项目名暂用 `dsh-web-search-replace`；“搜索替换”只作为讨论用语，避免被理解为文本查找替换。
 
 已确认的版本策略：
 
@@ -292,7 +292,7 @@ qoder.endpointPreference: "auto" | "center" | "api2" = "auto"
 - 可热修改字段使用当前 DSH 的 volatile 配置机制；执行时读取每次调用的配置快照。
 - 不保存任何 Fetch 配置键。
 - 只有 `qoder` 保存 `endpointPreference`；另外三个渠道没有端点偏好字段。`auto / center / api2` 是用户意图，自动模式实际选中的域名和最近成功域属于运行状态，不改写用户下拉值。
-- 自动模式只在本机全局保存一个最近成功域，所有 Qoder 国际版账号共用；它是通过本插件 Host-only 全局持久记录 `dsh-web-search-channels/qoder-last-successful-host` 保存的非秘密路由状态，不是账号 grant、普通 Config/configForms 字段或用户 endpointPreference；DSH 重启后仍读取并优先使用该值。没有记录时才从 center 开始，后续调用及插件重启后优先最近成功域，换账号不清空。它不是网络出口 ID，也不进入 Client 的普通设置快照；网络环境变化后若旧优选域失效，按 §9.6 的限定规则切换并在成功后更新记录。
+- 自动模式只在本机全局保存一个最近成功域，所有 Qoder 国际版账号共用；它是通过本插件 Host-only 全局持久记录 `dsh-web-search-replace/qoder-last-successful-host` 保存的非秘密路由状态，不是账号 grant、普通 Config/configForms 字段或用户 endpointPreference；DSH 重启后仍读取并优先使用该值。没有记录时才从 center 开始，后续调用及插件重启后优先最近成功域，换账号不清空。它不是网络出口 ID，也不进入 Client 的普通设置快照；网络环境变化后若旧优选域失效，按 §9.6 的限定规则切换并在成功后更新记录。
 - 账号显示所需的非秘密元数据可放入渠道配置或账号公开投影；秘密只能放 credentials。
 - 配置写入通过 `configEditor` / `configForms`，不自行读取和改写 profile 的 `cordis.patch.yml`。
 
@@ -300,7 +300,7 @@ qoder.endpointPreference: "auto" | "center" | "api2" = "auto"
 
 - 使用本插件自己的 credentials scope；记录 ID 同时编码 `channelId` 与账号稳定 ID，记录内容也保留 `channelId`，禁止跨渠道引用。
 - 四个账号型渠道分别使用独立 grant 记录，保存访问令牌、刷新材料、该渠道端点、账号稳定身份和签名所需数据。即使协议相同，也不把一条记录同时视为另一渠道可用。
-- Qoder 最近成功域使用独立的全局持久记录 `dsh-web-search-channels/qoder-last-successful-host`，不与任何账号 grant 合并；该记录只含非秘密 host，供 Host 在重启后读取，不能进入普通 Config、configForms 的 value/base/user 或其他 Client DTO。
+- Qoder 最近成功域使用独立的全局持久记录 `dsh-web-search-replace/qoder-last-successful-host`，不与任何账号 grant 合并；该记录只含非秘密 host，供 Host 在重启后读取，不能进入普通 Config、configForms 的 value/base/user 或其他 Client DTO。
 - Client 只接收账号 ID、显示名、`channelId`、端点标签、状态和脱敏标识，不接收秘密。
 - `machine_id` 的窄例外（仅 Qoder 设备授权）：`machine_id` 是本插件每次登录新生成的随机、非秘密设备标识，不是 bearer 凭据，也不是 token、刷新材料或其他签名秘密（它只是 COSY 签名输入之一）；由于设备绑定协议要求，仅允许它作为该次授权 URL 的 `machine_id` 查询参数，出现在发起该流程的 Client 可见 `authUrl` 中。它仍需作为签名和续期所需数据保存于对应的 qoder grant，但不得出现在日志、Session 事件、错误/cause、普通配置、`AccountSummary` 或其他 DTO 字段；`authUrl` 不持久化。该例外不得扩展为 token、刷新材料或其他签名秘密可进入 Client。
 - 不写自定义 token 文件，不使用 localStorage，不记录到日志、Session 事件或普通配置。

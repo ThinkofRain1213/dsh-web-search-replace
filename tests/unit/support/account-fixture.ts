@@ -26,7 +26,7 @@ export function createAccountFixture(initial?: Partial<SettingsState>): AccountF
   const settingsDouble = createSettingsDouble(initial)
   const settings = new SettingsService({
     configEditor: settingsDouble.editor,
-    entry: { id: 'dsh-web-search-channels' } as never,
+    entry: { id: 'dsh-web-search-replace' } as never,
     config: settingsDouble.config,
   })
   const service = new AccountService({ store, settings })

@@ -2,7 +2,7 @@
  * 管理 RPC 的共享契约与 Client 调用器。
  *
  * Host 通过 `connection.fetch.register` 注册精确路由；Client 通过
- * `connection.rpc.call('/api', 'web-search-channels', { method, payload }, signal)`
+ * `connection.rpc.call('/api', 'web-search-replace', { method, payload }, signal)`
  * 调用。两端共用同一份 method/payload 校验，避免只信任其中一侧。
  *
  * 方法空间由三部分组成：普通设置（settings.*）、账号管理（accounts.*）与
@@ -37,7 +37,7 @@ import {
 /** Connection 的共享 RPC 通道。 */
 export const MANAGEMENT_RPC_CHANNEL = '/api'
 /** 管理 RPC 的逻辑端点名，也是精确路由的最后一段。 */
-export const MANAGEMENT_RPC_ENDPOINT = 'web-search-channels'
+export const MANAGEMENT_RPC_ENDPOINT = 'web-search-replace'
 /** 精确路由路径。 */
 export const MANAGEMENT_RPC_PATH = `${MANAGEMENT_RPC_CHANNEL}/${MANAGEMENT_RPC_ENDPOINT}`
 

@@ -53,7 +53,7 @@ export function InlineDeleteConfirmation({
   locked = false,
   t,
 }: InlineDeleteConfirmationProps): React.ReactElement {
-  const groupName = `dsh-web-search-replacement-${account.id}`
+  const groupName = `dsh-web-search-replace-${account.id}`
   return (
     <div
       className={styles.confirmBox}

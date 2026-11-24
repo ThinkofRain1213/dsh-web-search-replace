@@ -589,7 +589,7 @@ describe('Qoder 中国版授权生命周期', () => {
     })
     expect(fixture.settingsDouble.getState().qodercn.currentAccountId).toBe(accountId)
     expect(fixture.credentials.writes).toHaveLength(1)
-    expect(fixture.credentials.writes[0]).toBe(`dsh-web-search-channels/qodercn-${accountId}`)
+    expect(fixture.credentials.writes[0]).toBe(`dsh-web-search-replace/qodercn-${accountId}`)
   })
 
   it('已有活动流程时拒绝第二个 start，取消后新实例可重新开始', async () => {

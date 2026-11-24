@@ -12,7 +12,7 @@ import {
   makeSnapshot,
 } from './support/settings-harness.ts'
 
-const PACKAGE_NAME = 'dsh-web-search-channels'
+const PACKAGE_NAME = 'dsh-web-search-replace'
 const failure = {
   ok: false as const,
   error: { code: 'settings/internal', message: 'settings operation failed', details: {} },

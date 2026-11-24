@@ -35,8 +35,8 @@ async function createFixture() {
   const double = createSettingsDouble()
   const entry = {
     options: {
-      id: 'dsh-web-search-channels',
-      name: 'dsh-web-search-channels',
+      id: 'dsh-web-search-replace',
+      name: 'dsh-web-search-replace',
       config: structuredClone(double.getState()) as unknown as Record<string, unknown>,
     },
     parent: { tree: { ctx: { fiber: { entry: { id: 'include' } } } } },

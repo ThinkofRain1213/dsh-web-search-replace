@@ -25,7 +25,7 @@ function authStateBody() {
 }
 
 function request(controller: AbortController): Request {
-  return new Request('https://host.test/api/web-search-channels', {
+  return new Request('https://host.test/api/web-search-replace', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({

@@ -233,7 +233,7 @@ describe('发布门禁静态验证', () => {
     expect(existsSync(DOC), '缺少 docs/verification/2026-11-18-0.1.0.md').toBe(true)
 
     const manifest = await readJson<Manifest>(path.join(ROOT, 'package.json'))
-    expect(manifest.name).toBe('dsh-web-search-channels')
+    expect(manifest.name).toBe('dsh-web-search-replace')
     expect(manifest.version).toBe('0.1.0')
     expect(manifest.exports['./cordis.patch.yml']).toBe('./cordis.patch.yml')
     expect(manifest.exports['.']).toBe('./lib/index.js')
